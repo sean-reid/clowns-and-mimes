@@ -163,27 +163,7 @@ jobs:
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
         run: pnpm --filter @cm/room deploy:production
 
-  deploy-website:
-    if: startsWith(github.ref, 'refs/tags/')
-    needs: build-game
-    runs-on: ubuntu-latest
-    permissions:
-      pages: write
-      id-token: write
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
-    steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: pnpm
-      - run: pnpm install --frozen-lockfile
-      - run: pnpm --filter website build
-      - uses: actions/upload-pages-artifact@v3
-        with:
-          path: website/dist
-      - id: deployment
-        uses: actions/deploy-pages@v4
+  # Website deploys live in .github/workflows/deploy-website.yml, which fires on
+  # every push to main. Tag pushes hit main first, so by the time the release
+  # workflow runs the site is already current. Re-running the pages deploy here
+  # races the dedicated workflow's artifact and surfaces BlobNotFound 404s.

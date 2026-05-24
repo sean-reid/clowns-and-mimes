@@ -46,6 +46,15 @@ var frozen: bool = false:
 var marker_instance: Node3D = null
 var footstep_player: AudioStreamPlayer3D = null
 
+# Remote players never have velocity written. apply_remote_state only sets
+# global_position, so velocity stays at zero and _update_footsteps keeps the
+# volume curve muted. Track the delta between consecutive remote updates to
+# derive an effective planar speed for the spatial footstep audio. Without
+# this, remote players walked silent.
+var _last_remote_position: Vector3 = Vector3.ZERO
+var _last_remote_time_s: float = 0.0
+var _remote_planar_speed: float = 0.0
+
 func _ready() -> void:
 	if is_local and not bot:
 		Input.set_mouse_mode(Input.MOUSE_MODE_CAPTURED)
@@ -99,7 +108,7 @@ func _physics_process(delta: float) -> void:
 		_apply_bot_movement(delta)
 		return
 	if not is_local:
-		_update_footsteps(velocity.length(), false)
+		_update_footsteps(_remote_planar_speed, false)
 		return
 	# The in-game menu releases the mouse cursor when open. Use that as the
 	# signal that the local player should not be reading input. The world
@@ -161,6 +170,20 @@ func _update_footsteps(planar_speed: float, sprinting: bool) -> void:
 		footstep_player.pitch_scale = clampf(planar_speed / WALK_SPEED, 1.2, 1.6)
 
 func apply_remote_state(pos: Vector3, yaw: float, is_frozen: bool, sprint: float) -> void:
+	# Derive an effective planar speed from the delta between snapshots so the
+	# footstep audio has something to drive its volume curve. The first call
+	# initialises the trackers without producing a phantom speed value.
+	var now_s: float = Time.get_unix_time_from_system()
+	if _last_remote_time_s > 0.0:
+		var dt: float = now_s - _last_remote_time_s
+		if dt > 1e-3:
+			var planar: Vector2 = Vector2(pos.x - _last_remote_position.x, pos.z - _last_remote_position.z)
+			# Lerp toward the new sample to ride out the per-snapshot jitter
+			# without lagging significantly behind real movement.
+			var sample: float = planar.length() / dt
+			_remote_planar_speed = lerpf(_remote_planar_speed, sample, 0.5)
+	_last_remote_position = pos
+	_last_remote_time_s = now_s
 	global_position = pos
 	rotation.y = yaw
 	frozen = is_frozen

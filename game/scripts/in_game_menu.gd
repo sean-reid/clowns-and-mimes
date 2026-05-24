@@ -8,8 +8,8 @@ extends CanvasLayer
 signal resume_requested
 signal quit_to_menu_requested
 
-@onready var resume_button: Button = $Panel/Content/Buttons/Resume
-@onready var quit_button: Button = $Panel/Content/Buttons/Quit
+@onready var resume_button: Button = $Content/Resume
+@onready var quit_button: Button = $Content/Quit
 
 func _ready() -> void:
 	visible = false

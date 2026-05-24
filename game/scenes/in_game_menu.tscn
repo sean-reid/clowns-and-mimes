@@ -2,23 +2,8 @@
 
 [ext_resource type="Script" path="res://scripts/in_game_menu.gd" id="1_im"]
 
-[sub_resource type="StyleBoxFlat" id="panel_style"]
-bg_color = Color(1, 0.96, 0.84, 1)
-border_color = Color(0.047, 0.047, 0.055, 1)
-border_width_left = 4
-border_width_top = 4
-border_width_right = 4
-border_width_bottom = 4
-corner_radius_top_left = 14
-corner_radius_top_right = 14
-corner_radius_bottom_right = 14
-corner_radius_bottom_left = 14
-shadow_color = Color(0.78, 0.063, 0.18, 1)
-shadow_size = 0
-shadow_offset = Vector2(10, 10)
-
 [sub_resource type="StyleBoxFlat" id="dim_style"]
-bg_color = Color(0.047, 0.039, 0.078, 0.55)
+bg_color = Color(0.04, 0.04, 0.05, 0.7)
 
 [node name="InGameMenu" type="CanvasLayer"]
 layer = 10
@@ -30,41 +15,28 @@ anchor_bottom = 1.0
 theme_override_styles/panel = SubResource("dim_style")
 mouse_filter = 1
 
-[node name="Panel" type="PanelContainer" parent="."]
+[node name="Content" type="VBoxContainer" parent="."]
 anchor_left = 0.5
 anchor_top = 0.5
 anchor_right = 0.5
 anchor_bottom = 0.5
-offset_left = -200.0
-offset_top = -150.0
-offset_right = 200.0
-offset_bottom = 150.0
-theme_override_styles/panel = SubResource("panel_style")
+offset_left = -160.0
+offset_top = -60.0
+offset_right = 160.0
+offset_bottom = 60.0
+theme_override_constants/separation = 18
+alignment = 1
 
-[node name="Content" type="VBoxContainer" parent="Panel"]
-custom_minimum_size = Vector2(360, 0)
-theme_override_constants/separation = 14
-
-[node name="Title" type="Label" parent="Panel/Content"]
-horizontal_alignment = 1
-text = "Menu"
-theme_override_font_sizes/font_size = 40
-theme_override_colors/font_color = Color(0.78, 0.063, 0.18, 1)
-
-[node name="Hint" type="Label" parent="Panel/Content"]
-horizontal_alignment = 1
-autowrap_mode = 2
-text = "The match keeps playing. Esc to resume."
-theme_override_font_sizes/font_size = 16
-theme_override_colors/font_color = Color(0.18, 0.16, 0.18, 1)
-
-[node name="Buttons" type="VBoxContainer" parent="Panel/Content"]
-theme_override_constants/separation = 10
-
-[node name="Resume" type="Button" parent="Panel/Content/Buttons"]
-custom_minimum_size = Vector2(0, 44)
+[node name="Resume" type="Button" parent="Content"]
+flat = true
 text = "Resume"
+theme_override_font_sizes/font_size = 26
+theme_override_colors/font_color = Color(0.95, 0.95, 0.95, 1)
+theme_override_colors/font_hover_color = Color(0.95, 0.18, 0.22, 1)
 
-[node name="Quit" type="Button" parent="Panel/Content/Buttons"]
-custom_minimum_size = Vector2(0, 44)
+[node name="Quit" type="Button" parent="Content"]
+flat = true
 text = "Quit to main menu"
+theme_override_font_sizes/font_size = 26
+theme_override_colors/font_color = Color(0.95, 0.95, 0.95, 1)
+theme_override_colors/font_hover_color = Color(0.95, 0.18, 0.22, 1)

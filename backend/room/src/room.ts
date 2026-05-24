@@ -349,6 +349,26 @@ export class Room implements DurableObject {
   }
 
   /**
+   * Cells the bot should treat as solid for this tick's BFS. Used to route
+   * chase / rescue paths around stationary bodies that would otherwise pin
+   * the bot in a corridor (the slide-fallback can't side-step a body that
+   * sits exactly across the desired axis). Excludes the bot itself and the
+   * preserveId target so the destination cell remains walkable. Returns an
+   * empty set when the pathfinder is missing.
+   */
+  private avoidCellsForBot(self: PlayerState, preserve: PlayerState | null): Set<number> {
+    const out = new Set<number>();
+    if (!this.pathfinder) return out;
+    const preserveId = preserve ? preserve.id : null;
+    for (const other of this.players.values()) {
+      if (other.id === self.id) continue;
+      if (other.id === preserveId) continue;
+      out.add(this.pathfinder.cellAt(other.position));
+    }
+    return out;
+  }
+
+  /**
    * Returns true if landing at (x, z) would put this player inside another
    * player's personal space. Without this check, two bodies in the same
    * corridor push through each other every tick and the client renders the
@@ -797,18 +817,24 @@ export class Room implements DurableObject {
         // returns the world-space center of the next cell along the shortest
         // path; if from/to share a cell or are directly adjacent it returns
         // the destination unchanged, so the slide-fallback below still does
-        // the final approach.
+        // the final approach. Build an avoid set of every OTHER player's
+        // cell (excluding the rescue target itself) so a frozen enemy
+        // standing in the corridor between the bot and the teammate is
+        // routed around instead of crashing into it - that case used to
+        // leave the bot stuck in place, with the slide-fallback retrying
+        // every tick.
+        const avoid = this.avoidCellsForBot(bot, rescueTarget);
         const waypoint = this.pathfinder
-          ? this.pathfinder.nextWaypoint(bot.position, rescueTarget.position)
+          ? this.pathfinder.nextWaypointAvoiding(bot.position, rescueTarget.position, avoid)
           : rescueTarget.position;
         dir = wrappedUnitDelta(bot.position, waypoint, this.topology, WORLD_WIDTH);
       } else if (chasing && target) {
-        // Same BFS routing for chase. A wall between bot and target used to
-        // pin the bot in place because the direct vector and both axis slides
-        // crossed the same wall segment; now the bot heads for an open
-        // adjacent cell on the actual shortest path.
+        // Same BFS routing for chase, with the same other-player avoidance:
+        // a frozen teammate in the chase lane should be routed around
+        // instead of pinning the bot. The chase target stays walkable.
+        const avoid = this.avoidCellsForBot(bot, target);
         const waypoint = this.pathfinder
-          ? this.pathfinder.nextWaypoint(bot.position, target.position)
+          ? this.pathfinder.nextWaypointAvoiding(bot.position, target.position, avoid)
           : target.position;
         dir = wrappedUnitDelta(bot.position, waypoint, this.topology, WORLD_WIDTH);
       } else {

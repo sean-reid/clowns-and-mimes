@@ -68,6 +68,70 @@ export class BotPathfinder {
     return this.cellCenter(nextCell);
   }
 
+  /**
+   * Like nextWaypoint but treats the given cells as solid for this query.
+   * Used by the chase / rescue path so a frozen enemy parked in the corridor
+   * routes around instead of pinning the bot against the body. The avoid set
+   * must not include the destination cell (toCell is allowed) or the bot's
+   * own current cell (those are short-circuited above). Skips the BFS cache
+   * because the avoid set varies per tick.
+   */
+  nextWaypointAvoiding(from: Vec2, to: Vec2, avoidCells: ReadonlySet<number>): Vec2 {
+    if (avoidCells.size === 0) return this.nextWaypoint(from, to);
+    const fromCell = this.worldToCell(from);
+    const toCell = this.worldToCell(to);
+    if (fromCell === toCell) return to;
+    const nextCell = this.nextStepOnPathAvoiding(fromCell, toCell, avoidCells);
+    if (nextCell < 0) return to;
+    return this.cellCenter(nextCell);
+  }
+
+  /** Public cell index for a world-space position; callers building an avoid
+   * set query this for each other player. */
+  cellAt(position: Vec2): number {
+    return this.worldToCell(position);
+  }
+
+  private nextStepOnPathAvoiding(
+    fromCell: number,
+    toCell: number,
+    avoid: ReadonlySet<number>,
+  ): number {
+    const total = this.shape.cols * this.shape.rows;
+    const parent = new Int32Array(total);
+    parent.fill(-1);
+    parent[fromCell] = fromCell;
+    const queue: number[] = [fromCell];
+    let found = false;
+    while (queue.length > 0) {
+      const cur = queue.shift()!;
+      if (cur === toCell) {
+        found = true;
+        break;
+      }
+      const cc = cur % this.shape.cols;
+      const cr = Math.floor(cur / this.shape.cols);
+      const mask = this.adjacency[cur]!;
+      for (let dir = 0; dir < 4; dir += 1) {
+        if ((mask & (1 << dir)) === 0) continue;
+        const nb = this.neighborCell(cc, cr, dir);
+        if (nb < 0) continue;
+        if (parent[nb] !== -1) continue;
+        // Forbidden cells are walkable destinations only when they ARE the
+        // destination; otherwise the BFS treats them as solid.
+        if (nb !== toCell && avoid.has(nb)) continue;
+        parent[nb] = cur;
+        queue.push(nb);
+      }
+    }
+    if (!found) return -1;
+    let cur = toCell;
+    while (parent[cur] !== fromCell && parent[cur] !== cur) {
+      cur = parent[cur]!;
+    }
+    return cur;
+  }
+
   private buildAdjacency(walls: readonly WallSegment[]): void {
     const { cols, rows } = this.shape;
     for (let r = 0; r < rows; r += 1) {

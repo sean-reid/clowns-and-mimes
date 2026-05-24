@@ -36,12 +36,30 @@ const TURN_FIRST_MS = 30_000;
 const TURN_STEP_MS = 30_000;
 const TURN_CAP_MS = 5 * 60_000;
 const BOT_FILL_DELAY_MS = 3_000;
-const BOT_VISION_RADIUS = 16;
+// Wider vision so bots commit to a chase / flee instead of dithering on
+// patrol when an opponent is across a corridor. World half-diagonal is ~56,
+// so 22 covers most short corridors without making bots omniscient.
+const BOT_VISION_RADIUS = 22;
 const BOT_PATROL_RETARGET_MS = 4_000;
+// Bots sprint when within this multiple of TAG_RADIUS of an engaged enemy
+// (chase) or when fleeing and the threat is closing. Without sprint they
+// were always walking and could never close on or escape a sprinting human.
+const BOT_SPRINT_TRIGGER_RADIUS = 10;
 
 interface BotMind {
   patrolTarget: { x: number; z: number };
   patrolUntil: number;
+  // Sticky chase/flee target. Without this, simulateBots picked the closest
+  // enemy every tick - if two opponents were near-equidistant, the bot would
+  // oscillate between them and the rendered motion looked like jitter. Once
+  // a target is engaged we stay with it unless it disappears, becomes
+  // invalid, or a different enemy is significantly closer.
+  engagedTargetId: string | null;
+  // Cached unit-direction vector for movement smoothing. Each tick lerps
+  // toward the freshly-computed direction by SMOOTHING so abrupt
+  // reversals (e.g. two opponents straddling the bot) don't translate into
+  // visible flicker.
+  lastDir: { x: number; z: number };
 }
 
 interface Connection {
@@ -182,7 +200,12 @@ export class Room implements DurableObject {
           frozen: false,
           sprintEnergy: MAX_SPRINT,
         });
-        this.botMinds.set(id, { patrolTarget: this.randomPatrolPoint(), patrolUntil: 0 });
+        this.botMinds.set(id, {
+          patrolTarget: this.randomPatrolPoint(),
+          patrolUntil: 0,
+          engagedTargetId: null,
+          lastDir: { x: 0, z: 0 },
+        });
       }
     }
   }
@@ -469,18 +492,49 @@ export class Room implements DurableObject {
   private simulateBots(dt: number): void {
     const active = this.activeTurnTeam();
     const now = Date.now();
+    const DIR_SMOOTHING = 0.35; // 0 = no smoothing, 1 = ignore new direction
+    const RETARGET_HYSTERESIS = 0.75; // new target must be this fraction of current distance to swap
     for (const bot of this.botPlayers()) {
       if (bot.frozen) continue;
       const mind = this.botMinds.get(bot.id) ?? {
         patrolTarget: this.randomPatrolPoint(),
         patrolUntil: 0,
+        engagedTargetId: null,
+        lastDir: { x: 0, z: 0 },
       };
       this.botMinds.set(bot.id, mind);
 
-      const target = this.nearestVisibleEnemy(bot);
-      const enemyDist = target
-        ? topologyDistance(bot.position, target.position, this.topology, WORLD_WIDTH)
+      // Sticky target: stay engaged with whoever we picked last tick unless
+      // they vanish or a new candidate is significantly closer. Without this
+      // the bot would flip every tick between two near-equidistant enemies.
+      const candidate = this.nearestVisibleEnemy(bot);
+      const candidateDist = candidate
+        ? topologyDistance(bot.position, candidate.position, this.topology, WORLD_WIDTH)
         : Infinity;
+      let target: PlayerState | null = candidate;
+      let enemyDist = candidateDist;
+      if (mind.engagedTargetId) {
+        const existing = this.players.get(mind.engagedTargetId);
+        if (existing && !existing.frozen && existing.team !== bot.team) {
+          const existingDist = topologyDistance(
+            bot.position,
+            existing.position,
+            this.topology,
+            WORLD_WIDTH,
+          );
+          // Keep existing unless the new candidate is at least
+          // RETARGET_HYSTERESIS x closer.
+          if (
+            existingDist < BOT_VISION_RADIUS &&
+            candidateDist >= existingDist * RETARGET_HYSTERESIS
+          ) {
+            target = existing;
+            enemyDist = existingDist;
+          }
+        }
+      }
+      mind.engagedTargetId = target ? target.id : null;
+
       const chasing = target !== null && enemyDist < BOT_VISION_RADIUS && active === bot.team;
       const fleeing =
         target !== null && enemyDist < BOT_VISION_RADIUS && active && active !== bot.team;
@@ -498,8 +552,28 @@ export class Room implements DurableObject {
         }
         dir = unitDelta(bot.position, mind.patrolTarget);
       }
+      // Smooth direction toward the freshly-computed dir. Stops the bot from
+      // snapping to a new heading every tick when the AI is indecisive.
+      dir = {
+        x: mind.lastDir.x * DIR_SMOOTHING + dir.x * (1 - DIR_SMOOTHING),
+        z: mind.lastDir.z * DIR_SMOOTHING + dir.z * (1 - DIR_SMOOTHING),
+      };
+      const dirLen = Math.hypot(dir.x, dir.z);
+      if (dirLen > 1e-3) {
+        dir = { x: dir.x / dirLen, z: dir.z / dirLen };
+      } else {
+        dir = { x: 0, z: 0 };
+      }
+      mind.lastDir = dir;
 
-      const speed = WALK_SPEED;
+      // Bots sprint when engaged and the target is within striking distance,
+      // assuming they have energy. Without this they only ever walked and a
+      // sprinting human could never be caught or escape from.
+      const wantSprint =
+        (chasing || fleeing) &&
+        enemyDist < BOT_SPRINT_TRIGGER_RADIUS &&
+        bot.sprintEnergy > MAX_SPRINT * 0.15;
+      const speed = wantSprint ? SPRINT_SPEED : WALK_SPEED;
       const step = speed * dt;
       // Try the straight-ahead move first. If a wall blocks it, try sliding
       // along each axis (X-only, then Z-only). A bot chasing through a maze
@@ -568,6 +642,15 @@ export class Room implements DurableObject {
         });
         this.checkWin();
       }
+
+      // Mirror the human sprint energy model so a bot that just sprinted has
+      // to recover before sprinting again. Otherwise the bot would sprint
+      // forever and never catch its breath.
+      bot.sprintEnergy = clamp(
+        bot.sprintEnergy + (wantSprint && moved ? -SPRINT_DRAIN_PER_S : SPRINT_REGEN_PER_S) * dt,
+        0,
+        MAX_SPRINT,
+      );
     }
   }
 

@@ -93,12 +93,7 @@ export function generateGridMazeWalls(
  * cells, which is closer to a classical labyrinth pattern than the dead-end
  * mazes spanning trees produce.
  */
-function braid(
-  openings: Uint8Array,
-  gridN: number,
-  topology: Topology,
-  next: () => number,
-): void {
+function braid(openings: Uint8Array, gridN: number, topology: Topology, next: () => number): void {
   const total = gridN * gridN;
   for (let cell = 0; cell < total; cell += 1) {
     if (popCountNibble(openings[cell]!) >= 2) continue;

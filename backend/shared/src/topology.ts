@@ -34,11 +34,16 @@ export function wrapPosition(p: Vec2, topology: Topology, width: number): Vec2 {
       };
     }
     case 'sphere': {
-      // Stereographic-style wrap. Outside the disk we wrap to the antipode.
-      const r = Math.sqrt(p.x * p.x + p.z * p.z);
-      if (r <= half) return { x: p.x, z: p.z };
-      const k = (width - r) / r;
-      return { x: p.x * k, z: p.z * k };
+      // First-cut sphere uses torus-like modular wrap. The 3x2 face packing
+      // fills the full playfield, so modular wrap is the right primitive for
+      // crossing between faces - close enough to the eventual cube-mapped
+      // adjacency to feel right at small step sizes.
+      // TODO: proper cube-net edge adjacency with the right rotations when
+      // crossing a face boundary.
+      return {
+        x: wrap(p.x, width),
+        z: wrap(p.z, width),
+      };
     }
   }
 }
@@ -60,15 +65,12 @@ export function topologyDistance(a: Vec2, b: Vec2, topology: Topology, width: nu
       return Math.hypot(dxA, dzA);
     }
     case 'sphere': {
-      const half = width / 2;
-      const ax = (a.x / half) * Math.PI;
-      const az = (a.z / half) * Math.PI;
-      const bx = (b.x / half) * Math.PI;
-      const bz = (b.z / half) * Math.PI;
-      const dx = Math.cos(ax) * Math.cos(az) - Math.cos(bx) * Math.cos(bz);
-      const dy = Math.sin(ax) * Math.cos(az) - Math.sin(bx) * Math.cos(bz);
-      const dz = Math.sin(az) - Math.sin(bz);
-      return half * Math.acos(1 - (dx * dx + dy * dy + dz * dz) / 2);
+      // First-cut sphere distance mirrors the wrap: torus-like shortest path
+      // across both axes.
+      // TODO: proper sphere geodesic distance across cube faces.
+      const dx = wrappedDelta(a.x, b.x, width);
+      const dz = wrappedDelta(a.z, b.z, width);
+      return Math.hypot(dx, dz);
     }
   }
 }

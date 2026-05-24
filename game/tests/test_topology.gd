@@ -40,10 +40,14 @@ func test_klein_flips_z_on_x_wrap() -> void:
 	assert_approx(p.x, -H + 20.0, 0.001, "klein wrap x")
 	assert_approx(p.z, -20.0, 0.001, "klein flip z")
 
-func test_sphere_reflects_outside_disk() -> void:
+func test_sphere_wraps_torus_like() -> void:
+	# First-cut sphere uses modular wrap so the 3x2 face packing's seams behave
+	# torus-like. Proper cube-net rotations land in a follow-up.
 	var sphere := SphereTopology.new()
 	var p := sphere.wrap(Vector3(H + 20.0, 0.0, 0.0))
-	assert_true(absf(p.x) < H, "sphere returns inside disk")
+	assert_approx(p.x, -H + 20.0, 0.001, "sphere wrap x")
+	var q := sphere.wrap(Vector3(0.0, 0.0, -H - 20.0))
+	assert_approx(q.z, H - 20.0, 0.001, "sphere wrap z")
 
 func test_factory_returns_correct_kind() -> void:
 	assert_eq(TopologyFactory.from_string("plane").kind(), TopologyScript.Kind.PLANE)

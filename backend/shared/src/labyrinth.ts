@@ -67,19 +67,31 @@ function chooseGapIndices(seed: number, ringIndex: number): Set<number> {
  * (perpendicular to length); for server-side collision we treat each wall as
  * a thick line segment.
  *
- * Topology dispatch:
- *   - Plane, torus, Klein: grid maze (the only difference is wrap behavior at
- *     the boundary; plane adds closed boundary walls, torus and Klein skip
- *     them).
- *   - Sphere: still the concentric-ring layout pending cube-mapped topology.
+ * Every topology now flows through the grid maze:
+ *   - Plane: closed rectangle with boundary walls.
+ *   - Torus and Klein: boundary walls skipped because the wrap folds both
+ *     edges to the same line.
+ *   - Sphere: six independent 4x6 face mazes packed 3x2 in the playfield;
+ *     face boundaries are open so the topology wraps the player to the
+ *     adjacent face.
+ *
+ * The concentric-ring layout is no longer dispatched anywhere but is kept in
+ * the module (chooseGapIndices, RING_RADII, gapJitter) so a future variant
+ * topology can opt back into it without re-deriving the geometry.
  *
  * The default-undefined topology argument keeps the old single-arg signature
  * working for legacy callers that didn't pass topology.
  */
 export function generateWalls(seed: number, topology: Topology = 'plane'): WallSegment[] {
-  if (topology !== 'sphere') {
-    return generateGridMazeWalls(seed, topology);
-  }
+  return generateGridMazeWalls(seed, topology);
+}
+
+/**
+ * Concentric-ring wall layout. No topology dispatches to this any more; it is
+ * retained so an experimental lobby mode can opt back in without re-deriving
+ * the geometry.
+ */
+export function generateRingWalls(seed: number): WallSegment[] {
   const out: WallSegment[] = [];
   const subdivisions = 4;
   for (let ringIndex = 0; ringIndex < RING_RADII.length; ringIndex += 1) {

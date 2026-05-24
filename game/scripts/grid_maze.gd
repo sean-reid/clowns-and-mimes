@@ -13,13 +13,21 @@ const DIR_NORTH := 1
 const DIR_WEST := 2
 const DIR_SOUTH := 3
 
+# Sphere cube-face layout. Six 4x6 mazes packed 3x2 fill the playfield. The
+# constants match backend/shared/src/gridMaze.ts so the TS server and the
+# GDScript client agree on every wall.
+const SPHERE_FACE_COLS := 3
+const SPHERE_FACE_ROWS := 2
+const SPHERE_FACE_CELLS_X := 4
+const SPHERE_FACE_CELLS_Z := 6
+const SPHERE_GRID_X := SPHERE_FACE_COLS * SPHERE_FACE_CELLS_X  # 12
+const SPHERE_GRID_Z := SPHERE_FACE_ROWS * SPHERE_FACE_CELLS_Z  # 12
+
 const TopologyScript := preload("res://scripts/topology/topology.gd")
 
 static func generate(seed_value: int, topology_name: String, grid_n: int = GRID_MAZE_N) -> Array:
 	if topology_name == "sphere":
-		# Sphere still uses concentric rings pending a real cube-mapped
-		# topology. Callers fall back to ring generation when this is empty.
-		return []
+		return _generate_sphere(seed_value)
 	var total: int = grid_n * grid_n
 	var visited := PackedByteArray()
 	visited.resize(total)
@@ -155,4 +163,127 @@ static func _emit_walls(openings: PackedByteArray, grid_n: int, topology_name: S
 			var x0: float = (float(c) * cell) - half
 			var x1: float = (float(c + 1) * cell) - half
 			out.append({"ax": x0, "az": -half, "bx": x1, "bz": -half})
+	return out
+
+# Sphere wall list: six independent grid mazes laid out 3x2 in the playfield.
+# Each face is a 4x6 cell grid. Face boundaries carry no walls so a player
+# crossing a face edge wraps onto the adjacent face via the topology adapter.
+#
+# Faces are visited in a fixed order (row 0 col 0, row 0 col 1, row 0 col 2,
+# row 1 col 0, row 1 col 1, row 1 col 2) and share one LCG state, mirroring
+# backend/shared/src/gridMaze.ts::generateSphereGridWalls.
+#
+# TODO: this first cut uses torus-like wrapping between faces. Proper cube-net
+# edge rotations and per-face spawn zones are a follow-up.
+static func _generate_sphere(seed_value: int) -> Array:
+	var fcx: int = SPHERE_FACE_CELLS_X
+	var fcz: int = SPHERE_FACE_CELLS_Z
+	var face_total: int = fcx * fcz
+	var total_cells: int = SPHERE_GRID_X * SPHERE_GRID_Z
+	var openings := PackedByteArray()
+	openings.resize(total_cells)
+	var rng_state: int = seed_value & 0xFFFFFFFF
+	for fr in SPHERE_FACE_ROWS:
+		for fc in SPHERE_FACE_COLS:
+			var local_visited := PackedByteArray()
+			local_visited.resize(face_total)
+			var local_openings := PackedByteArray()
+			local_openings.resize(face_total)
+			rng_state = _lcg_next(rng_state)
+			var start: int = rng_state % face_total
+			local_visited[start] = 1
+			var stack: Array[int] = [start]
+			while not stack.is_empty():
+				var cur: int = stack[stack.size() - 1]
+				var candidates: Array = []
+				for dir in 4:
+					var nb: int = _sphere_local_neighbor(cur, dir, fcx, fcz)
+					if nb < 0:
+						continue
+					if local_visited[nb] != 0:
+						continue
+					candidates.append([dir, nb])
+				if candidates.is_empty():
+					stack.pop_back()
+					continue
+				rng_state = _lcg_next(rng_state)
+				var pick: Array = candidates[rng_state % candidates.size()]
+				var pick_dir: int = pick[0]
+				var pick_cell: int = pick[1]
+				local_openings[cur] = local_openings[cur] | (1 << pick_dir)
+				local_openings[pick_cell] = local_openings[pick_cell] | (1 << _opposite(pick_dir))
+				local_visited[pick_cell] = 1
+				stack.append(pick_cell)
+			# Per-face braid using the shared LCG state.
+			for cell in face_total:
+				if _popcount_nibble(local_openings[cell]) >= 2:
+					continue
+				var closed_neighbors: Array = []
+				for dir in 4:
+					if (local_openings[cell] & (1 << dir)) != 0:
+						continue
+					var nb: int = _sphere_local_neighbor(cell, dir, fcx, fcz)
+					if nb < 0:
+						continue
+					closed_neighbors.append([dir, nb])
+				if closed_neighbors.is_empty():
+					continue
+				rng_state = _lcg_next(rng_state)
+				var pick: Array = closed_neighbors[rng_state % closed_neighbors.size()]
+				var pick_dir: int = pick[0]
+				var pick_cell: int = pick[1]
+				local_openings[cell] = local_openings[cell] | (1 << pick_dir)
+				local_openings[pick_cell] = local_openings[pick_cell] | (1 << _opposite(pick_dir))
+			# Copy this face's openings into the 12x12 global packing.
+			for lr in fcz:
+				for lc in fcx:
+					var gc: int = fc * fcx + lc
+					var gr: int = fr * fcz + lr
+					openings[gc + gr * SPHERE_GRID_X] = local_openings[lc + lr * fcx]
+	return _emit_sphere_walls(openings)
+
+static func _sphere_local_neighbor(local_cell: int, dir: int, fcx: int, fcz: int) -> int:
+	var lc: int = local_cell % fcx
+	var lr: int = local_cell / fcx
+	var nc: int = lc
+	var nr: int = lr
+	if dir == DIR_EAST:
+		nc = lc + 1
+	elif dir == DIR_WEST:
+		nc = lc - 1
+	elif dir == DIR_NORTH:
+		nr = lr + 1
+	elif dir == DIR_SOUTH:
+		nr = lr - 1
+	if nc < 0 or nc >= fcx:
+		return -1
+	if nr < 0 or nr >= fcz:
+		return -1
+	return nc + nr * fcx
+
+static func _emit_sphere_walls(openings: PackedByteArray) -> Array:
+	var cell: float = TopologyScript.WIDTH / float(SPHERE_GRID_X)
+	var half: float = TopologyScript.WIDTH / 2.0
+	var fcx: int = SPHERE_FACE_CELLS_X
+	var fcz: int = SPHERE_FACE_CELLS_Z
+	var out: Array = []
+	for r in SPHERE_GRID_Z:
+		for c in SPHERE_GRID_X:
+			var id: int = c + r * SPHERE_GRID_X
+			var east_closed: bool = (openings[id] & (1 << DIR_EAST)) == 0
+			var north_closed: bool = (openings[id] & (1 << DIR_NORTH)) == 0
+			var local_col: int = c % fcx
+			var local_row: int = r % fcz
+			var on_face_east_edge: bool = local_col == fcx - 1
+			var on_face_north_edge: bool = local_row == fcz - 1
+			if east_closed and not on_face_east_edge:
+				var x: float = (float(c + 1) * cell) - half
+				var z0: float = (float(r) * cell) - half
+				var z1: float = (float(r + 1) * cell) - half
+				out.append({"ax": x, "az": z0, "bx": x, "bz": z1})
+			if north_closed and not on_face_north_edge:
+				var z: float = (float(r + 1) * cell) - half
+				var x0: float = (float(c) * cell) - half
+				var x1: float = (float(c + 1) * cell) - half
+				out.append({"ax": x0, "az": z, "bx": x1, "bz": z})
 	return out

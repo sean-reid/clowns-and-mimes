@@ -1,10 +1,16 @@
 extends Node3D
 
-## Labyrinth. The visual layout depends on topology:
-##   * Plane, torus, Klein: grid maze (mirrors backend/shared/src/gridMaze.ts).
-##     Plane gets closed boundary walls; torus and Klein skip them since the
-##     wrap folds both edges to the same line.
-##   * Sphere: concentric rings pending cube-mapped topology rework.
+## Labyrinth. Every topology now drives the grid maze (mirrors
+## backend/shared/src/gridMaze.ts):
+##   * Plane: closed rectangle with boundary walls.
+##   * Torus and Klein: wrap seams have no walls so the topology folds both
+##     edges to the same line.
+##   * Sphere: six independent 4x6 face mazes packed 3x2 in the playfield;
+##     face boundaries are open so the topology wraps a player crossing an
+##     edge onto the adjacent face.
+##
+## The ring layout (_build_ring, _add_arc_wall) is no longer dispatched but is
+## kept for an experimental lobby mode that may opt back in.
 ##
 ## Walls are deterministic given a seed and feed a topology-aware AStar2D graph
 ## for bot pathfinding.
@@ -39,13 +45,7 @@ func build(rng_seed: int, top: TopologyScript) -> void:
 	_clear_walls()
 	_wall_segments.clear()
 	var topo_name: String = topology.name()
-	if topo_name != "sphere":
-		_build_grid_maze(rng_seed, topo_name)
-	else:
-		var rng := RandomNumberGenerator.new()
-		rng.seed = rng_seed
-		for ring_index in RING_RADII.size():
-			_build_ring(ring_index, rng)
+	_build_grid_maze(rng_seed, topo_name)
 	_build_pathfinder()
 
 func _build_grid_maze(rng_seed: int, topo_name: String) -> void:

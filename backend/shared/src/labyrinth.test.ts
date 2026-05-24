@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { gapJitter, generateWalls, pathCrossesWall, RING_RADII } from './labyrinth.ts';
+import { gapJitter, generateWalls, pathCrossesWall } from './labyrinth.ts';
+import { WORLD_WIDTH } from './topology.ts';
+import { SPHERE_FACE_COLS, SPHERE_FACE_ROWS } from './gridMaze.ts';
 
 describe('gapJitter', () => {
   it('returns 0 or 1', () => {
@@ -53,14 +55,12 @@ describe('generateWalls', () => {
     expect(walls.length).toBeLessThan(300);
   });
 
-  it('keeps spheres on the ring layout for now (pending cube mapping)', () => {
+  it('produces axis-aligned walls on a sphere (cube-mapped grid)', () => {
     const walls = generateWalls(7, 'sphere');
+    expect(walls.length).toBeGreaterThan(0);
     for (const w of walls) {
-      const midX = (w.ax + w.bx) / 2;
-      const midZ = (w.az + w.bz) / 2;
-      const radius = Math.hypot(midX, midZ);
-      const onRing = RING_RADII.some((r) => Math.abs(r - radius) < 0.5);
-      expect(onRing).toBe(true);
+      const axisAligned = w.ax === w.bx || w.az === w.bz;
+      expect(axisAligned).toBe(true);
     }
   });
 });
@@ -111,7 +111,7 @@ describe('generateWalls (plane, torus, klein use grid maze)', () => {
     expect(onBottom).toBe(true);
   });
 
-  it('keeps spheres on the ring layout for now (pending cube mapping)', () => {
+  it('omits walls on the sphere playfield boundary', () => {
     const walls = generateWalls(7, 'sphere');
     const half = 40;
     const anyOnBoundary = walls.some(
@@ -122,6 +122,47 @@ describe('generateWalls (plane, torus, klein use grid maze)', () => {
         (w.az === -half && w.bz === -half),
     );
     expect(anyOnBoundary).toBe(false);
+  });
+
+  it('omits walls along the 3x2 sphere face boundaries', () => {
+    // A wall lying on the vertical seam between two face columns at
+    // x = -half + col * (WIDTH / 3) would visually bisect the maze. Same for
+    // the horizontal seam at z = 0. Both must stay open so the topology can
+    // wrap a player across them.
+    const walls = generateWalls(7, 'sphere');
+    const half = WORLD_WIDTH / 2;
+    const faceWidth = WORLD_WIDTH / SPHERE_FACE_COLS;
+    const faceHeight = WORLD_WIDTH / SPHERE_FACE_ROWS;
+    const verticalSeams: number[] = [];
+    for (let i = 1; i < SPHERE_FACE_COLS; i += 1) {
+      verticalSeams.push(-half + i * faceWidth);
+    }
+    const horizontalSeams: number[] = [];
+    for (let i = 1; i < SPHERE_FACE_ROWS; i += 1) {
+      horizontalSeams.push(-half + i * faceHeight);
+    }
+    for (const w of walls) {
+      const isVerticalSeg = w.ax === w.bx;
+      const isHorizontalSeg = w.az === w.bz;
+      if (isVerticalSeg) {
+        for (const seam of verticalSeams) {
+          expect(w.ax).not.toBeCloseTo(seam, 6);
+        }
+      }
+      if (isHorizontalSeg) {
+        for (const seam of horizontalSeams) {
+          expect(w.az).not.toBeCloseTo(seam, 6);
+        }
+      }
+    }
+  });
+
+  it('produces different walls for sphere and torus at the same seed', () => {
+    // Six independent face mazes traverse a different topology than one big
+    // wrapping grid, so the resulting wall lists must diverge.
+    const s = generateWalls(2026, 'sphere');
+    const t = generateWalls(2026, 'torus');
+    expect(s).not.toEqual(t);
   });
 
   it('skips walls along the wrap seam', () => {

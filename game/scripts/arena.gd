@@ -86,15 +86,6 @@ var input_accumulator: float = 0.0
 # to know the yaw at the original tick.
 var pending_inputs: Array = []
 var local_sprint_energy: float = 100.0
-# Render-side interpolation state for the local player. The predictor advances
-# logically at 20 Hz; without these the rendered position only updates 20
-# times per second on a 60 Hz screen and looks choppy. Each input tick we
-# stash the "from" and "to" XZ; _physics_process lerps between them across
-# INPUT_TICK_PERIOD so the body glides instead of teleporting.
-var _local_interp_from: Vector2 = Vector2.ZERO
-var _local_interp_to: Vector2 = Vector2.ZERO
-var _local_interp_start_s: float = 0.0
-var _local_interp_armed: bool = false
 
 # Shared.
 var local_player: Node = null
@@ -158,8 +149,15 @@ func _physics_process(delta: float) -> void:
 	if not local_player.frozen:
 		_check_contact_interactions()
 	if online_mode and snapshot_received:
+		# Run the same movement math the server runs, but at the physics frame
+		# rate (typically 60 Hz) instead of the network tick rate (20 Hz). At
+		# walk this would feel smooth either way; at sprint the 20 Hz logical
+		# step is 0.28 units per tick and rendering at the tick rate looked
+		# stuttery. _stream_input is now just the buffer/send path on each
+		# 20 Hz boundary.
+		if not local_player.frozen:
+			_advance_local_prediction(delta)
 		_stream_input(delta)
-		_advance_local_render_interp()
 
 # ---------------------------------------------------------------------------
 # Offline path
@@ -372,11 +370,40 @@ func _drive_online_hud() -> void:
 	var remaining_s: float = max(0.0, (turn_ends_at_ms - now_ms) / 1000.0)
 	hud.set_countdown_seconds(remaining_s)
 
+## Run one physics-frame step of the same movement math the server runs,
+## scaled by the actual frame delta. Updates local_player.global_position so
+## the body responds at the screen's refresh rate. The 20 Hz buffer for the
+## server is still produced in _stream_input; only the rendered position
+## comes from this loop.
+func _advance_local_prediction(delta: float) -> void:
+	if local_player == null or labyrinth == null or topology == null:
+		return
+	var wasd: Vector2 = _sample_move_intent()
+	var yaw: float = local_player.rotation.y
+	var world_move: Vector2 = _rotate_wasd_to_world(wasd, yaw)
+	var sprinting: bool = (
+		Input.is_action_pressed("sprint") and _input_active() and wasd.length() > 0.0
+	)
+	var pos2: Vector2 = Vector2(local_player.global_position.x, local_player.global_position.z)
+	var step := Movement.step(
+		{"position": pos2, "sprint_energy": local_sprint_energy},
+		{"move": world_move, "sprint": sprinting, "dt": delta},
+		labyrinth.wall_endpoints(),
+		topology,
+	)
+	var new_pos: Vector2 = step["position"]
+	local_sprint_energy = step["sprint_energy"]
+	local_player.global_position = Vector3(new_pos.x, local_player.global_position.y, new_pos.y)
+	var planar: float = (new_pos - pos2).length() / max(delta, 1e-4)
+	local_player.set_external_motion(planar, sprinting and world_move.length() > 0.0)
+
 func _stream_input(delta: float) -> void:
 	input_accumulator += delta
 	if input_accumulator < INPUT_TICK_PERIOD:
 		return
-	input_accumulator = 0.0
+	# Carry over the remainder so the average tick rate stays at 20 Hz even
+	# when physics frames don't land exactly on tick boundaries.
+	input_accumulator -= INPUT_TICK_PERIOD
 	input_seq += 1
 	# Sample WASD in player-local axes, then rotate into world XZ. Server and
 	# client both treat input.move as world-space, so reconciliation replay
@@ -384,10 +411,12 @@ func _stream_input(delta: float) -> void:
 	var wasd: Vector2 = _sample_move_intent()
 	var yaw: float = local_player.rotation.y
 	var world_move: Vector2 = _rotate_wasd_to_world(wasd, yaw)
-	var sprinting: bool = Input.is_action_pressed("sprint") and _input_active() and wasd.length() > 0.0
-	# Frozen players don't move on the server, so don't predict motion locally
-	# either; otherwise the predicted position runs away from the server's
-	# stationary truth and the next delta snaps us back.
+	var sprinting: bool = (
+		Input.is_action_pressed("sprint") and _input_active() and wasd.length() > 0.0
+	)
+	# Frozen players don't move on the server, so don't queue motion in the
+	# buffer either; otherwise replay after a delta would walk us forward
+	# from where the server kept us put.
 	var frozen: bool = bool(local_player.frozen)
 	var effective_move: Vector2 = Vector2.ZERO if frozen else world_move
 	var effective_sprint: bool = false if frozen else sprinting
@@ -397,9 +426,6 @@ func _stream_input(delta: float) -> void:
 		"sprint": effective_sprint,
 		"dt": INPUT_TICK_PERIOD,
 	})
-	# Local-player prediction: apply the same step the server will, so the
-	# rendered position matches what the server is computing.
-	_apply_predicted_input(effective_move, effective_sprint, INPUT_TICK_PERIOD)
 	room_client.send_input(input_seq, INPUT_TICK_PERIOD, effective_move, yaw, sprinting)
 
 func _rotate_wasd_to_world(wasd: Vector2, yaw: float) -> Vector2:
@@ -411,46 +437,6 @@ func _rotate_wasd_to_world(wasd: Vector2, yaw: float) -> Vector2:
 	var lx: float = wasd.x
 	var lz: float = wasd.y
 	return Vector2(cy * lx + sy * lz, -sy * lx + cy * lz)
-
-func _apply_predicted_input(world_move: Vector2, sprinting: bool, dt: float) -> void:
-	if local_player == null or labyrinth == null or topology == null:
-		return
-	# Step from the LAST tick's target rather than the currently-rendered
-	# (mid-interp) body position, so seq N+1's input applies cleanly on top of
-	# seq N's logical result. Mixing in the half-lerp position would cause
-	# the next tick to overshoot or undershoot by however far through the
-	# interpolation window we are.
-	var pos2: Vector2 = (
-		_local_interp_to
-		if _local_interp_armed
-		else Vector2(local_player.global_position.x, local_player.global_position.z)
-	)
-	var step := Movement.step(
-		{"position": pos2, "sprint_energy": local_sprint_energy},
-		{"move": world_move, "sprint": sprinting, "dt": dt},
-		labyrinth.wall_endpoints(),
-		topology,
-	)
-	var new_pos: Vector2 = step["position"]
-	local_sprint_energy = step["sprint_energy"]
-	# Move forward across the interp window instead of snapping. The render
-	# position starts at wherever the body is right now and glides to the new
-	# target over INPUT_TICK_PERIOD; on a 60 Hz screen this turns 20 Hz logical
-	# ticks into smooth motion.
-	_local_interp_from = Vector2(local_player.global_position.x, local_player.global_position.z)
-	_local_interp_to = new_pos
-	_local_interp_start_s = Time.get_unix_time_from_system()
-	_local_interp_armed = true
-	var planar: float = (Vector2(new_pos.x - pos2.x, new_pos.y - pos2.y)).length() / max(dt, 1e-4)
-	local_player.set_external_motion(planar, sprinting and world_move.length() > 0.0)
-
-func _advance_local_render_interp() -> void:
-	if not _local_interp_armed or local_player == null:
-		return
-	var elapsed: float = Time.get_unix_time_from_system() - _local_interp_start_s
-	var t: float = clampf(elapsed / INPUT_TICK_PERIOD, 0.0, 1.0)
-	var p: Vector2 = _local_interp_from.lerp(_local_interp_to, t)
-	local_player.global_position = Vector3(p.x, local_player.global_position.y, p.y)
 
 func _sync_players_from_snapshot(entries: Array) -> void:
 	var seen: Dictionary = {}

@@ -161,6 +161,18 @@ func apply_remote_state(pos: Vector3, yaw: float, is_frozen: bool, sprint: float
 	rotation.y = yaw
 	frozen = is_frozen
 	sprint_energy = sprint
+	settle_into_world()
+
+# CharacterBody3D does not auto-resolve overlaps when global_position is set
+# directly (spawn, topology wrap, apply_remote_state). Running move_and_slide
+# with zero velocity invokes the physics solver's recovery pass, which pushes
+# the body out of any wall it ended up inside. Cheap enough to call after
+# every direct write.
+func settle_into_world() -> void:
+	var prior := velocity
+	velocity = Vector3.ZERO
+	move_and_slide()
+	velocity = prior
 
 func _update_marker() -> void:
 	# Local player should not see their own marker even while frozen.

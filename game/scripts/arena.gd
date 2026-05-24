@@ -123,7 +123,13 @@ func _process(_delta: float) -> void:
 func _physics_process(delta: float) -> void:
 	if local_player == null or topology == null:
 		return
-	local_player.global_position = topology.wrap(local_player.global_position)
+	var wrapped: Vector3 = topology.wrap(local_player.global_position)
+	if wrapped != local_player.global_position:
+		# Topology actually teleported us across a seam (torus, klein). Direct
+		# global_position writes bypass collision, so settle the body into the
+		# new space in case it landed inside a wall on the far side.
+		local_player.global_position = wrapped
+		local_player.settle_into_world()
 	if not local_player.frozen:
 		_check_contact_interactions()
 	if online_mode and snapshot_received:
@@ -354,6 +360,10 @@ func _spawn_player(id: String, p_name: String, team: String, is_bot: bool, is_lo
 		spawn.global_position + team_offset
 		+ Vector3(cos(angle) * radius, 0.0, sin(angle) * radius)
 	)
+	# Spawn position is computed in code; the body is dropped in by direct
+	# assignment, which bypasses collision. Run a recovery pass so the new
+	# capsule is not interpenetrating any wall it happened to land near.
+	p.settle_into_world()
 	player_nodes[id] = p
 	if is_local:
 		local_player = p

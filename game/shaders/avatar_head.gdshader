@@ -1,9 +1,9 @@
-// Avatar head: face texture on the front hemisphere, solid team color on the
-// back hemisphere with a short blend zone between them. The SphereMesh's
-// default UV unwrap runs longitude across U (0..1) and latitude across V; U
-// 0.0 sits at the back seam, U 0.5 is the front-facing meridian, U 1.0
-// returns to the back seam. The half-width of the face zone is set by
-// FACE_HALF_WIDTH; outside it the back_color fills.
+// Avatar head: the full face image cropped to a face-shaped ellipse on the
+// front of the head, solid team color filling the rest. The SphereMesh's
+// default UV unwrap runs longitude across U (0..1) and latitude across V;
+// U=0.5 is the forward meridian, V=0.5 is the equator. The whole face
+// texture (not just its center) is rescaled to fit inside the ellipse, so
+// the player sees an actual face on the head, not a tiny crop of one.
 
 shader_type spatial;
 // Default back-face culling stays on. The local player's camera sits inside
@@ -13,17 +13,27 @@ shader_type spatial;
 uniform sampler2D face_texture : source_color, filter_linear, repeat_disable;
 uniform vec3 back_color : source_color = vec3(0.3, 0.05, 0.1);
 
-const float FACE_HALF_WIDTH = 0.25;
-const float FACE_EDGE_SOFTNESS = 0.04;
+// Ellipse half-axes in UV space, in (longitude, latitude) units. Taller
+// than wide so the patch reads as a face shape rather than a circle.
+const float FACE_U_HALF = 0.22;
+const float FACE_V_HALF = 0.30;
+const float FACE_EDGE_SOFTNESS = 0.05;
 
 void fragment() {
-    // Distance along the equator from the front meridian (U = 0.5), wrapped
-    // so the back seam is the far side. Result is 0 at the front and 0.5 at
-    // the back.
-    float u_from_front = abs(UV.x - 0.5);
-    float face_factor = 1.0 - smoothstep(FACE_HALF_WIDTH - FACE_EDGE_SOFTNESS, FACE_HALF_WIDTH + FACE_EDGE_SOFTNESS, u_from_front);
+    // Normalized distance from (U=0.5, V=0.5) in ellipse-half-axis units.
+    // Outside length 1.0, the back color takes over.
+    vec2 d = vec2((UV.x - 0.5) / FACE_U_HALF, (UV.y - 0.5) / FACE_V_HALF);
+    float dist = length(d);
+    float face_factor = 1.0 - smoothstep(1.0 - FACE_EDGE_SOFTNESS, 1.0 + FACE_EDGE_SOFTNESS, dist);
 
-    vec4 face = texture(face_texture, UV);
+    // Remap the sphere's UV onto the texture so the full face image fits
+    // inside the ellipse's bounding box. Without this, we'd sample only the
+    // small middle slice of the texture and waste most of the face image.
+    vec2 patch_uv = vec2(
+        (UV.x - (0.5 - FACE_U_HALF)) / (2.0 * FACE_U_HALF),
+        (UV.y - (0.5 - FACE_V_HALF)) / (2.0 * FACE_V_HALF)
+    );
+    vec4 face = texture(face_texture, patch_uv);
     ALBEDO = mix(back_color, face.rgb, face_factor);
     ROUGHNESS = 0.7;
 }

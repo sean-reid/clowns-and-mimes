@@ -54,6 +54,10 @@ const BOT_PATROL_RETARGET_MS = 4_000;
 // (chase) or when fleeing and the threat is closing. Without sprint they
 // were always walking and could never close on or escape a sprinting human.
 const BOT_SPRINT_TRIGGER_RADIUS = 10;
+// Grace window after an unfreeze where the saved player cannot be re-tagged.
+// Without this, two opponents adjacent to a saved teammate could re-freeze
+// them on the very next tick and trigger an endless freeze/save chain.
+const UNFREEZE_GRACE_MS = 1_500;
 
 interface BotMind {
   patrolTarget: { x: number; z: number };
@@ -89,6 +93,10 @@ export class Room implements DurableObject {
   private tickHandle: ReturnType<typeof setInterval> | null = null;
   private botFillHandle: ReturnType<typeof setTimeout> | null = null;
   private readonly botMinds = new Map<string, BotMind>();
+  // Wall-clock ms when each player was last unfrozen. Used by canTag to
+  // refuse a re-tag inside UNFREEZE_GRACE_MS so adjacent attackers can't
+  // start an immediate freeze/save oscillation.
+  private readonly lastSavedAt = new Map<string, number>();
   private walls: readonly WallSegment[] = [];
 
   constructor(private readonly state: DurableObjectState) {
@@ -289,6 +297,7 @@ export class Room implements DurableObject {
     this.connections.delete(ws);
     this.players.delete(conn.playerId);
     this.lastInputs.delete(conn.playerId);
+    this.lastSavedAt.delete(conn.playerId);
     if (this.humanPlayers().length === 0) {
       this.stopTick();
       this.cancelBotFill();
@@ -326,8 +335,9 @@ export class Room implements DurableObject {
       this.send(ws, { t: 'tag_result', ok: false, reason: 'missing' });
       return;
     }
-    if (!this.canTag(attacker, victim, TAG_RADIUS_CLIENT)) {
-      this.send(ws, { t: 'tag_result', ok: false, reason: 'invalid' });
+    const reason = this.tagRejectionReason(attacker, victim, TAG_RADIUS_CLIENT);
+    if (reason !== null) {
+      this.send(ws, { t: 'tag_result', ok: false, reason });
       return;
     }
     victim.frozen = true;
@@ -369,6 +379,7 @@ export class Room implements DurableObject {
       return;
     }
     victim.frozen = false;
+    this.lastSavedAt.set(victim.id, Date.now());
     this.send(ws, { t: 'unfreeze_result', ok: true, targetId });
     this.broadcast({
       t: 'event',
@@ -376,16 +387,25 @@ export class Room implements DurableObject {
     });
   }
 
-  private canTag(attacker: PlayerState, victim: PlayerState, radius: number): boolean {
-    if (attacker.team === victim.team) return false;
-    if (attacker.frozen) return false;
-    if (victim.frozen) return false;
-    if (this.phase !== `turn_${attacker.team}`) return false;
+  /**
+   * Returns null when the tag is legal, or a short reason string otherwise.
+   * The reason is forwarded in tag_result so the HUD can surface why a tag
+   * was rejected ('not_your_turn', 'out_of_range', 'wall_in_way', ...)
+   * instead of just 'invalid'.
+   */
+  private tagRejectionReason(
+    attacker: PlayerState,
+    victim: PlayerState,
+    radius: number,
+  ): string | null {
+    if (attacker.team === victim.team) return 'same_team';
+    if (attacker.frozen) return 'you_are_frozen';
+    if (victim.frozen) return 'already_frozen';
+    if (this.phase !== `turn_${attacker.team}`) return 'not_your_turn';
+    const savedAt = this.lastSavedAt.get(victim.id);
+    if (savedAt !== undefined && Date.now() - savedAt < UNFREEZE_GRACE_MS) return 'just_saved';
     const d = topologyDistance(attacker.position, victim.position, this.topology, WORLD_WIDTH);
-    if (d > radius) return false;
-    // A wall between them blocks the tag even if the radius reaches. Bots
-    // and humans both go through this check, so neither can freeze through
-    // a wall.
+    if (d > radius) return 'out_of_range';
     if (
       this.walls.length > 0 &&
       pathCrossesWall(
@@ -396,8 +416,12 @@ export class Room implements DurableObject {
         victim.position.z,
       )
     )
-      return false;
-    return true;
+      return 'wall_in_way';
+    return null;
+  }
+
+  private canTag(attacker: PlayerState, victim: PlayerState, radius: number): boolean {
+    return this.tagRejectionReason(attacker, victim, radius) === null;
   }
 
   private tally(team: Team): number {
@@ -725,6 +749,7 @@ export class Room implements DurableObject {
           ))
       ) {
         rescueTarget.frozen = false;
+        this.lastSavedAt.set(rescueTarget.id, Date.now());
         this.broadcast({
           t: 'event',
           kind: { kind: 'saved', saviorId: bot.id, victimId: rescueTarget.id },

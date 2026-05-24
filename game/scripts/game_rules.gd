@@ -10,7 +10,7 @@ const TopologyScript := preload("res://scripts/topology/topology.gd")
 enum Phase { LOBBY, COUNTDOWN, FREE_ROAM, TURN_MIME, TURN_CLOWN, ENDED }
 
 const COUNTDOWN_S := 10.0
-const FREE_ROAM_S := 60.0
+const FREE_ROAM_S := 30.0
 const FIRST_TURN_S := 30.0
 const TURN_STEP_S := 30.0
 const TURN_CAP_S := 300.0

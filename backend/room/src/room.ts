@@ -426,22 +426,48 @@ export class Room implements DurableObject {
       }
 
       const speed = WALK_SPEED;
-      const next = {
-        x: bot.position.x + dir.x * speed * dt,
-        z: bot.position.z + dir.z * speed * dt,
-      };
-      if (
-        this.walls.length > 0 &&
-        pathCrossesWall(this.walls, bot.position.x, bot.position.z, next.x, next.z)
-      ) {
-        // Wall in the way - re-roll the patrol target so the bot does not just
-        // keep grinding against the same wall every tick.
+      const step = speed * dt;
+      // Try the straight-ahead move first. If a wall blocks it, try sliding
+      // along each axis (X-only, then Z-only). A bot chasing through a maze
+      // corridor used to dance in place because the direct line to the
+      // target ran into a wall every tick.
+      const candidates: Array<{ x: number; z: number; chosen: { x: number; z: number } }> = [
+        {
+          x: bot.position.x + dir.x * step,
+          z: bot.position.z + dir.z * step,
+          chosen: dir,
+        },
+        {
+          x: bot.position.x + Math.sign(dir.x) * step,
+          z: bot.position.z,
+          chosen: { x: Math.sign(dir.x), z: 0 },
+        },
+        {
+          x: bot.position.x,
+          z: bot.position.z + Math.sign(dir.z) * step,
+          chosen: { x: 0, z: Math.sign(dir.z) },
+        },
+      ];
+      let moved = false;
+      for (const candidate of candidates) {
+        if (candidate.chosen.x === 0 && candidate.chosen.z === 0) continue;
+        if (
+          this.walls.length === 0 ||
+          !pathCrossesWall(this.walls, bot.position.x, bot.position.z, candidate.x, candidate.z)
+        ) {
+          bot.position = wrapPosition({ x: candidate.x, z: candidate.z }, this.topology, WORLD_WIDTH);
+          bot.yaw = Math.atan2(-candidate.chosen.x, -candidate.chosen.z);
+          moved = true;
+          break;
+        }
+      }
+      if (!moved) {
+        // Pinned on every axis - shake the bot loose by picking a fresh patrol
+        // target. Eventually a tick will land an open candidate.
         mind.patrolTarget = this.randomPatrolPoint();
         mind.patrolUntil = now + BOT_PATROL_RETARGET_MS;
-      } else {
-        bot.position = wrapPosition(next, this.topology, WORLD_WIDTH);
+        bot.yaw = Math.atan2(-dir.x, -dir.z);
       }
-      bot.yaw = Math.atan2(-dir.x, -dir.z);
 
       if (chasing && target && enemyDist <= TAG_RADIUS && this.canTag(bot, target)) {
         target.frozen = true;

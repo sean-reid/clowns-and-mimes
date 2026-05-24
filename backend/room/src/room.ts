@@ -470,8 +470,25 @@ export class Room implements DurableObject {
         }
       }
       if (!moved) {
-        // Pinned on every axis - shake the bot loose by picking a fresh patrol
-        // target. Eventually a tick will land an open candidate.
+        // Pinned on every axis. Two cases: the bot is in a tight corner
+        // bounded by walls on all sides, or it has somehow ended up with
+        // its center inside a wall (in which case every candidate stays
+        // inside the wall too). Detect the second case with a zero-length
+        // pathCrossesWall against the current position - if the bot's
+        // center is already within clearance of a wall, no nudge will get
+        // it out. Teleport it back to a known-safe spawn cell.
+        if (
+          this.walls.length > 0 &&
+          pathCrossesWall(
+            this.walls,
+            bot.position.x,
+            bot.position.z,
+            bot.position.x,
+            bot.position.z,
+          )
+        ) {
+          bot.position = jitteredSpawn(bot.team);
+        }
         mind.patrolTarget = this.randomPatrolPoint();
         mind.patrolUntil = now + BOT_PATROL_RETARGET_MS;
         bot.yaw = Math.atan2(-dir.x, -dir.z);

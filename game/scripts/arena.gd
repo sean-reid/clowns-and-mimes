@@ -130,9 +130,21 @@ func _unhandled_input(event: InputEvent) -> void:
 # Main loop
 # ---------------------------------------------------------------------------
 
-func _process(_delta: float) -> void:
+func _process(delta: float) -> void:
 	if online_mode:
 		_drive_online_hud()
+		# Run local prediction at the render rate (variable, often higher
+		# than the 60 Hz physics tick). The body is repositioned directly
+		# from the predictor each frame, so motion is as smooth as the
+		# display can present. Wall collision is enforced by the same
+		# stepMovement math the server runs - move_and_slide is only along
+		# for gravity on the predicted-externally branch.
+		if (
+			snapshot_received
+			and local_player != null
+			and not local_player.frozen
+		):
+			_advance_local_prediction(delta)
 	else:
 		_drive_offline_hud()
 
@@ -149,14 +161,8 @@ func _physics_process(delta: float) -> void:
 	if not local_player.frozen:
 		_check_contact_interactions()
 	if online_mode and snapshot_received:
-		# Run the same movement math the server runs, but at the physics frame
-		# rate (typically 60 Hz) instead of the network tick rate (20 Hz). At
-		# walk this would feel smooth either way; at sprint the 20 Hz logical
-		# step is 0.28 units per tick and rendering at the tick rate looked
-		# stuttery. _stream_input is now just the buffer/send path on each
-		# 20 Hz boundary.
-		if not local_player.frozen:
-			_advance_local_prediction(delta)
+		# Network send still goes through _physics_process at 60 Hz; the
+		# 20 Hz tick accumulator inside _stream_input owns when to flush.
 		_stream_input(delta)
 
 # ---------------------------------------------------------------------------

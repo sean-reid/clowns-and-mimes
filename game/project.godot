@@ -28,7 +28,7 @@ window/size/resizable=true
 window/stretch/mode="canvas_items"
 window/stretch/aspect="expand"
 window/dpi/allow_hidpi=true
-window/vsync/vsync_mode=1
+window/vsync/vsync_mode=3
 
 [input]
 

@@ -85,6 +85,10 @@ var local_player: Node = null
 var local_player_id: String = ""
 var player_nodes: Dictionary = {}
 var contact_cooldowns: Dictionary = {}
+# Temporary diagnostic: throttles per-target console prints when a contact
+# happens but no tag/unfreeze fires. Drop together with _debug_tag_result
+# once the chase-tag flow is verified.
+var _debug_no_fire_throttle: Dictionary = {}
 
 # ---------------------------------------------------------------------------
 # Lifecycle
@@ -242,6 +246,20 @@ func _on_room_event(event: Dictionary) -> void:
 		"saved": _handle_saved(event)
 		"win": _handle_win(event)
 		"phase": _handle_phase_event(event.get("phase", ""), int(event.get("cryIndex", -1)))
+		"tag_result": _debug_tag_result(event)
+		"unfreeze_result": _debug_unfreeze_result(event)
+
+# Temporary diagnostic: print server rejections to the local Godot console
+# so playtest-dev sessions can see why tags fail without flooding the HUD.
+func _debug_tag_result(event: Dictionary) -> void:
+	if bool(event.get("ok", false)):
+		return
+	print("[tag-rejected] reason=", event.get("reason", "?"), " target=", event.get("targetId", "?"))
+
+func _debug_unfreeze_result(event: Dictionary) -> void:
+	if bool(event.get("ok", false)):
+		return
+	print("[unfreeze-rejected] reason=", event.get("reason", "?"), " target=", event.get("targetId", "?"))
 
 func _handle_phase_event(phase: String, cry_index: int) -> void:
 	# Server sends 'turn_mime' / 'turn_clown' for the active-turn phases plus a
@@ -409,12 +427,30 @@ func _check_contact_interactions() -> void:
 		if id == local_player_id:
 			continue
 		var node: Node = player_nodes[id]
-		if topology.distance(local_player.global_position, node.global_position) > CONTACT_RADIUS:
+		var dist: float = topology.distance(local_player.global_position, node.global_position)
+		if dist > CONTACT_RADIUS:
 			continue
 		if now - float(contact_cooldowns.get(id, 0.0)) < CONTACT_COOLDOWN_S:
 			continue
-		if _attempt_interaction(id, node, active):
+		var fired: bool = _attempt_interaction(id, node, active)
+		if fired:
 			contact_cooldowns[id] = now
+		else:
+			# Diagnostic: contact close enough but no tag/unfreeze fired. Throttled
+			# to one log per 2 s per target so a long chase doesn't flood the
+			# console. Drop with the other _debug_* helpers once the chase-tag
+			# flow is verified.
+			var last: float = float(_debug_no_fire_throttle.get(id, 0.0))
+			if now - last > 2.0:
+				_debug_no_fire_throttle[id] = now
+				print(
+					"[contact-no-fire] phase=", phase_label,
+					" active=", active,
+					" my_team=", local_player.team,
+					" their_team=", node.team,
+					" their_frozen=", node.frozen,
+					" dist=%.2f" % dist,
+				)
 
 func _attempt_interaction(id: String, node: Node, active: String) -> bool:
 	if active == local_player.team and node.team != local_player.team and not node.frozen:

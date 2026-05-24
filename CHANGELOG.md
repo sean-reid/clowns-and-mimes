@@ -6,6 +6,10 @@ When cutting a release: rename the `[Unreleased]` heading below to the version b
 
 ## [Unreleased]
 
+### Added
+
+- macOS builds are signed with a Developer ID certificate, packaged as a `.dmg` (with a drag-to-Applications symlink), notarized by Apple, and stapled. Gatekeeper accepts the build without the previous one-time `xattr` workaround.
+
 ### Changed
 
 - Retired the `staging` long-lived branch and Cloudflare staging environment. Branch model is now `feature -> dev -> main`. Cloudflare per-PR preview deploys cover any pre-prod sanity check.
@@ -39,4 +43,3 @@ When cutting a release: rename the `[Unreleased]` heading below to the version b
 - A\* pathfinding for bots around labyrinth walls.
 - Wiring RoomClient into Arena so online play is server-driven (currently the lobby reaches the matchmaker, then the arena drops to local rules).
 - Audio assets and footstep emitters.
-- macOS code signing and notarization once Apple Developer secrets are in place.

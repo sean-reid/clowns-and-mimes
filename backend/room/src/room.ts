@@ -14,7 +14,7 @@ import { generateWalls, pathCrossesWall, type WallSegment } from '@cm/shared/lab
 
 const TICK_HZ = 20;
 const TICK_MS = 1000 / TICK_HZ;
-const FREE_ROAM_MS = 60_000;
+const FREE_ROAM_MS = 30_000;
 const COUNTDOWN_MS = 10_000;
 const TAG_RADIUS = 1.4;
 const UNFREEZE_RADIUS = 1.4;

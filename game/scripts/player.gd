@@ -55,6 +55,20 @@ var _last_remote_position: Vector3 = Vector3.ZERO
 var _last_remote_time_s: float = 0.0
 var _remote_planar_speed: float = 0.0
 
+# Remote-position interpolation. The server ticks at 20 Hz so snapshots
+# arrive every ~50 ms; without smoothing the body teleports between samples
+# and the screen jitters. _interp_prev is the position the body should be at
+# when a new snapshot arrives; _interp_target is the position to ride toward
+# over the next snapshot interval. _interp_dt is the measured interval (we do
+# not assume 50 ms in case the server tick rate ever changes).
+var _interp_prev_position: Vector3 = Vector3.ZERO
+var _interp_prev_yaw: float = 0.0
+var _interp_target_position: Vector3 = Vector3.ZERO
+var _interp_target_yaw: float = 0.0
+var _interp_start_time_s: float = 0.0
+var _interp_dt_s: float = 0.05
+var _interp_armed: bool = false
+
 func _ready() -> void:
 	if is_local and not bot:
 		Input.set_mouse_mode(Input.MOUSE_MODE_CAPTURED)
@@ -114,11 +128,19 @@ func _physics_process(delta: float) -> void:
 		move_and_slide()
 		_update_footsteps(0.0, false)
 		return
+	# Remote bodies (online humans and online bots) follow server snapshots.
+	# Interpolate their position over the snapshot interval so they glide
+	# instead of teleporting every ~50 ms.
+	if _interp_armed and not is_local:
+		_drive_remote_interp()
+		_update_footsteps(_remote_planar_speed, false)
+		return
 	if bot:
 		_apply_bot_movement(delta)
 		return
 	if not is_local:
-		_update_footsteps(_remote_planar_speed, false)
+		# Remote body without a snapshot yet (joined this frame). Hold still.
+		_update_footsteps(0.0, false)
 		return
 	# The in-game menu releases the mouse cursor when open. Use that as the
 	# signal that the local player should not be reading input. The world
@@ -192,13 +214,31 @@ func apply_remote_state(pos: Vector3, yaw: float, is_frozen: bool, sprint: float
 			# without lagging significantly behind real movement.
 			var sample: float = planar.length() / dt
 			_remote_planar_speed = lerpf(_remote_planar_speed, sample, 0.5)
+			# Record the actual snapshot interval; interpolation rides over
+			# this duration so it matches the server's true tick rate.
+			_interp_dt_s = clampf(dt, 0.02, 0.2)
 	_last_remote_position = pos
 	_last_remote_time_s = now_s
-	global_position = pos
-	rotation.y = yaw
+	# Hand off interpolation: the previous target becomes the new start, the
+	# new sample becomes the new target. On the very first snapshot snap the
+	# body straight to pos so we don't lerp from origin.
+	if _interp_armed:
+		_interp_prev_position = _interp_target_position
+		_interp_prev_yaw = _interp_target_yaw
+	else:
+		_interp_prev_position = pos
+		_interp_prev_yaw = yaw
+		global_position = pos
+		rotation.y = yaw
+		_interp_armed = true
+	_interp_target_position = pos
+	_interp_target_yaw = yaw
+	_interp_start_time_s = now_s
 	frozen = is_frozen
 	sprint_energy = sprint
-	settle_into_world()
+	# Don't call settle_into_world here anymore: the body is no longer being
+	# slammed to pos every snapshot. _physics_process slides it through the
+	# interpolated positions and handles depenetration as part of move_and_slide.
 
 # CharacterBody3D does not auto-resolve overlaps when global_position is set
 # directly (spawn, topology wrap, apply_remote_state). Running move_and_slide
@@ -210,6 +250,17 @@ func settle_into_world() -> void:
 	velocity = Vector3.ZERO
 	move_and_slide()
 	velocity = prior
+
+# Slide remote bodies from _interp_prev_position toward _interp_target_position
+# at a rate proportional to the snapshot interval. Run every physics frame for
+# any remote body; the alpha is clamped so the body sits at the latest target
+# if the next snapshot is late.
+func _drive_remote_interp() -> void:
+	var now_s: float = Time.get_unix_time_from_system()
+	var elapsed: float = now_s - _interp_start_time_s
+	var alpha: float = 1.0 if _interp_dt_s <= 0.0 else clampf(elapsed / _interp_dt_s, 0.0, 1.0)
+	global_position = _interp_prev_position.lerp(_interp_target_position, alpha)
+	rotation.y = lerp_angle(_interp_prev_yaw, _interp_target_yaw, alpha)
 
 func _update_marker() -> void:
 	# Local player should not see their own marker even while frozen.

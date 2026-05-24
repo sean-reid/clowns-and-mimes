@@ -250,7 +250,6 @@ func _on_snapshot(snapshot: Dictionary, you_are: String) -> void:
 	# inputs sent before the snapshot arrived describe motion from a
 	# different origin and replaying them would compound the offset.
 	pending_inputs.clear()
-	_local_interp_armed = false
 	for entry in snapshot.get("players", []):
 		if entry.get("id", "") == local_player_id and local_player != null:
 			var pos: Dictionary = entry.get("position", {"x": 0.0, "z": 0.0})
@@ -314,16 +313,13 @@ func _reconcile_local_player(delta: Dictionary) -> void:
 		)
 		replayed_pos = step["position"]
 		local_sprint_energy = step["sprint_energy"]
-	# Slide the interp window's "from" to the current rendered position and the
-	# "to" to the reconciled target. Without this the next render frame would
-	# snap to replayed_pos (whatever the visible drift is) and create a hitch
-	# every delta. A short interp window catches the body up over the next
-	# few frames.
-	var current_render := Vector2(local_player.global_position.x, local_player.global_position.z)
-	_local_interp_from = current_render
-	_local_interp_to = replayed_pos
-	_local_interp_start_s = Time.get_unix_time_from_system()
-	_local_interp_armed = true
+	# Both sides run the same stepMovement, so the replayed position is
+	# usually within a few cm of the local prediction. Snap straight to it;
+	# the next physics frame extrapolates forward from there at the screen
+	# rate.
+	local_player.global_position = Vector3(
+		replayed_pos.x, local_player.global_position.y, replayed_pos.y
+	)
 
 func _on_room_event(event: Dictionary) -> void:
 	match event.get("kind", event.get("t", "")):

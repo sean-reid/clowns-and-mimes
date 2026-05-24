@@ -29,9 +29,13 @@ func set_topology(name: String) -> void:
 	if name.is_empty():
 		topology_badge.text = ""
 		return
-	# Capitalize for readability ("torus" -> "Torus") and prefix with "on" so
-	# the line reads as a status, not a heading.
-	var pretty: String = name.substr(0, 1).to_upper() + name.substr(1)
+	# Pretty names per topology. "klein" alone is ambiguous; the full
+	# "Klein Bottle" reads better. Everything else title-cases the wire name.
+	var pretty: String
+	if name == "klein":
+		pretty = "Klein Bottle"
+	else:
+		pretty = name.substr(0, 1).to_upper() + name.substr(1)
 	topology_badge.text = "on the %s" % pretty
 
 func set_local_team(team: String) -> void:

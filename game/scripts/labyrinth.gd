@@ -32,6 +32,11 @@ var seed_value: int = 0
 var topology: TopologyScript
 var pathfinder: AStar2D
 var solid_cells: Dictionary = {}
+# Per-axis cell counts for the pathfinding grid. Set from the topology's
+# playfield extents in build(); klein's double cover makes the x axis twice
+# as wide as the z axis. Everything else stays square.
+var _grid_cols: int = GRID_RES
+var _grid_rows: int = GRID_RES
 
 var walls_root: Node3D
 var floor_node: MeshInstance3D
@@ -45,6 +50,11 @@ var _wall_endpoints: Array = []  # [{ax, az, bx, bz}, ...]
 func build(rng_seed: int, top: TopologyScript) -> void:
 	seed_value = rng_seed
 	topology = top
+	# Match the AStar grid resolution to the topology's playfield extents so
+	# klein's double cover gets 2*GRID_RES columns (160) and stays square
+	# elsewhere.
+	_grid_cols = int(round(topology.extent_x() / CELL_SIZE))
+	_grid_rows = int(round(topology.extent_z() / CELL_SIZE))
 	_resolve_children()
 	_ensure_floor()
 	_clear_walls()
@@ -99,12 +109,16 @@ func find_path(from: Vector3, to: Vector3) -> Array[Vector3]:
 # Construction
 # ---------------------------------------------------------------------------
 
-## Clones the floor and walls into the 8 neighboring tiles offset by
-## (+-WORLD_WIDTH) so a player standing at the seam looks across and sees the
-## wrapped portion of the map instead of an opaque edge. The clones are
+## Clones the floor and walls into the 8 neighbouring tiles offset by the
+## topology's playfield extents so a player at the seam looks across and sees
+## the wrapped portion of the map instead of an opaque edge. The clones are
 ## visual only - no collision - because the topology.wrap teleport in
-## arena.gd keeps the body inside the canonical domain. Klein flips z when
-## the tile crosses the x seam.
+## arena.gd keeps the body inside the canonical domain.
+##
+## Klein is now a true double cover (the right half of the maze is the
+## z-mirror of the left), so wrap tiles for Klein just translate by the
+## playfield extents and never apply an extra z-flip - the flip is baked
+## into the maze geometry itself.
 func _build_wrap_tiles() -> void:
 	var prior_tiles: Node = get_node_or_null("WrapTiles")
 	if prior_tiles != null:
@@ -124,19 +138,14 @@ func _build_wrap_tiles() -> void:
 	var tiles_root := Node3D.new()
 	tiles_root.name = "WrapTiles"
 	add_child(tiles_root)
-	var w: float = TopologyScript.WIDTH
-	var flip_on_x: bool = topology.flips_z_on_x_wrap()
+	var ext_x: float = topology.extent_x()
+	var ext_z: float = topology.extent_z()
 	for dx in [-1, 0, 1]:
 		for dz in [-1, 0, 1]:
 			if dx == 0 and dz == 0:
 				continue
 			var tile := Node3D.new()
-			tile.position = Vector3(float(dx) * w, 0.0, float(dz) * w)
-			if flip_on_x and (absi(dx) % 2 == 1):
-				# Klein x-seam crossing flips z: scale by (1, 1, -1) mirrors
-				# the geometry along the z axis so the player sees the
-				# correctly-oriented continuation across the seam.
-				tile.scale = Vector3(1.0, 1.0, -1.0)
+			tile.position = Vector3(float(dx) * ext_x, 0.0, float(dz) * ext_z)
 			tiles_root.add_child(tile)
 			var floor_clone := MeshInstance3D.new()
 			floor_clone.mesh = floor_node.mesh
@@ -168,7 +177,11 @@ func _resolve_children() -> void:
 
 func _ensure_floor() -> void:
 	var plane := PlaneMesh.new()
-	plane.size = Vector2(TopologyScript.WIDTH, TopologyScript.WIDTH)
+	# Klein's playfield is the double cover: 2*WIDTH along x, WIDTH along z.
+	# Every other topology stays square.
+	var ext_x: float = topology.extent_x() if topology != null else TopologyScript.WIDTH
+	var ext_z: float = topology.extent_z() if topology != null else TopologyScript.WIDTH
+	plane.size = Vector2(ext_x, ext_z)
 	floor_node.mesh = plane
 	var mat := StandardMaterial3D.new()
 	mat.albedo_color = Color(0.09, 0.09, 0.11)
@@ -260,8 +273,8 @@ func _make_wall(seg_length: float) -> StaticBody3D:
 func _build_pathfinder() -> void:
 	pathfinder = AStar2D.new()
 	solid_cells.clear()
-	for cy in range(GRID_RES):
-		for cx in range(GRID_RES):
+	for cy in range(_grid_rows):
+		for cx in range(_grid_cols):
 			pathfinder.add_point(_cell_id(Vector2i(cx, cy)), Vector2(cx, cy))
 	for segment in _wall_segments:
 		_mark_wall_solid(segment["transform"], segment["length"])
@@ -271,8 +284,8 @@ func _connect_neighbors() -> void:
 	var wrap_x: bool = topology != null and topology.wraps_x()
 	var wrap_z: bool = topology != null and topology.wraps_z()
 	var flip_z: bool = topology != null and topology.flips_z_on_x_wrap()
-	for cy in range(GRID_RES):
-		for cx in range(GRID_RES):
+	for cy in range(_grid_rows):
+		for cx in range(_grid_cols):
 			var from_cell := Vector2i(cx, cy)
 			if _is_solid(from_cell):
 				continue
@@ -297,23 +310,23 @@ func _wrap_cell(cell: Vector2i, wrap_x: bool, wrap_z: bool, flip_z: bool) -> Vec
 	if cx < 0:
 		if not wrap_x:
 			return Vector2i(-1, -1)
-		cx += GRID_RES
+		cx += _grid_cols
 		x_crossed = true
-	elif cx >= GRID_RES:
+	elif cx >= _grid_cols:
 		if not wrap_x:
 			return Vector2i(-1, -1)
-		cx -= GRID_RES
+		cx -= _grid_cols
 		x_crossed = true
 	if cy < 0:
 		if not wrap_z:
 			return Vector2i(-1, -1)
-		cy += GRID_RES
-	elif cy >= GRID_RES:
+		cy += _grid_rows
+	elif cy >= _grid_rows:
 		if not wrap_z:
 			return Vector2i(-1, -1)
-		cy -= GRID_RES
+		cy -= _grid_rows
 	if x_crossed and flip_z:
-		cy = GRID_RES - 1 - cy
+		cy = _grid_rows - 1 - cy
 	return Vector2i(cx, cy)
 
 func _mark_wall_solid(wall_xform: Transform3D, seg_length: float) -> void:
@@ -340,23 +353,25 @@ func _mark_wall_solid(wall_xform: Transform3D, seg_length: float) -> void:
 				solid_cells[_cell_id(cell)] = true
 
 func _is_solid(cell: Vector2i) -> bool:
-	if cell.x < 0 or cell.x >= GRID_RES or cell.y < 0 or cell.y >= GRID_RES:
+	if cell.x < 0 or cell.x >= _grid_cols or cell.y < 0 or cell.y >= _grid_rows:
 		return true
 	return solid_cells.has(_cell_id(cell))
 
 func _cell_id(cell: Vector2i) -> int:
-	return cell.y * GRID_RES + cell.x
+	return cell.y * _grid_cols + cell.x
 
 func _world_to_cell(p: Vector3) -> Vector2i:
-	var half: float = TopologyScript.WIDTH * 0.5
-	var x: int = int(round((p.x + half) / CELL_SIZE))
-	var y: int = int(round((p.z + half) / CELL_SIZE))
-	return Vector2i(clamp(x, 0, GRID_RES - 1), clamp(y, 0, GRID_RES - 1))
+	var half_x: float = float(_grid_cols) * CELL_SIZE * 0.5
+	var half_z: float = float(_grid_rows) * CELL_SIZE * 0.5
+	var x: int = int(round((p.x + half_x) / CELL_SIZE))
+	var y: int = int(round((p.z + half_z) / CELL_SIZE))
+	return Vector2i(clamp(x, 0, _grid_cols - 1), clamp(y, 0, _grid_rows - 1))
 
 func _cell_to_world(cell: Vector2i) -> Vector3:
-	var half: float = TopologyScript.WIDTH * 0.5
-	var x: float = float(cell.x) * CELL_SIZE - half + CELL_SIZE * 0.5
-	var z: float = float(cell.y) * CELL_SIZE - half + CELL_SIZE * 0.5
+	var half_x: float = float(_grid_cols) * CELL_SIZE * 0.5
+	var half_z: float = float(_grid_rows) * CELL_SIZE * 0.5
+	var x: float = float(cell.x) * CELL_SIZE - half_x + CELL_SIZE * 0.5
+	var z: float = float(cell.y) * CELL_SIZE - half_z + CELL_SIZE * 0.5
 	return Vector3(x, 0.0, z)
 
 func _nearest_open_cell(cell: Vector2i) -> Vector2i:
@@ -364,7 +379,7 @@ func _nearest_open_cell(cell: Vector2i) -> Vector2i:
 		for dx in range(-radius, radius + 1):
 			for dy in range(-radius, radius + 1):
 				var c := Vector2i(cell.x + dx, cell.y + dy)
-				if c.x < 0 or c.x >= GRID_RES or c.y < 0 or c.y >= GRID_RES:
+				if c.x < 0 or c.x >= _grid_cols or c.y < 0 or c.y >= _grid_rows:
 					continue
 				if not _is_solid(c):
 					return c

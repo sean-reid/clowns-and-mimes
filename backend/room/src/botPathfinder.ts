@@ -244,9 +244,13 @@ export class BotPathfinder {
 
   private worldToCell(p: Vec2): number {
     const { cols, rows, cellX, cellZ, wrapX, wrapZ } = this.shape;
-    const half = WORLD_WIDTH / 2;
-    let c = Math.floor((p.x + half) / cellX);
-    let r = Math.floor((p.z + half) / cellZ);
+    // Half-extents derived from the shape, not from WORLD_WIDTH: klein's
+    // double cover spans 2*WORLD_WIDTH in x, so cellX*cols/2 is the correct
+    // anchor for converting world coords back to cell indices.
+    const halfX = (cols * cellX) / 2;
+    const halfZ = (rows * cellZ) / 2;
+    let c = Math.floor((p.x + halfX) / cellX);
+    let r = Math.floor((p.z + halfZ) / cellZ);
     if (wrapX) c = ((c % cols) + cols) % cols;
     else c = Math.max(0, Math.min(cols - 1, c));
     if (wrapZ) r = ((r % rows) + rows) % rows;
@@ -255,13 +259,14 @@ export class BotPathfinder {
   }
 
   private cellCenter(cell: number): Vec2 {
-    const { cols, cellX, cellZ } = this.shape;
+    const { cols, rows, cellX, cellZ } = this.shape;
     const c = cell % cols;
     const r = Math.floor(cell / cols);
-    const half = WORLD_WIDTH / 2;
+    const halfX = (cols * cellX) / 2;
+    const halfZ = (rows * cellZ) / 2;
     return {
-      x: (c + 0.5) * cellX - half,
-      z: (r + 0.5) * cellZ - half,
+      x: (c + 0.5) * cellX - halfX,
+      z: (r + 0.5) * cellZ - halfZ,
     };
   }
 }
@@ -281,6 +286,22 @@ function gridShapeFor(topology: Topology): GridShape {
       flipRowOnXWrap: false,
     };
   }
+  if (topology === 'klein') {
+    // Klein's playfield is the double cover: 2N x N cells over a 2W x W
+    // domain. The maze generator places the z-mirror of the fundamental in
+    // the right half of the grid; both halves agree on the openings at every
+    // seam, so the pathfinder treats this as plain modular wrap in both
+    // axes. The bottle's z-flip is in the geometry, not the wrap.
+    return {
+      cols: 2 * GRID_MAZE_N,
+      rows: GRID_MAZE_N,
+      cellX: WORLD_WIDTH / GRID_MAZE_N,
+      cellZ: WORLD_WIDTH / GRID_MAZE_N,
+      wrapX: true,
+      wrapZ: true,
+      flipRowOnXWrap: false,
+    };
+  }
   return {
     cols: GRID_MAZE_N,
     rows: GRID_MAZE_N,
@@ -288,6 +309,6 @@ function gridShapeFor(topology: Topology): GridShape {
     cellZ: WORLD_WIDTH / GRID_MAZE_N,
     wrapX: topology !== 'plane',
     wrapZ: topology !== 'plane',
-    flipRowOnXWrap: topology === 'klein',
+    flipRowOnXWrap: false,
   };
 }

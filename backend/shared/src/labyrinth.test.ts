@@ -169,13 +169,15 @@ describe('generateWalls (plane, torus, klein use grid maze)', () => {
     // The grid maze should never put a wall on the outermost boundary of the
     // playfield, since the topology already collapses both edges to the same
     // line on a wrap surface. Picking up such a wall would visually double up.
+    // Klein's playfield is the double cover: x in [-W, W], z in [-W/2, W/2].
     const walls = generateWalls(7, 'klein');
-    const half = 40; // WORLD_WIDTH / 2
+    const halfX = 80; // klein x-extent is 2 * WORLD_WIDTH, so half is W
+    const halfZ = 40; // klein z-extent is WORLD_WIDTH, so half is W/2
     for (const w of walls) {
-      const onLeft = w.ax === -half && w.bx === -half;
-      const onRight = w.ax === half && w.bx === half;
-      const onTop = w.az === half && w.bz === half;
-      const onBottom = w.az === -half && w.bz === -half;
+      const onLeft = w.ax === -halfX && w.bx === -halfX;
+      const onRight = w.ax === halfX && w.bx === halfX;
+      const onTop = w.az === halfZ && w.bz === halfZ;
+      const onBottom = w.az === -halfZ && w.bz === -halfZ;
       expect(onLeft || onRight || onTop || onBottom).toBe(false);
     }
   });

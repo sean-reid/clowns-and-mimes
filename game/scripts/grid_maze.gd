@@ -28,6 +28,8 @@ const TopologyScript := preload("res://scripts/topology/topology.gd")
 static func generate(seed_value: int, topology_name: String, grid_n: int = GRID_MAZE_N) -> Array:
 	if topology_name == "sphere":
 		return _generate_sphere(seed_value)
+	if topology_name == "klein":
+		return _generate_klein(seed_value, grid_n)
 	var total: int = grid_n * grid_n
 	var visited := PackedByteArray()
 	visited.resize(total)
@@ -163,6 +165,101 @@ static func _emit_walls(openings: PackedByteArray, grid_n: int, topology_name: S
 			var x0: float = (float(c) * cell) - half
 			var x1: float = (float(c + 1) * cell) - half
 			out.append({"ax": x0, "az": -half, "bx": x1, "bz": -half})
+	return out
+
+# Klein wall list as the double cover of an NxN fundamental klein maze.
+# Mirrors backend/shared/src/gridMaze.ts::generateKleinGridWalls. The
+# fundamental maze uses the klein flip-row wrap; we unfold it into a 2N x N
+# grid where the right half is the z-mirror of the left so the bottle's
+# z-orientation flip is walkable space, not an instant teleport at the seam.
+static func _generate_klein(seed_value: int, grid_n: int) -> Array:
+	var fundamental: PackedByteArray = _build_fundamental_klein_openings(seed_value, grid_n)
+	var cols: int = 2 * grid_n
+	var rows: int = grid_n
+	var expanded := PackedByteArray()
+	expanded.resize(cols * rows)
+	for r in rows:
+		for c in grid_n:
+			# Left half: identity copy.
+			expanded[c + r * cols] = fundamental[c + r * grid_n]
+			# Right half: z-mirror of the fundamental at row N-1-r, with
+			# NORTH<->SOUTH swapped on the cell mask.
+			var src: int = fundamental[c + (rows - 1 - r) * grid_n]
+			expanded[grid_n + c + r * cols] = _swap_north_south(src)
+	return _emit_klein_expanded_walls(expanded, grid_n)
+
+static func _build_fundamental_klein_openings(seed_value: int, grid_n: int) -> PackedByteArray:
+	var total: int = grid_n * grid_n
+	var visited := PackedByteArray()
+	visited.resize(total)
+	var openings := PackedByteArray()
+	openings.resize(total)
+	var rng_state: int = seed_value & 0xFFFFFFFF
+	rng_state = _lcg_next(rng_state)
+	var start: int = rng_state % total
+	visited[start] = 1
+	var stack: Array[int] = [start]
+	while not stack.is_empty():
+		var cur: int = stack[stack.size() - 1]
+		var candidates: Array = []
+		for dir in 4:
+			var nb: int = _neighbor_of(cur, dir, grid_n, "klein")
+			if nb < 0:
+				continue
+			if visited[nb] != 0:
+				continue
+			candidates.append([dir, nb])
+		if candidates.is_empty():
+			stack.pop_back()
+			continue
+		rng_state = _lcg_next(rng_state)
+		var pick: Array = candidates[rng_state % candidates.size()]
+		var pick_dir: int = pick[0]
+		var pick_cell: int = pick[1]
+		openings[cur] = openings[cur] | (1 << pick_dir)
+		openings[pick_cell] = openings[pick_cell] | (1 << _opposite(pick_dir))
+		visited[pick_cell] = 1
+		stack.append(pick_cell)
+	rng_state = _braid(openings, grid_n, "klein", rng_state)
+	return openings
+
+static func _swap_north_south(mask: int) -> int:
+	var east: int = mask & (1 << DIR_EAST)
+	var north: int = mask & (1 << DIR_NORTH)
+	var west: int = mask & (1 << DIR_WEST)
+	var south: int = mask & (1 << DIR_SOUTH)
+	var out: int = east | west
+	if north != 0:
+		out = out | (1 << DIR_SOUTH)
+	if south != 0:
+		out = out | (1 << DIR_NORTH)
+	return out
+
+static func _emit_klein_expanded_walls(openings: PackedByteArray, grid_n: int) -> Array:
+	var cols: int = 2 * grid_n
+	var rows: int = grid_n
+	var cell: float = TopologyScript.WIDTH / float(grid_n)
+	# Double cover spans x in [-WIDTH, WIDTH] and z in [-WIDTH/2, WIDTH/2].
+	var half_x: float = TopologyScript.WIDTH
+	var half_z: float = TopologyScript.WIDTH / 2.0
+	var out: Array = []
+	for r in rows:
+		for c in cols:
+			var id: int = c + r * cols
+			var is_last_col: bool = c == cols - 1
+			var is_last_row: bool = r == rows - 1
+			var east_closed: bool = (openings[id] & (1 << DIR_EAST)) == 0
+			var north_closed: bool = (openings[id] & (1 << DIR_NORTH)) == 0
+			if east_closed and not is_last_col:
+				var x: float = (float(c + 1) * cell) - half_x
+				var z0: float = (float(r) * cell) - half_z
+				var z1: float = (float(r + 1) * cell) - half_z
+				out.append({"ax": x, "az": z0, "bx": x, "bz": z1})
+			if north_closed and not is_last_row:
+				var z: float = (float(r + 1) * cell) - half_z
+				var x0: float = (float(c) * cell) - half_x
+				var x1: float = (float(c + 1) * cell) - half_x
+				out.append({"ax": x0, "az": z, "bx": x1, "bz": z})
 	return out
 
 # Sphere wall list: six independent grid mazes laid out 3x2 in the playfield.

@@ -56,6 +56,9 @@ export function generateGridMazeWalls(
   if (topology === 'sphere') {
     return generateSphereGridWalls(seed);
   }
+  if (topology === 'klein') {
+    return generateKleinGridWalls(seed, gridN);
+  }
   const total = gridN * gridN;
   const visited = new Uint8Array(total);
   // openings[cell] is a 4-bit mask: bit `dir` set means the wall in that
@@ -207,6 +210,134 @@ function emitWalls(openings: Uint8Array, gridN: number, topology: Topology): Wal
       const x0 = c * cell - half;
       const x1 = (c + 1) * cell - half;
       out.push({ ax: x0, az: -half, bx: x1, bz: -half });
+    }
+  }
+  return out;
+}
+
+/**
+ * Klein bottle wall list as the double cover of a fundamental NxN klein maze.
+ * The fundamental polygon (N x N cells, x-wrap flips the row index) is the
+ * authoritative Klein bottle. To make the bottle's z-orientation flip
+ * walkable space instead of an instantaneous teleport, we unfold that
+ * fundamental into a 2N x N grid:
+ *
+ *   left half (cols 0..N-1): exact copy of the fundamental openings.
+ *   right half (cols N..2N-1): z-mirror of the fundamental (flip the row
+ *     index and swap NORTH<->SOUTH on each cell's mask).
+ *
+ * After unfolding the cell-to-cell openings line up at every seam:
+ *   - the middle seam (x=0, between left col N-1 and right col N) matches
+ *     the fundamental's east-wrap with flip;
+ *   - the outer x seam (x=+-W, between cols 2N-1 and 0) is plain modular.
+ *
+ * So we emit the expanded 2N x N maze with torus-style wrap rules. The
+ * walkable surface is a true Klein bottle; the player can walk through the
+ * mirrored half before reaching the wrap, instead of seeing the world flip
+ * at a single line.
+ */
+function generateKleinGridWalls(seed: number, gridN: number): WallSegment[] {
+  // 1) Fundamental N x N maze with klein flip-row wrap, same as the
+  // pre-double-cover behavior. Reuse the main DFS + braid through the
+  // existing neighborOf path by calling with topology='klein'.
+  const fundamental = buildFundamentalKleinOpenings(seed, gridN);
+
+  // 2) Unfold into a 2N x N opening grid.
+  const cols = 2 * gridN;
+  const rows = gridN;
+  const expanded = new Uint8Array(cols * rows);
+  for (let r = 0; r < rows; r += 1) {
+    for (let c = 0; c < gridN; c += 1) {
+      // Left half: identity copy.
+      expanded[c + r * cols] = fundamental[c + r * gridN]!;
+      // Right half: z-mirror. Source row is N-1-r; NORTH<->SOUTH swap on
+      // the mask since up/down are reversed in the mirrored copy. EAST and
+      // WEST stay because the mirror is across z, not x.
+      const src = fundamental[c + (rows - 1 - r) * gridN]!;
+      expanded[gridN + c + r * cols] = swapNorthSouth(src);
+    }
+  }
+
+  // 3) Emit walls for the 2N x N expanded grid. Torus rules: drop walls on
+  // the outer boundaries (those identify with the opposite edges via plain
+  // modular wrap), keep interior walls including the ones along the middle
+  // seam at x=0 wherever they are closed in both adjacent cells.
+  return emitKleinExpandedWalls(expanded, gridN);
+}
+
+function buildFundamentalKleinOpenings(seed: number, gridN: number): Uint8Array {
+  const total = gridN * gridN;
+  const visited = new Uint8Array(total);
+  const openings = new Uint8Array(total);
+  let rng = (seed | 0) >>> 0;
+  const next = (): number => {
+    rng = ((Math.imul(rng, 1664525) >>> 0) + 1013904223) >>> 0;
+    return rng;
+  };
+  const start = next() % total;
+  visited[start] = 1;
+  const stack: number[] = [start];
+  while (stack.length > 0) {
+    const cur = stack[stack.length - 1]!;
+    const candidates: Neighbor[] = [];
+    for (let dir = 0; dir < 4; dir += 1) {
+      const nb = neighborOf(cur, dir, gridN, 'klein');
+      if (nb === null) continue;
+      if (visited[nb.cell]) continue;
+      candidates.push(nb);
+    }
+    if (candidates.length === 0) {
+      stack.pop();
+      continue;
+    }
+    const pick = candidates[next() % candidates.length]!;
+    openings[cur] |= 1 << pick.dir;
+    openings[pick.cell] |= 1 << oppositeDir(pick.dir);
+    visited[pick.cell] = 1;
+    stack.push(pick.cell);
+  }
+  braid(openings, gridN, 'klein', next);
+  return openings;
+}
+
+function swapNorthSouth(mask: number): number {
+  const east = mask & (1 << DIR_EAST);
+  const north = mask & (1 << DIR_NORTH);
+  const west = mask & (1 << DIR_WEST);
+  const south = mask & (1 << DIR_SOUTH);
+  return east | west | (north === 0 ? 0 : 1 << DIR_SOUTH) | (south === 0 ? 0 : 1 << DIR_NORTH);
+}
+
+function emitKleinExpandedWalls(openings: Uint8Array, gridN: number): WallSegment[] {
+  const cols = 2 * gridN;
+  const rows = gridN;
+  const cell = WORLD_WIDTH / gridN;
+  // The klein playfield spans x in [-WORLD_WIDTH, WORLD_WIDTH] (double cover)
+  // and z in [-WORLD_WIDTH/2, WORLD_WIDTH/2]. Anchor walls accordingly.
+  const halfX = WORLD_WIDTH;
+  const halfZ = WORLD_WIDTH / 2;
+  const out: WallSegment[] = [];
+  for (let r = 0; r < rows; r += 1) {
+    for (let c = 0; c < cols; c += 1) {
+      const id = c + r * cols;
+      const isLastCol = c === cols - 1;
+      const isLastRow = r === rows - 1;
+      const eastClosed = (openings[id]! & (1 << DIR_EAST)) === 0;
+      const northClosed = (openings[id]! & (1 << DIR_NORTH)) === 0;
+      // Klein wraps in both axes (modular on the 2N x N grid), so neither
+      // outer boundary owns a wall.
+      if (eastClosed && !isLastCol) {
+        const x = (c + 1) * cell - halfX;
+        const z0 = r * cell - halfZ;
+        const z1 = (r + 1) * cell - halfZ;
+        out.push({ ax: x, az: z0, bx: x, bz: z1 });
+      }
+      if (northClosed && !isLastRow) {
+        const z = (r + 1) * cell - halfZ;
+        const x0 = c * cell - halfX;
+        const x1 = (c + 1) * cell - halfX;
+        out.push({ ax: x0, az: z, bx: x1, bz: z });
+      }
     }
   }
   return out;

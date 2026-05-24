@@ -3,8 +3,19 @@ import type { Topology, Vec2 } from './protocol.ts';
 export const WORLD_WIDTH = 80;
 
 /**
+ * Per-topology playfield extents in world units. Klein is the only topology
+ * with a non-square playfield: the canonical x domain spans 2 * WORLD_WIDTH
+ * so the bottle's z-orientation flip is walkable space (a mirrored right
+ * half) instead of an instantaneous snap at the seam. All other topologies
+ * are WORLD_WIDTH on each axis.
+ */
+export function topologyExtents(topology: Topology, width: number): { x: number; z: number } {
+  if (topology === 'klein') return { x: 2 * width, z: width };
+  return { x: width, z: width };
+}
+
+/**
  * Wrap a position into the canonical domain for the topology.
- * The domain is the centered square [-w/2, w/2] x [-w/2, w/2].
  * Server and client must agree on this so that rendering, physics, and
  * pathfinding all see the same coordinate space.
  */
@@ -24,13 +35,13 @@ export function wrapPosition(p: Vec2, topology: Topology, width: number): Vec2 {
       };
     }
     case 'klein': {
-      const wrappedX = wrap(p.x, width);
-      const xCrossings = Math.floor((p.x + half) / width);
-      const flipZ = xCrossings % 2 !== 0;
-      const z0 = flipZ ? -p.z : p.z;
+      // Double cover: the canonical x domain is 2*width and the second half
+      // (mirrored across z=0) is part of the walkable surface. Both axes
+      // wrap modular - the Klein topology is embedded in the geometry's
+      // z-mirror symmetry, not in an instant flip at the seam.
       return {
-        x: wrappedX,
-        z: wrap(z0, width),
+        x: wrap(p.x, 2 * width),
+        z: wrap(p.z, width),
       };
     }
     case 'sphere': {
@@ -58,11 +69,11 @@ export function topologyDistance(a: Vec2, b: Vec2, topology: Topology, width: nu
       return Math.hypot(dx, dz);
     }
     case 'klein': {
-      const dxA = wrappedDelta(a.x, b.x, width);
-      const flipped = Math.abs(a.x - b.x) > width / 2;
-      const bz = flipped ? -b.z : b.z;
-      const dzA = wrappedDelta(a.z, bz, width);
-      return Math.hypot(dxA, dzA);
+      // Klein is a 2W*W torus by virtue of the geometric z-mirror symmetry
+      // of its right half, so shortest path is plain modular both axes.
+      const dx = wrappedDelta(a.x, b.x, 2 * width);
+      const dz = wrappedDelta(a.z, b.z, width);
+      return Math.hypot(dx, dz);
     }
     case 'sphere': {
       // First-cut sphere distance mirrors the wrap: torus-like shortest path
@@ -98,10 +109,8 @@ export function wrappedUnitDelta(from: Vec2, to: Vec2, topology: Topology, width
       break;
     }
     case 'klein': {
-      dx = wrappedDelta(from.x, to.x, width);
-      const flipped = Math.abs(to.x - from.x) > width / 2;
-      const tz = flipped ? -to.z : to.z;
-      dz = wrappedDelta(from.z, tz, width);
+      dx = wrappedDelta(from.x, to.x, 2 * width);
+      dz = wrappedDelta(from.z, to.z, width);
       break;
     }
   }

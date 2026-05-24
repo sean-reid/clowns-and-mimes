@@ -2,11 +2,21 @@ extends RefCounted
 
 ## Base class for topology adapters. A topology wraps positions and computes
 ## distances on the playing field. The XZ plane is the ground; Y is up.
-## The domain is the centered square of side WIDTH.
+## Most topologies use a centered square of side WIDTH; Klein's double cover
+## is 2*WIDTH on x. Adapters expose their actual playfield extents via
+## extent_x() / extent_z().
 
 const WIDTH := 80.0
 
 enum Kind { PLANE, TORUS, KLEIN, SPHERE }
+
+## Playfield half-extents along each axis. Overridden by Klein (which has a
+## 2*WIDTH x WIDTH double-cover domain). Everything else stays square.
+func extent_x() -> float:
+	return WIDTH
+
+func extent_z() -> float:
+	return WIDTH
 
 func kind() -> Kind:
 	push_error("Topology.kind must be overridden")

@@ -6,7 +6,9 @@
 // FACE_HALF_WIDTH; outside it the back_color fills.
 
 shader_type spatial;
-render_mode cull_disabled;
+// Default back-face culling stays on. The local player's camera sits inside
+// the head sphere; disabling cull would render the inside of the face every
+// frame and blot out the world.
 
 uniform sampler2D face_texture : source_color, filter_linear, repeat_disable;
 uniform vec3 back_color : source_color = vec3(0.3, 0.05, 0.1);

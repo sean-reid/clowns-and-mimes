@@ -8,7 +8,7 @@ import type {
   Team,
   Topology,
 } from '@cm/shared';
-import { PROTOCOL_VERSION } from '@cm/shared';
+import { BATTLE_CRY_COUNT, PROTOCOL_VERSION } from '@cm/shared';
 import { topologyDistance, wrapPosition } from '@cm/shared/topology';
 import { generateWalls, pathCrossesWall, type WallSegment } from '@cm/shared/labyrinth';
 
@@ -404,7 +404,10 @@ export class Room implements DurableObject {
     this.phase = `turn_${next}` as RoomPhase;
     const ms = Math.min(TURN_CAP_MS, TURN_FIRST_MS + (this.roundNumber - 1) * TURN_STEP_MS);
     this.turnEndsAt = Date.now() + ms;
-    this.broadcast({ t: 'event', kind: { kind: 'phase', phase: this.phase } });
+    // Pick the cry index once so every client renders the same banner text.
+    // Each team has BATTLE_CRY_COUNT slots in their local cry array.
+    const cryIndex = Math.floor(Math.random() * BATTLE_CRY_COUNT);
+    this.broadcast({ t: 'event', kind: { kind: 'phase', phase: this.phase, cryIndex } });
   }
 
   /** Applies player inputs with anti-cheat distance clamping. */

@@ -75,8 +75,13 @@ export type ServerToClient =
 export type GameEvent =
   | { kind: 'tagged'; victimId: string; attackerId: string; team: Team }
   | { kind: 'saved'; victimId: string; saviorId: string }
-  | { kind: 'phase'; phase: RoomPhase }
+  // cryIndex is the server-picked battle-cry slot for turn_mime / turn_clown
+  // phases. All clients render the same cry by indexing into their local
+  // MIME_BATTLE_CRIES / CLOWN_BATTLE_CRIES list. Omitted on non-turn phases.
+  | { kind: 'phase'; phase: RoomPhase; cryIndex?: number }
   | { kind: 'win'; team: Team };
+
+export const BATTLE_CRY_COUNT = 8;
 
 export type ErrorCode =
   | 'version_mismatch'

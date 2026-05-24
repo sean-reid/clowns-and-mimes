@@ -19,20 +19,26 @@ const FREE_ROAM_MS = 30_000;
 // Two-radius tag/unfreeze model.
 //
 // BOT tags have no lag - server has current authoritative positions on both
-// sides - so the strict radius matches the CONTACT_RADIUS (1.4) the client
-// expects visually. Any wider and bot tags feel like they're firing from
-// nowhere.
+// sides - so the strict radius matches the client's CONTACT_RADIUS (1.4).
+// Any wider and bot tags feel like they fired from nowhere.
 //
-// CLIENT tags pass through client interp (one snapshot ~50 ms behind state)
-// and an input round trip (50-100 ms). At SPRINT_SPEED (5.6 u/s) the
-// opponent drifts up to 0.84 units in that combined window. 2.2 leaves
-// roughly 0.8 unit of headroom over the client's CONTACT_RADIUS so
-// chase-tags fired by humans land reliably. Lag compensation would be
-// cleaner but is a protocol-level rewrite.
+// CLIENT tags carry two compounding lags:
+//   - Victim: ~50 ms snapshot interp lag.
+//   - Attacker: the local player predicts movement client-side while the
+//     server applies inputs at 20 Hz across another one-way trip. The
+//     server's view of the attacker can run 100-200 ms behind the client's
+//     predicted position; at SPRINT_SPEED (5.6 u/s) that is ~0.84 units.
+// Combined, the server-side distance between attacker and a frozen
+// teammate the client thinks is 1.4 away can read as 2.2+. Diagnostic
+// playtest confirmed 'reason=out_of_range' at exactly that radius.
+// 3.0 gives 1.6 units of headroom over CONTACT_RADIUS, covering the
+// worst case the dev backend has shown. True bilateral lag compensation
+// (rewind both sides to the client's tick from a trusted timestamp) is
+// the right long-term fix but requires protocol work.
 const TAG_RADIUS_BOT = 1.4;
-const TAG_RADIUS_CLIENT = 2.2;
+const TAG_RADIUS_CLIENT = 3.0;
 const UNFREEZE_RADIUS_BOT = 1.4;
-const UNFREEZE_RADIUS_CLIENT = 2.2;
+const UNFREEZE_RADIUS_CLIENT = 3.0;
 const WORLD_WIDTH = 80;
 const MAX_PLAYERS = 16;
 const TEAM_TARGET = 4;

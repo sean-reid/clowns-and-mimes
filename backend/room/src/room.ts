@@ -455,7 +455,11 @@ export class Room implements DurableObject {
           this.walls.length === 0 ||
           !pathCrossesWall(this.walls, bot.position.x, bot.position.z, candidate.x, candidate.z)
         ) {
-          bot.position = wrapPosition({ x: candidate.x, z: candidate.z }, this.topology, WORLD_WIDTH);
+          bot.position = wrapPosition(
+            { x: candidate.x, z: candidate.z },
+            this.topology,
+            WORLD_WIDTH,
+          );
           bot.yaw = Math.atan2(-candidate.chosen.x, -candidate.chosen.z);
           moved = true;
           break;

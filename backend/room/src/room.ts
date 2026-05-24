@@ -9,7 +9,7 @@ import type {
   Topology,
 } from '@cm/shared';
 import { BATTLE_CRY_COUNT, PROTOCOL_VERSION } from '@cm/shared';
-import { topologyDistance, wrapPosition } from '@cm/shared/topology';
+import { topologyDistance, wrapPosition, wrappedUnitDelta } from '@cm/shared/topology';
 import { generateWalls, pathCrossesWall, type WallSegment } from '@cm/shared/labyrinth';
 import { BotPathfinder } from './botPathfinder.ts';
 
@@ -92,6 +92,10 @@ interface BotMind {
   // reversals (e.g. two opponents straddling the bot) don't translate into
   // visible flicker.
   lastDir: { x: number; z: number };
+  // Most recent yaw the bot rendered. Body yaw is interpolated toward the
+  // movement direction with a cap on radians-per-tick so cardinal slide
+  // fallbacks don't snap the avatar 90 degrees in one frame.
+  lastYaw: number;
 }
 
 interface Connection {
@@ -320,6 +324,7 @@ export class Room implements DurableObject {
           patrolUntil: 0,
           engagedTargetId: null,
           lastDir: { x: 0, z: 0 },
+          lastYaw: 0,
         });
       }
     }
@@ -719,7 +724,15 @@ export class Room implements DurableObject {
   private simulateBots(dt: number): void {
     const active = this.activeTurnTeam();
     const now = Date.now();
-    const DIR_SMOOTHING = 0.35; // 0 = no smoothing, 1 = ignore new direction
+    // Heavier direction smoothing than before: bots used to flip heading the
+    // moment a new candidate target appeared, which read as twitching at
+    // tile-corners and around seams. 0.7 keeps most of the previous heading
+    // and folds the new direction in over a few ticks instead of one.
+    const DIR_SMOOTHING = 0.7;
+    // Cap on body rotation per tick. At TICK_HZ=20 this is ~5 rad/s, fast
+    // enough to chase a juking human but slow enough that slide-fallback
+    // axis flips don't snap the avatar 90 degrees in one frame.
+    const MAX_YAW_RATE = 5.0;
     const RETARGET_HYSTERESIS = 0.75; // new target must be this fraction of current distance to swap
     for (const bot of this.botPlayers()) {
       if (bot.frozen) continue;
@@ -728,6 +741,7 @@ export class Room implements DurableObject {
         patrolUntil: 0,
         engagedTargetId: null,
         lastDir: { x: 0, z: 0 },
+        lastYaw: bot.yaw,
       };
       this.botMinds.set(bot.id, mind);
 
@@ -787,7 +801,7 @@ export class Room implements DurableObject {
       if (fleeing && target) {
         // Survival first. A bot chased by an active-turn enemy runs even if
         // a teammate is frozen nearby.
-        const away = unitDelta(target.position, bot.position);
+        const away = wrappedUnitDelta(target.position, bot.position, this.topology, WORLD_WIDTH);
         dir = away;
       } else if (rescuing && rescueTarget) {
         // BFS-route around walls toward the frozen teammate. The pathfinder
@@ -798,7 +812,7 @@ export class Room implements DurableObject {
         const waypoint = this.pathfinder
           ? this.pathfinder.nextWaypoint(bot.position, rescueTarget.position)
           : rescueTarget.position;
-        dir = unitDelta(bot.position, waypoint);
+        dir = wrappedUnitDelta(bot.position, waypoint, this.topology, WORLD_WIDTH);
       } else if (chasing && target) {
         // Same BFS routing for chase. A wall between bot and target used to
         // pin the bot in place because the direct vector and both axis slides
@@ -807,13 +821,13 @@ export class Room implements DurableObject {
         const waypoint = this.pathfinder
           ? this.pathfinder.nextWaypoint(bot.position, target.position)
           : target.position;
-        dir = unitDelta(bot.position, waypoint);
+        dir = wrappedUnitDelta(bot.position, waypoint, this.topology, WORLD_WIDTH);
       } else {
         if (now >= mind.patrolUntil || nearTarget(bot.position, mind.patrolTarget)) {
           mind.patrolTarget = this.randomPatrolPoint();
           mind.patrolUntil = now + BOT_PATROL_RETARGET_MS;
         }
-        dir = unitDelta(bot.position, mind.patrolTarget);
+        dir = wrappedUnitDelta(bot.position, mind.patrolTarget, this.topology, WORLD_WIDTH);
       }
       // Smooth direction toward the freshly-computed dir. Stops the bot from
       // snapping to a new heading every tick when the AI is indecisive.
@@ -871,9 +885,24 @@ export class Room implements DurableObject {
         if (wallBlocked) continue;
         if (this.collidesWithOtherPlayer(bot, candidate.x, candidate.z)) continue;
         bot.position = wrapPosition({ x: candidate.x, z: candidate.z }, this.topology, WORLD_WIDTH);
-        bot.yaw = Math.atan2(-candidate.chosen.x, -candidate.chosen.z);
         moved = true;
         break;
+      }
+      // Body yaw follows the smoothed movement direction, capped by
+      // MAX_YAW_RATE so a slide-fallback that mostly moves on z (when the
+      // straight-ahead candidate is wall-blocked) doesn't snap the avatar
+      // 90 degrees in a single tick.
+      if (dir.x !== 0 || dir.z !== 0) {
+        const desiredYaw = Math.atan2(-dir.x, -dir.z);
+        let delta = desiredYaw - mind.lastYaw;
+        while (delta > Math.PI) delta -= 2 * Math.PI;
+        while (delta < -Math.PI) delta += 2 * Math.PI;
+        const maxStep = MAX_YAW_RATE * dt;
+        const clamped = Math.max(-maxStep, Math.min(maxStep, delta));
+        mind.lastYaw += clamped;
+        bot.yaw = mind.lastYaw;
+      } else {
+        mind.lastYaw = bot.yaw;
       }
       if (!moved) {
         // Pinned on every axis. Two cases: the bot is in a tight corner
@@ -897,7 +926,6 @@ export class Room implements DurableObject {
         }
         mind.patrolTarget = this.randomPatrolPoint();
         mind.patrolUntil = now + BOT_PATROL_RETARGET_MS;
-        bot.yaw = Math.atan2(-dir.x, -dir.z);
       }
 
       // Bot tag: strict radius, no lag to compensate for. canTag also blocks
@@ -1028,17 +1056,6 @@ function clamp(v: number, lo: number, hi: number): number {
 
 function isValidTopology(value: string): value is Topology {
   return value === 'plane' || value === 'torus' || value === 'klein' || value === 'sphere';
-}
-
-function unitDelta(
-  from: { x: number; z: number },
-  to: { x: number; z: number },
-): { x: number; z: number } {
-  const dx = to.x - from.x;
-  const dz = to.z - from.z;
-  const len = Math.hypot(dx, dz);
-  if (len < 1e-4) return { x: 0, z: 0 };
-  return { x: dx / len, z: dz / len };
 }
 
 function nearTarget(

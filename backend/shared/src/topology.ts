@@ -75,6 +75,41 @@ export function topologyDistance(a: Vec2, b: Vec2, topology: Topology, width: nu
   }
 }
 
+/**
+ * Shortest-path delta from `from` to `to` under the given topology, normalized
+ * to a unit vector. Returns (0, 0) when the points coincide. On wrapping
+ * topologies this picks the direction that crosses the seam when that is
+ * shorter than the in-domain delta; bots that ignore this end up zigzagging
+ * at seams because the Euclidean delta points back across the whole arena.
+ */
+export function wrappedUnitDelta(from: Vec2, to: Vec2, topology: Topology, width: number): Vec2 {
+  let dx: number;
+  let dz: number;
+  switch (topology) {
+    case 'plane': {
+      dx = to.x - from.x;
+      dz = to.z - from.z;
+      break;
+    }
+    case 'torus':
+    case 'sphere': {
+      dx = wrappedDelta(from.x, to.x, width);
+      dz = wrappedDelta(from.z, to.z, width);
+      break;
+    }
+    case 'klein': {
+      dx = wrappedDelta(from.x, to.x, width);
+      const flipped = Math.abs(to.x - from.x) > width / 2;
+      const tz = flipped ? -to.z : to.z;
+      dz = wrappedDelta(from.z, tz, width);
+      break;
+    }
+  }
+  const len = Math.hypot(dx, dz);
+  if (len < 1e-4) return { x: 0, z: 0 };
+  return { x: dx / len, z: dz / len };
+}
+
 function clamp(v: number, lo: number, hi: number): number {
   return Math.min(hi, Math.max(lo, v));
 }

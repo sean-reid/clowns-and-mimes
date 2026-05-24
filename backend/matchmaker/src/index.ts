@@ -67,7 +67,7 @@ async function createPrivateLobby(req: Request, env: Env): Promise<Response> {
   const res: MatchmakeCreateResponse = {
     code,
     roomId,
-    wsUrl: wsUrlFor(env, roomId),
+    wsUrl: wsUrlFor(env, roomId, body.topology),
   };
   return json(res);
 }
@@ -78,7 +78,7 @@ async function joinByCode(code: string, env: Env): Promise<Response> {
   const parsed = JSON.parse(raw) as { roomId: string; topology: Topology };
   const res: MatchmakeJoinResponse = {
     roomId: parsed.roomId,
-    wsUrl: wsUrlFor(env, parsed.roomId),
+    wsUrl: wsUrlFor(env, parsed.roomId, parsed.topology),
   };
   return json(res);
 }
@@ -88,7 +88,7 @@ async function joinOpenRoom(env: Env): Promise<Response> {
   if (reusable !== null) {
     return json<MatchmakeJoinResponse>({
       roomId: reusable.roomId,
-      wsUrl: wsUrlFor(env, reusable.roomId),
+      wsUrl: wsUrlFor(env, reusable.roomId, reusable.topology),
     });
   }
   const topology = VALID_TOPOLOGIES[Math.floor(Math.random() * VALID_TOPOLOGIES.length)]!;
@@ -97,7 +97,7 @@ async function joinOpenRoom(env: Env): Promise<Response> {
   await env.LOBBY_CODES.put(`${OPEN_ROOM_PREFIX}${roomId}`, JSON.stringify(entry), {
     expirationTtl: OPEN_ROOM_TTL_S,
   });
-  return json<MatchmakeJoinResponse>({ roomId, wsUrl: wsUrlFor(env, roomId) });
+  return json<MatchmakeJoinResponse>({ roomId, wsUrl: wsUrlFor(env, roomId, topology) });
 }
 
 async function findReusableOpenRoom(env: Env): Promise<OpenRoomEntry | null> {
@@ -137,9 +137,13 @@ function randomCode(): string {
   return out;
 }
 
-function wsUrlFor(env: Env, roomId: string): string {
+function wsUrlFor(env: Env, roomId: string, topology: Topology): string {
   const subdomain = env.WORKERS_SUBDOMAIN ? `${env.WORKERS_SUBDOMAIN}.` : '';
-  return `wss://${env.ROOM_WORKER}.${subdomain}workers.dev/ws/${roomId}`;
+  // Stamp topology onto the URL so the Room DO can call setTopology on its
+  // first fetch, before any client connects. Without this the room would
+  // default to 'plane' regardless of what the matchmaker chose or the
+  // lobby selected.
+  return `wss://${env.ROOM_WORKER}.${subdomain}workers.dev/ws/${roomId}?topology=${topology}`;
 }
 
 function json<T>(body: T, status = 200): Response {

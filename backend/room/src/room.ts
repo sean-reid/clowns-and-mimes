@@ -124,6 +124,16 @@ export class Room implements DurableObject {
     if (req.headers.get('upgrade') !== 'websocket') {
       return new Response('expected websocket', { status: 426 });
     }
+    // The matchmaker stamps the room's topology onto the WebSocket URL as a
+    // ?topology= query param. Apply it before any client joins so the wall
+    // set, snapshot, and bot behavior all match what the lobby selected.
+    // First fetch wins: subsequent reconnects to the same room keep the
+    // topology that was first applied.
+    const url = new URL(req.url);
+    const requestedTopology = url.searchParams.get('topology');
+    if (requestedTopology && this.players.size === 0 && isValidTopology(requestedTopology)) {
+      this.setTopology(requestedTopology);
+    }
     const pair = new WebSocketPair();
     const client = pair[0];
     const server = pair[1];
@@ -924,6 +934,10 @@ export class Room implements DurableObject {
 
 function clamp(v: number, lo: number, hi: number): number {
   return Math.min(hi, Math.max(lo, v));
+}
+
+function isValidTopology(value: string): value is Topology {
+  return value === 'plane' || value === 'torus' || value === 'klein' || value === 'sphere';
 }
 
 function unitDelta(

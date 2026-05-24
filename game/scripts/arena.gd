@@ -92,6 +92,10 @@ func _ready() -> void:
 	hud.lobby_requested.connect(_on_back_to_menu)
 	hud.set_sprint(100.0)
 	hud.set_countdown_seconds(10.0)
+	# The oompa theme belongs to the menu screens. Silence it for gameplay so
+	# the stingers and footsteps come through clearly. The menu re-arms it on
+	# its _ready when the player returns.
+	AudioBus.stop_music()
 	if online_mode:
 		_start_online()
 	else:

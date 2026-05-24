@@ -121,15 +121,24 @@ jobs:
           APP_PATH="$(find "$WORK_DIR" -maxdepth 2 -name '*.app' -print -quit)"
           test -d "$APP_PATH" || { echo "no .app bundle found in $WORK_DIR"; exit 1; }
 
-          # 3. Sign with the hardened runtime and our entitlements (Godot
-          # needs disable-library-validation and allow-unsigned-executable-
-          # memory for notarized builds to launch).
+          # 3. Sign inside-out. Apple has deprecated `codesign --deep` for
+          # distribution: it doesn't guarantee that nested binaries are
+          # signed before the bundle is wrapped, and the notary service
+          # increasingly rejects bundles that were deep-signed. Walk every
+          # Mach-O inside the .app first, sign each with the hardened
+          # runtime, then sign the outer bundle once at the end.
+          #
+          # Entitlements include allow-jit because Godot's GDScript JIT
+          # and some renderer paths refuse to run on hardened-runtime
+          # builds without it.
           ENTITLEMENTS="$RUNNER_TEMP/entitlements.plist"
           cat > "$ENTITLEMENTS" <<'PLIST'
           <?xml version="1.0" encoding="UTF-8"?>
           <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
           <plist version="1.0">
           <dict>
+              <key>com.apple.security.cs.allow-jit</key>
+              <true/>
               <key>com.apple.security.cs.allow-unsigned-executable-memory</key>
               <true/>
               <key>com.apple.security.cs.disable-library-validation</key>
@@ -137,9 +146,26 @@ jobs:
           </dict>
           </plist>
           PLIST
-          /usr/bin/codesign --force --deep --options runtime --timestamp \
+          SIGN_IDENTITY="Developer ID Application: Sean Reid ($APPLE_TEAM_ID)"
+          # Sign every nested Mach-O (dylibs, frameworks, helper binaries)
+          # before signing the outer .app. find prints deepest paths last
+          # via -depth, which is the order codesign wants.
+          # shellcheck disable=SC2046
+          while IFS= read -r -d '' inner; do
+            # Skip files that are not actually Mach-O. file(1) prints
+            # "Mach-O" for binaries and dylibs in any architecture.
+            if file -b "$inner" | grep -q "Mach-O"; then
+              /usr/bin/codesign --force --options runtime --timestamp \
+                --entitlements "$ENTITLEMENTS" \
+                --sign "$SIGN_IDENTITY" \
+                --keychain "$KEYCHAIN_PATH" \
+                "$inner"
+            fi
+          done < <(find "$APP_PATH" -depth -type f -print0)
+          # Outer bundle last. No --deep here.
+          /usr/bin/codesign --force --options runtime --timestamp \
             --entitlements "$ENTITLEMENTS" \
-            --sign "Developer ID Application: Sean Reid ($APPLE_TEAM_ID)" \
+            --sign "$SIGN_IDENTITY" \
             --keychain "$KEYCHAIN_PATH" \
             "$APP_PATH"
           /usr/bin/codesign --verify --deep --strict --verbose=2 "$APP_PATH"
@@ -159,14 +185,45 @@ jobs:
             --keychain "$KEYCHAIN_PATH" \
             "$DMG_PATH"
 
-          # 5. Notarize and staple the .dmg. notarytool --wait blocks until
-          # Apple finishes scanning (usually well under a minute). stapler
-          # attaches the ticket so Gatekeeper can verify offline.
-          xcrun notarytool submit "$DMG_PATH" \
-            --apple-id "$APPLE_NOTARIZATION_APPLE_ID" \
-            --password "$APPLE_NOTARIZATION_APP_PASSWORD" \
-            --team-id "$APPLE_TEAM_ID" \
-            --wait
+          # 5. Notarize and staple the .dmg. Capture the submission as JSON
+          # so we can pull Apple's verdict via `notarytool log` whenever the
+          # call fails. --wait blocks until Apple finishes scanning and
+          # --timeout 30m fails fast if their queue is genuinely stuck (the
+          # default is 2 hours, which burns macOS runner minutes for no
+          # signal). On failure we still surface the log before exiting so
+          # the next person sees Apple's rejection reasons inline.
+          SUBMIT_OUT="$RUNNER_TEMP/notarize-submit.json"
+          if ! xcrun notarytool submit "$DMG_PATH" \
+              --apple-id "$APPLE_NOTARIZATION_APPLE_ID" \
+              --password "$APPLE_NOTARIZATION_APP_PASSWORD" \
+              --team-id "$APPLE_TEAM_ID" \
+              --wait \
+              --timeout 30m \
+              --output-format json \
+              > "$SUBMIT_OUT"; then
+            echo "notarytool submit failed; dumping result and log"
+            cat "$SUBMIT_OUT" || true
+            SUB_ID="$(python3 -c "import json,sys; print(json.load(open(sys.argv[1])).get('id',''))" "$SUBMIT_OUT" 2>/dev/null || true)"
+            if [ -n "$SUB_ID" ]; then
+              xcrun notarytool log "$SUB_ID" \
+                --apple-id "$APPLE_NOTARIZATION_APPLE_ID" \
+                --password "$APPLE_NOTARIZATION_APP_PASSWORD" \
+                --team-id "$APPLE_TEAM_ID" || true
+            fi
+            exit 1
+          fi
+          # Even on success the JSON may report status=Invalid; fetch the
+          # log unconditionally and bail if Apple didn't accept the bundle.
+          STATUS="$(python3 -c "import json,sys; print(json.load(open(sys.argv[1])).get('status',''))" "$SUBMIT_OUT")"
+          if [ "$STATUS" != "Accepted" ]; then
+            SUB_ID="$(python3 -c "import json,sys; print(json.load(open(sys.argv[1])).get('id',''))" "$SUBMIT_OUT")"
+            echo "notarytool returned status=$STATUS; fetching log"
+            xcrun notarytool log "$SUB_ID" \
+              --apple-id "$APPLE_NOTARIZATION_APPLE_ID" \
+              --password "$APPLE_NOTARIZATION_APP_PASSWORD" \
+              --team-id "$APPLE_TEAM_ID" || true
+            exit 1
+          fi
           xcrun stapler staple "$DMG_PATH"
 
           # 6. The Godot .zip is intermediate; only the .dmg ships.

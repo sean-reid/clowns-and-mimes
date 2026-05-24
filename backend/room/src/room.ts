@@ -691,12 +691,19 @@ export class Room implements DurableObject {
     for (const [id, input] of this.lastInputs) {
       const p = this.players.get(id);
       if (!p || p.bot || p.frozen) continue;
-      // Use the dt the client reported with this input, not the server's tick
-      // dt. Reconciliation replay on the client also drives stepMovement from
-      // input.dt; if the two diverged the replayed position would drift from
-      // the server's authoritative result.
+      // Skip inputs we already consumed on a previous tick. Without this the
+      // server re-runs stepMovement against the same input every tick the
+      // client falls behind on sending, advancing the server-authoritative
+      // position past where the client-side buffer ends. The next delta then
+      // snaps the client backward and the user feels constant micro-jitter.
+      const lastSeq = this.lastAppliedSeq.get(id) ?? -1;
+      if (input.seq <= lastSeq) continue;
       const next = stepMovement(
         { position: p.position, sprintEnergy: p.sprintEnergy },
+        // Use the dt the client reported with this input, not the server's
+        // tick dt. Reconciliation replay on the client also drives
+        // stepMovement from input.dt; if the two diverged the replayed
+        // position would drift from the server's authoritative result.
         { move: input.move, sprint: input.sprint, dt: input.dt },
         this.walls,
         this.topology,

@@ -86,6 +86,15 @@ var input_accumulator: float = 0.0
 # to know the yaw at the original tick.
 var pending_inputs: Array = []
 var local_sprint_energy: float = 100.0
+# Render-side interpolation state for the local player. The predictor advances
+# logically at 20 Hz; without these the rendered position only updates 20
+# times per second on a 60 Hz screen and looks choppy. Each input tick we
+# stash the "from" and "to" XZ; _physics_process lerps between them across
+# INPUT_TICK_PERIOD so the body glides instead of teleporting.
+var _local_interp_from: Vector2 = Vector2.ZERO
+var _local_interp_to: Vector2 = Vector2.ZERO
+var _local_interp_start_s: float = 0.0
+var _local_interp_armed: bool = false
 
 # Shared.
 var local_player: Node = null
@@ -150,6 +159,7 @@ func _physics_process(delta: float) -> void:
 		_check_contact_interactions()
 	if online_mode and snapshot_received:
 		_stream_input(delta)
+		_advance_local_render_interp()
 
 # ---------------------------------------------------------------------------
 # Offline path
@@ -242,6 +252,7 @@ func _on_snapshot(snapshot: Dictionary, you_are: String) -> void:
 	# inputs sent before the snapshot arrived describe motion from a
 	# different origin and replaying them would compound the offset.
 	pending_inputs.clear()
+	_local_interp_armed = false
 	for entry in snapshot.get("players", []):
 		if entry.get("id", "") == local_player_id and local_player != null:
 			var pos: Dictionary = entry.get("position", {"x": 0.0, "z": 0.0})
@@ -305,9 +316,16 @@ func _reconcile_local_player(delta: Dictionary) -> void:
 		)
 		replayed_pos = step["position"]
 		local_sprint_energy = step["sprint_energy"]
-	local_player.global_position = Vector3(
-		replayed_pos.x, local_player.global_position.y, replayed_pos.y
-	)
+	# Slide the interp window's "from" to the current rendered position and the
+	# "to" to the reconciled target. Without this the next render frame would
+	# snap to replayed_pos (whatever the visible drift is) and create a hitch
+	# every delta. A short interp window catches the body up over the next
+	# few frames.
+	var current_render := Vector2(local_player.global_position.x, local_player.global_position.z)
+	_local_interp_from = current_render
+	_local_interp_to = replayed_pos
+	_local_interp_start_s = Time.get_unix_time_from_system()
+	_local_interp_armed = true
 
 func _on_room_event(event: Dictionary) -> void:
 	match event.get("kind", event.get("t", "")):
@@ -397,7 +415,16 @@ func _rotate_wasd_to_world(wasd: Vector2, yaw: float) -> Vector2:
 func _apply_predicted_input(world_move: Vector2, sprinting: bool, dt: float) -> void:
 	if local_player == null or labyrinth == null or topology == null:
 		return
-	var pos2 := Vector2(local_player.global_position.x, local_player.global_position.z)
+	# Step from the LAST tick's target rather than the currently-rendered
+	# (mid-interp) body position, so seq N+1's input applies cleanly on top of
+	# seq N's logical result. Mixing in the half-lerp position would cause
+	# the next tick to overshoot or undershoot by however far through the
+	# interpolation window we are.
+	var pos2: Vector2 = (
+		_local_interp_to
+		if _local_interp_armed
+		else Vector2(local_player.global_position.x, local_player.global_position.z)
+	)
 	var step := Movement.step(
 		{"position": pos2, "sprint_energy": local_sprint_energy},
 		{"move": world_move, "sprint": sprinting, "dt": dt},
@@ -406,9 +433,24 @@ func _apply_predicted_input(world_move: Vector2, sprinting: bool, dt: float) -> 
 	)
 	var new_pos: Vector2 = step["position"]
 	local_sprint_energy = step["sprint_energy"]
-	local_player.global_position = Vector3(new_pos.x, local_player.global_position.y, new_pos.y)
+	# Move forward across the interp window instead of snapping. The render
+	# position starts at wherever the body is right now and glides to the new
+	# target over INPUT_TICK_PERIOD; on a 60 Hz screen this turns 20 Hz logical
+	# ticks into smooth motion.
+	_local_interp_from = Vector2(local_player.global_position.x, local_player.global_position.z)
+	_local_interp_to = new_pos
+	_local_interp_start_s = Time.get_unix_time_from_system()
+	_local_interp_armed = true
 	var planar: float = (Vector2(new_pos.x - pos2.x, new_pos.y - pos2.y)).length() / max(dt, 1e-4)
 	local_player.set_external_motion(planar, sprinting and world_move.length() > 0.0)
+
+func _advance_local_render_interp() -> void:
+	if not _local_interp_armed or local_player == null:
+		return
+	var elapsed: float = Time.get_unix_time_from_system() - _local_interp_start_s
+	var t: float = clampf(elapsed / INPUT_TICK_PERIOD, 0.0, 1.0)
+	var p: Vector2 = _local_interp_from.lerp(_local_interp_to, t)
+	local_player.global_position = Vector3(p.x, local_player.global_position.y, p.y)
 
 func _sync_players_from_snapshot(entries: Array) -> void:
 	var seen: Dictionary = {}

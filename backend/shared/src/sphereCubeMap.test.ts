@@ -6,10 +6,18 @@ import {
   FACE_GRID_ROWS,
   FACE_SLOTS,
   crossEdge,
+  faceLocalToWorld,
+  faceWorldRect,
   rotateFaceLocal,
+  spherePlayfieldExtents,
+  stepAcrossSphereFaces,
+  worldToFace,
+  worldToFaceLocal,
   type CubeFace,
   type Edge,
 } from './sphereCubeMap.ts';
+
+const FACE_SIDE = 20;
 
 const EDGES: Edge[] = ['east', 'north', 'west', 'south'];
 
@@ -146,5 +154,91 @@ describe('crossEdge', () => {
     expect(out.face).toBe('-Y');
     expect(out.v).toBe(1); // arriving on -Y's north edge
     expect(out.u).toBeCloseTo(0.42, 6);
+  });
+});
+
+describe('T-net world layout', () => {
+  it('playfield extents are 4*faceSide wide and 3*faceSide tall', () => {
+    const ext = spherePlayfieldExtents(FACE_SIDE);
+    expect(ext.x).toBe(FACE_GRID_COLS * FACE_SIDE);
+    expect(ext.z).toBe(FACE_GRID_ROWS * FACE_SIDE);
+  });
+
+  it('faceWorldRect covers exactly one face-side in each dimension', () => {
+    for (const face of CUBE_FACES) {
+      const r = faceWorldRect(face, FACE_SIDE);
+      expect(r.xMax - r.xMin).toBeCloseTo(FACE_SIDE, 6);
+      expect(r.zMax - r.zMin).toBeCloseTo(FACE_SIDE, 6);
+    }
+  });
+
+  it('worldToFace returns the face for an interior point of its rect', () => {
+    for (const face of CUBE_FACES) {
+      const r = faceWorldRect(face, FACE_SIDE);
+      const cx = (r.xMin + r.xMax) / 2;
+      const cz = (r.zMin + r.zMax) / 2;
+      expect(worldToFace(cx, cz, FACE_SIDE)).toBe(face);
+    }
+  });
+
+  it('worldToFace returns null for the six void T-net cells', () => {
+    // Voids: corners of the top and bottom rows (col 0, 2, 3 at row 0 and row 2)
+    const voidSlots: [number, number][] = [
+      [0, 0],
+      [2, 0],
+      [3, 0],
+      [0, 2],
+      [2, 2],
+      [3, 2],
+    ];
+    const halfX = (FACE_GRID_COLS * FACE_SIDE) / 2;
+    const halfZ = (FACE_GRID_ROWS * FACE_SIDE) / 2;
+    for (const [col, row] of voidSlots) {
+      const cx = col * FACE_SIDE - halfX + FACE_SIDE / 2;
+      const cz = halfZ - row * FACE_SIDE - FACE_SIDE / 2;
+      expect(worldToFace(cx, cz, FACE_SIDE)).toBeNull();
+    }
+  });
+
+  it('faceLocalToWorld and worldToFaceLocal round-trip', () => {
+    for (const face of CUBE_FACES) {
+      for (const u of [0.1, 0.5, 0.9]) {
+        for (const v of [0.1, 0.5, 0.9]) {
+          const w = faceLocalToWorld(face, u, v, FACE_SIDE);
+          const back = worldToFaceLocal(face, w.x, w.z, FACE_SIDE);
+          expect(back.u).toBeCloseTo(u, 6);
+          expect(back.v).toBeCloseTo(v, 6);
+        }
+      }
+    }
+  });
+});
+
+describe('stepAcrossSphereFaces', () => {
+  it('returns the destination unchanged when both endpoints are on the same face', () => {
+    const rect = faceWorldRect('+Z', FACE_SIDE);
+    const prev = { x: (rect.xMin + rect.xMax) / 2, z: (rect.zMin + rect.zMax) / 2 };
+    const next = { x: prev.x + 1, z: prev.z + 0.5 };
+    const out = stepAcrossSphereFaces(prev, next, FACE_SIDE);
+    expect(out.x).toBeCloseTo(next.x, 6);
+    expect(out.z).toBeCloseTo(next.z, 6);
+  });
+
+  it('moves the player onto +X when they step east off +Z', () => {
+    const rect = faceWorldRect('+Z', FACE_SIDE);
+    const prev = { x: rect.xMax - 0.1, z: (rect.zMin + rect.zMax) / 2 };
+    const next = { x: rect.xMax + 0.2, z: (rect.zMin + rect.zMax) / 2 };
+    const out = stepAcrossSphereFaces(prev, next, FACE_SIDE);
+    expect(worldToFace(out.x, out.z, FACE_SIDE)).toBe('+X');
+  });
+
+  it('moves the player onto +Y when they step north off +X (via cube adjacency, not grid)', () => {
+    // +X is at slot (2, 1); the grid cell north of it (2, 0) is a void. The
+    // cube adjacency sends the step to +Y's east edge with rotation.
+    const rect = faceWorldRect('+X', FACE_SIDE);
+    const prev = { x: (rect.xMin + rect.xMax) / 2, z: rect.zMax - 0.1 };
+    const next = { x: (rect.xMin + rect.xMax) / 2, z: rect.zMax + 0.2 };
+    const out = stepAcrossSphereFaces(prev, next, FACE_SIDE);
+    expect(worldToFace(out.x, out.z, FACE_SIDE)).toBe('+Y');
   });
 });

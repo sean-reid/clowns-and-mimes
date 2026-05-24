@@ -111,6 +111,198 @@ export const CUBE_ADJACENCY: AdjacencyMap = {
 };
 
 /**
+ * Sphere playfield extents in world units when a face has side `faceSide`.
+ * T-net is 4 cols * 3 rows, so the playfield is 4*faceSide wide and
+ * 3*faceSide tall. Use this to keep extent_x / extent_z consistent across
+ * the math and rendering layers.
+ */
+export function spherePlayfieldExtents(faceSide: number): { x: number; z: number } {
+  return { x: FACE_GRID_COLS * faceSide, z: FACE_GRID_ROWS * faceSide };
+}
+
+/**
+ * World x-range of a slot's column. The playfield is centered at the
+ * origin, so the leftmost column starts at -extent_x/2.
+ */
+function slotXRange(col: number, faceSide: number): { min: number; max: number } {
+  const halfX = (FACE_GRID_COLS * faceSide) / 2;
+  return { min: col * faceSide - halfX, max: (col + 1) * faceSide - halfX };
+}
+
+/**
+ * World z-range of a slot's row. row=0 is the highest z (top of the
+ * playfield in a top-down view), row=2 is the lowest.
+ */
+function slotZRange(row: number, faceSide: number): { min: number; max: number } {
+  const halfZ = (FACE_GRID_ROWS * faceSide) / 2;
+  const zMax = halfZ - row * faceSide;
+  return { min: zMax - faceSide, max: zMax };
+}
+
+/**
+ * World region a given face occupies in the T-net playfield. Inputs use
+ * `faceSide`, the side length of each cube face in world units.
+ */
+export function faceWorldRect(
+  face: CubeFace,
+  faceSide: number,
+): { xMin: number; xMax: number; zMin: number; zMax: number } {
+  const slot = FACE_SLOTS[face];
+  const xr = slotXRange(slot.col, faceSide);
+  const zr = slotZRange(slot.row, faceSide);
+  return { xMin: xr.min, xMax: xr.max, zMin: zr.min, zMax: zr.max };
+}
+
+/**
+ * Which face contains world point (x, z), or null if the point falls into
+ * one of the six T-net void cells. (col=0,2,3 of row 0) and (col=0,2,3 of
+ * row 2) are voids; the remaining six (col, row) slots are face territory.
+ */
+export function worldToFace(x: number, z: number, faceSide: number): CubeFace | null {
+  for (const face of CUBE_FACES) {
+    const r = faceWorldRect(face, faceSide);
+    if (x >= r.xMin && x < r.xMax && z >= r.zMin && z < r.zMax) {
+      return face;
+    }
+  }
+  return null;
+}
+
+/**
+ * Convert a world point that lies inside `face` into face-local (u, v) in
+ * [0, 1]. u grows east (+x); v grows north (+z). Caller is responsible for
+ * passing a point that is actually inside `face`.
+ */
+export function worldToFaceLocal(
+  face: CubeFace,
+  x: number,
+  z: number,
+  faceSide: number,
+): { u: number; v: number } {
+  const r = faceWorldRect(face, faceSide);
+  return { u: (x - r.xMin) / faceSide, v: (z - r.zMin) / faceSide };
+}
+
+/**
+ * Inverse of worldToFaceLocal: convert face-local (u, v) on `face` back
+ * into world coordinates.
+ */
+export function faceLocalToWorld(
+  face: CubeFace,
+  u: number,
+  v: number,
+  faceSide: number,
+): { x: number; z: number } {
+  const r = faceWorldRect(face, faceSide);
+  return { x: r.xMin + u * faceSide, z: r.zMin + v * faceSide };
+}
+
+/**
+ * Given a step on the sphere from `prev` to `next` (in world coords), if
+ * the step crosses a face edge, apply cube adjacency to find the
+ * equivalent destination. Returns the destination world position. When
+ * `prev` and `next` are on the same face, returns `next` unchanged.
+ *
+ * Edge cases: if `prev` is in a void cell (shouldn't happen in normal
+ * play), returns `next` unchanged so the caller's wall / collision logic
+ * sees the original position. If `next` is out of bounds in a direction
+ * other than the four cardinal edges of `prev`'s face, the closest cardinal
+ * edge is picked.
+ */
+export function stepAcrossSphereFaces(
+  prev: { x: number; z: number },
+  next: { x: number; z: number },
+  faceSide: number,
+): { x: number; z: number } {
+  const fromFace = worldToFace(prev.x, prev.z, faceSide);
+  if (fromFace === null) return next;
+  const toFace = worldToFace(next.x, next.z, faceSide);
+  if (toFace === fromFace) return next;
+  // Step left the face. Decide which edge it crossed by comparing motion
+  // direction with the face's world rect. For ambiguous corner crossings
+  // (off two edges at once), prefer the dominant motion axis.
+  const rect = faceWorldRect(fromFace, faceSide);
+  const dx = next.x - prev.x;
+  const dz = next.z - prev.z;
+  let edge: Edge;
+  // Distance past each edge - whichever is positive is the side we exited.
+  const pastEast = next.x - rect.xMax;
+  const pastWest = rect.xMin - next.x;
+  const pastNorth = next.z - rect.zMax;
+  const pastSouth = rect.zMin - next.z;
+  // Pick the dominant exit: the largest "past" value, tiebreak on motion
+  // direction so a diagonal step into a corner snaps to the axis it moved
+  // most in.
+  const allExits: Array<{ edge: Edge; past: number; weight: number }> = [
+    { edge: 'east', past: pastEast, weight: dx },
+    { edge: 'west', past: pastWest, weight: -dx },
+    { edge: 'north', past: pastNorth, weight: dz },
+    { edge: 'south', past: pastSouth, weight: -dz },
+  ];
+  const exits = allExits.filter((e) => e.past > 0);
+  if (exits.length === 0) return next; // shouldn't happen if toFace !== fromFace
+  exits.sort((a, b) => b.past - a.past || b.weight - a.weight);
+  edge = exits[0]!.edge;
+  // Parameter t along the departing edge.
+  let t: number;
+  switch (edge) {
+    case 'east':
+    case 'west':
+      t = (next.z - rect.zMin) / faceSide;
+      break;
+    case 'north':
+    case 'south':
+      t = (next.x - rect.xMin) / faceSide;
+      break;
+  }
+  // Clamp t for numerical safety.
+  if (t < 0) t = 0;
+  else if (t > 1) t = 1;
+  const dest = crossEdge(fromFace, edge, t);
+  // Nudge slightly inward from the destination edge so the next tick is
+  // unambiguously inside `dest.face`. The nudge magnitude is the leftover
+  // step beyond the departing edge, projected onto the new face's basis.
+  const exitOvershoot = exits[0]!.past;
+  // Convert overshoot to face-local units (overshoot is in world coords;
+  // faceSide world units == 1 face-local unit on the destination face).
+  const inwardLocal = Math.min(exitOvershoot / faceSide, 0.999);
+  let u = dest.u;
+  let v = dest.v;
+  // Push inward off the receiving edge.
+  switch (dest.face === dest.face ? destInwardAxis(dest.face, dest.u, dest.v) : 'u') {
+    case 'inward-u-pos':
+      u = inwardLocal;
+      break;
+    case 'inward-u-neg':
+      u = 1 - inwardLocal;
+      break;
+    case 'inward-v-pos':
+      v = inwardLocal;
+      break;
+    case 'inward-v-neg':
+      v = 1 - inwardLocal;
+      break;
+  }
+  return faceLocalToWorld(dest.face, u, v, faceSide);
+}
+
+/**
+ * The destination of crossEdge lands on the receiving edge with u or v
+ * pegged at 0 or 1. Figure out which axis to push inward off to bring the
+ * point into the face interior.
+ */
+function destInwardAxis(
+  _face: CubeFace,
+  u: number,
+  v: number,
+): 'inward-u-pos' | 'inward-u-neg' | 'inward-v-pos' | 'inward-v-neg' {
+  if (u === 0) return 'inward-u-pos';
+  if (u === 1) return 'inward-u-neg';
+  if (v === 0) return 'inward-v-pos';
+  return 'inward-v-neg';
+}
+
+/**
  * Apply a 90-degree-step clockwise rotation to a point in the face-local
  * unit square. The unit square is mapped to itself.
  */

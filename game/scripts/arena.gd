@@ -236,7 +236,18 @@ func _on_room_event(event: Dictionary) -> void:
 		"tagged": _handle_tagged(event)
 		"saved": _handle_saved(event)
 		"win": _handle_win(event)
-		"phase": hud.append_log("Phase: %s" % event.get("phase", ""))
+		"phase": _handle_phase_event(event.get("phase", ""))
+
+func _handle_phase_event(phase: String) -> void:
+	# Server sends 'turn_mime' / 'turn_clown' for the active-turn phases; flash
+	# the team's battle cry as a banner instead of a quiet log line. Anything
+	# else (filling, countdown, free_roam, ended) still posts to the log.
+	if phase == "turn_mime":
+		hud.flash_battle_cry(MIME_BATTLE_CRIES[randi() % MIME_BATTLE_CRIES.size()], "mime")
+	elif phase == "turn_clown":
+		hud.flash_battle_cry(CLOWN_BATTLE_CRIES[randi() % CLOWN_BATTLE_CRIES.size()], "clown")
+	else:
+		hud.append_log("Phase: %s" % phase)
 
 func _on_room_error(code: String, message: String) -> void:
 	hud.append_log("Server error %s: %s" % [code, message])
@@ -461,9 +472,9 @@ func _on_offline_phase_changed(phase: int) -> void:
 		GameRulesScript.Phase.FREE_ROAM:
 			hud.append_log("Free roam begins.")
 		GameRulesScript.Phase.TURN_MIME:
-			hud.append_log(MIME_BATTLE_CRIES[randi() % MIME_BATTLE_CRIES.size()])
+			hud.flash_battle_cry(MIME_BATTLE_CRIES[randi() % MIME_BATTLE_CRIES.size()], "mime")
 		GameRulesScript.Phase.TURN_CLOWN:
-			hud.append_log(CLOWN_BATTLE_CRIES[randi() % CLOWN_BATTLE_CRIES.size()])
+			hud.flash_battle_cry(CLOWN_BATTLE_CRIES[randi() % CLOWN_BATTLE_CRIES.size()], "clown")
 
 # ---------------------------------------------------------------------------
 # HUD helpers

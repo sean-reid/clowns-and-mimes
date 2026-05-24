@@ -99,9 +99,17 @@ func _placeholder_code_if_missing() -> String:
 	return "------"
 
 func _seed_player_list() -> void:
+	# Names are server-authored - both humans and bots. The lobby gets no
+	# roster from the matchmaker call, so do NOT fabricate placeholder names
+	# here; doing so would diverge from the real names the room snapshot
+	# delivers a moment later when the arena loads. Show only the local
+	# player plus a clearly-empty waiting state.
 	for child in players_box.get_children():
 		child.queue_free()
-	for p in [GameState.username, "Bot Mime", "Bot Clown"]:
-		var l := Label.new()
-		l.text = "- " + p
-		players_box.add_child(l)
+	var me := Label.new()
+	me.text = "- " + GameState.username
+	players_box.add_child(me)
+	var waiting := Label.new()
+	waiting.text = "  waiting for opponents..."
+	waiting.modulate = Color(0.7, 0.7, 0.72)
+	players_box.add_child(waiting)

@@ -59,12 +59,9 @@ func test_win_emits_when_one_team_fully_frozen() -> void:
 func test_turn_progression_advances_phase() -> void:
 	var rules: Node = _make_rules()
 	rules.start(PlaneTopology.new())
-	assert_eq(rules.phase, GameRulesScript.Phase.COUNTDOWN, "starts in countdown")
+	assert_eq(rules.phase, GameRulesScript.Phase.FREE_ROAM, "starts in free roam")
 	rules.phase_ends_at = 0.0
 	rules.tick(1.0)
-	assert_eq(rules.phase, GameRulesScript.Phase.FREE_ROAM, "advances to free roam")
-	rules.phase_ends_at = 0.0
-	rules.tick(2.0)
 	assert_true(
 		rules.phase == GameRulesScript.Phase.TURN_MIME or rules.phase == GameRulesScript.Phase.TURN_CLOWN,
 		"advances to a team turn"

@@ -58,15 +58,15 @@ const BOT_SPRINT_TRIGGER_RADIUS = 10;
 // Without this, two opponents adjacent to a saved teammate could re-freeze
 // them on the very next tick and trigger an endless freeze/save chain.
 const UNFREEZE_GRACE_MS = 1_500;
-// Lag compensation: when validating a client-initiated tag/unfreeze, rewind
-// the victim's position by this many ms before checking distance, matching
-// the client's interp delay (~50 ms) plus a one-way input trip. 120 ms
-// covered a 100 ms RTT; tag-missed-out-of-range still fired during
-// playtest on real network paths so widen the window to 220 ms (covers up
-// to ~340 ms RTT). Per-client RTT estimation from ping/pong would be more
-// precise but adds bookkeeping; a wider static window is cheaper and
-// sufficient for the cellular-leaning latencies the dev backend sees.
-const LAG_COMP_MS = 220;
+// Lag compensation experiment was a red herring: tag-missed-out-of-range
+// failures during playtest were not driven by client-server position drift.
+// Rewinding the victim was making frozen-target unfreeze worse (frozen
+// players don't move, so historical positions just took us further from
+// where the client clicked save). Leave the helper plumbing in place but
+// set the window to 0 so distance checks use current authoritative state.
+// If lag-driven rejections come back in playtest, revisit with per-client
+// RTT estimation off the existing ping/pong stream.
+const LAG_COMP_MS = 0;
 // Cap of how far back we keep positions. Larger means more memory but
 // covers higher-latency clients; 500 ms is plenty for any reasonable RTT.
 const POSITION_HISTORY_KEEP_MS = 500;

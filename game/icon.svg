@@ -2,8 +2,6 @@
   <rect width="128" height="128" fill="#0c0c0e"/>
   <circle cx="44" cy="64" r="22" fill="#f5f5f5"/>
   <circle cx="84" cy="64" r="22" fill="#e63946"/>
-  <circle cx="44" cy="60" r="3" fill="#0c0c0e"/>
-  <circle cx="84" cy="60" r="3" fill="#0c0c0e"/>
-  <path d="M34 72 Q44 80 54 72" stroke="#0c0c0e" stroke-width="2" fill="none"/>
-  <path d="M74 78 Q84 70 94 78" stroke="#0c0c0e" stroke-width="2" fill="none"/>
+  <path d="M34 64 Q44 76 54 64" stroke="#0c0c0e" stroke-width="3" fill="none" stroke-linecap="round"/>
+  <path d="M74 70 Q84 60 94 70" stroke="#0c0c0e" stroke-width="3" fill="none" stroke-linecap="round"/>
 </svg>

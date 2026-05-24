@@ -165,6 +165,7 @@ func _physics_process(delta: float) -> void:
 
 func _start_offline() -> void:
 	topology = TopologyFactory.from_string(GameState.topology_as_string())
+	hud.set_topology(topology.name())
 	_build_labyrinth(_derive_offline_seed())
 	_setup_rules()
 	_spawn_offline_players()
@@ -237,6 +238,7 @@ func _on_snapshot(snapshot: Dictionary, you_are: String) -> void:
 	var topology_name: String = snapshot.get("topology", "plane")
 	topology = TopologyFactory.from_string(topology_name)
 	GameState.set_topology(_topology_kind(topology_name))
+	hud.set_topology(topology_name)
 	if labyrinth == null:
 		_build_labyrinth(int(snapshot.get("seed", 0)))
 	_sync_players_from_snapshot(snapshot.get("players", []))

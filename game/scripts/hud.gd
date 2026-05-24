@@ -8,6 +8,7 @@ extends CanvasLayer
 @onready var team_status: HBoxContainer = $Margins/TeamStatus
 @onready var event_log: VBoxContainer = $Margins/EventLog
 @onready var team_badge: Label = $Margins/TeamBadge
+@onready var topology_badge: Label = $Margins/TopologyBadge
 @onready var frozen_overlay: Label = $FrozenOverlay
 @onready var battle_cry_label: Label = $BattleCry
 @onready var end_overlay: Control = $EndOverlay
@@ -20,8 +21,18 @@ func _ready() -> void:
 	frozen_overlay.text = ""
 	end_overlay.visible = false
 	team_badge.text = ""
+	topology_badge.text = ""
 	battle_cry_label.text = ""
 	battle_cry_label.modulate.a = 0.0
+
+func set_topology(name: String) -> void:
+	if name.is_empty():
+		topology_badge.text = ""
+		return
+	# Capitalize for readability ("torus" -> "Torus") and prefix with "on" so
+	# the line reads as a status, not a heading.
+	var pretty: String = name.substr(0, 1).to_upper() + name.substr(1)
+	topology_badge.text = "on the %s" % pretty
 
 func set_local_team(team: String) -> void:
 	if team == "mime":

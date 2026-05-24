@@ -60,11 +60,13 @@ const BOT_SPRINT_TRIGGER_RADIUS = 10;
 const UNFREEZE_GRACE_MS = 1_500;
 // Lag compensation: when validating a client-initiated tag/unfreeze, rewind
 // the victim's position by this many ms before checking distance, matching
-// roughly the client's interp delay (~50 ms) plus a one-way input trip
-// (~50 ms). The client tagged based on what it saw; with this rewind the
-// server checks the same world state instead of the current authoritative
-// state the opponent has moved past.
-const LAG_COMP_MS = 120;
+// the client's interp delay (~50 ms) plus a one-way input trip. 120 ms
+// covered a 100 ms RTT; tag-missed-out-of-range still fired during
+// playtest on real network paths so widen the window to 220 ms (covers up
+// to ~340 ms RTT). Per-client RTT estimation from ping/pong would be more
+// precise but adds bookkeeping; a wider static window is cheaper and
+// sufficient for the cellular-leaning latencies the dev backend sees.
+const LAG_COMP_MS = 220;
 // Cap of how far back we keep positions. Larger means more memory but
 // covers higher-latency clients; 500 ms is plenty for any reasonable RTT.
 const POSITION_HISTORY_KEEP_MS = 500;

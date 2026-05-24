@@ -16,8 +16,13 @@ const TICK_HZ = 20;
 const TICK_MS = 1000 / TICK_HZ;
 const FREE_ROAM_MS = 30_000;
 const COUNTDOWN_MS = 10_000;
-const TAG_RADIUS = 1.4;
-const UNFREEZE_RADIUS = 1.4;
+// Server tag radius runs wider than the client's CONTACT_RADIUS so a tag
+// fired the moment the client sees contact doesn't fall outside the server's
+// check by the time the message arrives. Client interpolation lags ~50 ms
+// behind authoritative state; opponent at SPRINT_SPEED (5.6 u/s) moves ~0.28
+// units in that window. 1.75 gives margin without making tags trivially long.
+const TAG_RADIUS = 1.75;
+const UNFREEZE_RADIUS = 1.75;
 const WORLD_WIDTH = 80;
 const MAX_PLAYERS = 16;
 const TEAM_TARGET = 4;

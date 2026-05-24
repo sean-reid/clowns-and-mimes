@@ -47,6 +47,7 @@ func build(rng_seed: int, top: TopologyScript) -> void:
 	var topo_name: String = topology.name()
 	_build_grid_maze(rng_seed, topo_name)
 	_build_pathfinder()
+	_build_wrap_tiles()
 
 func _build_grid_maze(rng_seed: int, topo_name: String) -> void:
 	# Each maze segment is a thin straight wall between two grid cells. The
@@ -87,6 +88,57 @@ func find_path(from: Vector3, to: Vector3) -> Array[Vector3]:
 # ---------------------------------------------------------------------------
 # Construction
 # ---------------------------------------------------------------------------
+
+## Clones the floor and walls into the 8 neighboring tiles offset by
+## (+-WORLD_WIDTH) so a player standing at the seam looks across and sees the
+## wrapped portion of the map instead of an opaque edge. The clones are
+## visual only - no collision - because the topology.wrap teleport in
+## arena.gd keeps the body inside the canonical domain. Klein flips z when
+## the tile crosses the x seam.
+func _build_wrap_tiles() -> void:
+	var prior_tiles: Node = get_node_or_null("WrapTiles")
+	if prior_tiles != null:
+		prior_tiles.queue_free()
+	if topology == null:
+		return
+	var topo_name: String = topology.name()
+	# Only flat tori (torus, klein) have a simple ±WIDTH lattice in the
+	# universal cover. Sphere uses cube-mapped faces packed 3x2; repeating the
+	# rectangle there would show non-adjacent faces and mislead the player.
+	if topo_name != "torus" and topo_name != "klein":
+		return
+	var tiles_root := Node3D.new()
+	tiles_root.name = "WrapTiles"
+	add_child(tiles_root)
+	var w: float = TopologyScript.WIDTH
+	var flip_on_x: bool = topology.flips_z_on_x_wrap()
+	for dx in [-1, 0, 1]:
+		for dz in [-1, 0, 1]:
+			if dx == 0 and dz == 0:
+				continue
+			var tile := Node3D.new()
+			tile.position = Vector3(float(dx) * w, 0.0, float(dz) * w)
+			if flip_on_x and (absi(dx) % 2 == 1):
+				# Klein x-seam crossing flips z: scale by (1, 1, -1) mirrors
+				# the geometry along the z axis so the player sees the
+				# correctly-oriented continuation across the seam.
+				tile.scale = Vector3(1.0, 1.0, -1.0)
+			tiles_root.add_child(tile)
+			var floor_clone := MeshInstance3D.new()
+			floor_clone.mesh = floor_node.mesh
+			floor_clone.material_override = floor_node.material_override
+			tile.add_child(floor_clone)
+			for seg in _wall_segments:
+				var wall_mesh := MeshInstance3D.new()
+				var box := BoxMesh.new()
+				box.size = Vector3(float(seg["length"]), WALL_HEIGHT, WALL_THICKNESS)
+				wall_mesh.mesh = box
+				wall_mesh.transform = seg["transform"]
+				var mat := StandardMaterial3D.new()
+				mat.albedo_color = Color(0.18, 0.18, 0.22)
+				mat.roughness = 0.85
+				wall_mesh.material_override = mat
+				tile.add_child(wall_mesh)
 
 func _resolve_children() -> void:
 	walls_root = get_node_or_null("Walls") as Node3D

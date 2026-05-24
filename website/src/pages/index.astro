@@ -498,13 +498,20 @@ const clownAvatar = `${base}avatars/clown.png`;
           if (!res.ok) return;
           const data = await res.json();
           const assets = Array.isArray(data.assets) ? data.assets : [];
+          // macOS prefers .dmg over .zip; older v0.1.x releases shipped a .zip
+          // fallback, v0.2.0+ ships a notarized .dmg only. The two-pass match
+          // picks the .dmg whenever it exists.
           const updates = [
-            { id: 'dl-windows', fileId: 'dl-windows-file', match: /windows|\.exe/i },
-            { id: 'dl-macos', fileId: 'dl-macos-file', match: /mac|\.dmg|\.zip/i },
-            { id: 'dl-linux', fileId: 'dl-linux-file', match: /linux|appimage/i },
+            { id: 'dl-windows', fileId: 'dl-windows-file', matches: [/\.exe$/i, /windows/i] },
+            { id: 'dl-macos', fileId: 'dl-macos-file', matches: [/\.dmg$/i, /mac.*\.zip$/i] },
+            { id: 'dl-linux', fileId: 'dl-linux-file', matches: [/linux|appimage/i] },
           ];
-          for (const { id, fileId, match } of updates) {
-            const asset = assets.find((a) => match.test(a.name ?? ''));
+          for (const { id, fileId, matches } of updates) {
+            let asset;
+            for (const match of matches) {
+              asset = assets.find((a) => match.test(a.name ?? ''));
+              if (asset) break;
+            }
             if (!asset) continue;
             const el = document.getElementById(id);
             const fileEl = document.getElementById(fileId);

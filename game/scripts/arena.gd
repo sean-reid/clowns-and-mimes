@@ -217,8 +217,11 @@ func _on_delta(delta: Dictionary) -> void:
 		return
 	phase_label = delta.get("phase", phase_label)
 	turn_ends_at_ms = int(delta.get("turnEndsAt", turn_ends_at_ms))
-	for entry in delta.get("players", []):
-		_apply_player_state(entry)
+	# Server's delta carries the full player roster every tick. Use the
+	# snapshot-style sync so newly-arrived bots get a Player node spawned
+	# (otherwise _apply_player_state silently skips them and the lobby looks
+	# empty until someone else joins).
+	_sync_players_from_snapshot(delta.get("players", []))
 
 func _on_room_event(event: Dictionary) -> void:
 	match event.get("kind", event.get("t", "")):

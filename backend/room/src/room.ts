@@ -58,6 +58,16 @@ const BOT_SPRINT_TRIGGER_RADIUS = 10;
 // Without this, two opponents adjacent to a saved teammate could re-freeze
 // them on the very next tick and trigger an endless freeze/save chain.
 const UNFREEZE_GRACE_MS = 1_500;
+// Lag compensation: when validating a client-initiated tag/unfreeze, rewind
+// the victim's position by this many ms before checking distance, matching
+// roughly the client's interp delay (~50 ms) plus a one-way input trip
+// (~50 ms). The client tagged based on what it saw; with this rewind the
+// server checks the same world state instead of the current authoritative
+// state the opponent has moved past.
+const LAG_COMP_MS = 120;
+// Cap of how far back we keep positions. Larger means more memory but
+// covers higher-latency clients; 500 ms is plenty for any reasonable RTT.
+const POSITION_HISTORY_KEEP_MS = 500;
 
 interface BotMind {
   patrolTarget: { x: number; z: number };
@@ -97,6 +107,11 @@ export class Room implements DurableObject {
   // refuse a re-tag inside UNFREEZE_GRACE_MS so adjacent attackers can't
   // start an immediate freeze/save oscillation.
   private readonly lastSavedAt = new Map<string, number>();
+  // Recent server-authoritative positions, oldest first. Used by lag
+  // compensation when validating client-initiated tag/unfreeze: the client
+  // tagged based on a position the server held LAG_COMP_MS ago; we rewind
+  // to that snapshot for the distance check.
+  private readonly positionHistory = new Map<string, Array<{ t: number; x: number; z: number }>>();
   private walls: readonly WallSegment[] = [];
 
   constructor(private readonly state: DurableObjectState) {
@@ -306,6 +321,7 @@ export class Room implements DurableObject {
     this.players.delete(conn.playerId);
     this.lastInputs.delete(conn.playerId);
     this.lastSavedAt.delete(conn.playerId);
+    this.positionHistory.delete(conn.playerId);
     if (this.humanPlayers().length === 0) {
       this.stopTick();
       this.cancelBotFill();
@@ -343,7 +359,7 @@ export class Room implements DurableObject {
       this.send(ws, { t: 'tag_result', ok: false, reason: 'missing' });
       return;
     }
-    const reason = this.tagRejectionReason(attacker, victim, TAG_RADIUS_CLIENT);
+    const reason = this.tagRejectionReason(attacker, victim, TAG_RADIUS_CLIENT, true);
     if (reason !== null) {
       this.send(ws, { t: 'tag_result', ok: false, reason });
       return;
@@ -366,8 +382,13 @@ export class Room implements DurableObject {
       this.send(ws, { t: 'unfreeze_result', ok: false, reason: 'invalid' });
       return;
     }
+    // Lag-compensate the frozen teammate's position too: the client clicked
+    // save based on where they saw the body, not where the server currently
+    // has it. Frozen players don't move so this rarely matters, but staying
+    // consistent with onTag keeps the rules simple.
+    const victimPos = this.positionAt(victim.id, Date.now() - LAG_COMP_MS);
     if (
-      topologyDistance(savior.position, victim.position, this.topology, WORLD_WIDTH) >
+      topologyDistance(savior.position, victimPos, this.topology, WORLD_WIDTH) >
       UNFREEZE_RADIUS_CLIENT
     ) {
       this.send(ws, { t: 'unfreeze_result', ok: false, reason: 'out_of_range' });
@@ -375,13 +396,7 @@ export class Room implements DurableObject {
     }
     if (
       this.walls.length > 0 &&
-      pathCrossesWall(
-        this.walls,
-        savior.position.x,
-        savior.position.z,
-        victim.position.x,
-        victim.position.z,
-      )
+      pathCrossesWall(this.walls, savior.position.x, savior.position.z, victimPos.x, victimPos.z)
     ) {
       this.send(ws, { t: 'unfreeze_result', ok: false, reason: 'wall_in_way' });
       return;
@@ -400,11 +415,17 @@ export class Room implements DurableObject {
    * The reason is forwarded in tag_result so the HUD can surface why a tag
    * was rejected ('not_your_turn', 'out_of_range', 'wall_in_way', ...)
    * instead of just 'invalid'.
+   *
+   * lagCompensate is true for client-initiated tags only: the victim's
+   * position is rewound by LAG_COMP_MS so the distance check runs against
+   * the world state the client saw at the moment of the tag. Server-side
+   * bot tags pass false because they have no lag to compensate for.
    */
   private tagRejectionReason(
     attacker: PlayerState,
     victim: PlayerState,
     radius: number,
+    lagCompensate: boolean,
   ): string | null {
     if (attacker.team === victim.team) return 'same_team';
     if (attacker.frozen) return 'you_are_frozen';
@@ -412,7 +433,10 @@ export class Room implements DurableObject {
     if (this.phase !== `turn_${attacker.team}`) return 'not_your_turn';
     const savedAt = this.lastSavedAt.get(victim.id);
     if (savedAt !== undefined && Date.now() - savedAt < UNFREEZE_GRACE_MS) return 'just_saved';
-    const d = topologyDistance(attacker.position, victim.position, this.topology, WORLD_WIDTH);
+    const victimPos = lagCompensate
+      ? this.positionAt(victim.id, Date.now() - LAG_COMP_MS)
+      : victim.position;
+    const d = topologyDistance(attacker.position, victimPos, this.topology, WORLD_WIDTH);
     if (d > radius) return 'out_of_range';
     if (
       this.walls.length > 0 &&
@@ -420,8 +444,8 @@ export class Room implements DurableObject {
         this.walls,
         attacker.position.x,
         attacker.position.z,
-        victim.position.x,
-        victim.position.z,
+        victimPos.x,
+        victimPos.z,
       )
     )
       return 'wall_in_way';
@@ -429,7 +453,7 @@ export class Room implements DurableObject {
   }
 
   private canTag(attacker: PlayerState, victim: PlayerState, radius: number): boolean {
-    return this.tagRejectionReason(attacker, victim, radius) === null;
+    return this.tagRejectionReason(attacker, victim, radius, false) === null;
   }
 
   private tally(team: Team): number {
@@ -526,6 +550,39 @@ export class Room implements DurableObject {
     const dt = TICK_MS / 1000;
     this.simulateHumans(dt);
     this.simulateBots(dt);
+    this.recordPositionsForLagComp();
+  }
+
+  /**
+   * Append every player's current position to their history ring after each
+   * tick, then drop entries older than POSITION_HISTORY_KEEP_MS. tagRejection
+   * later rewinds the victim by LAG_COMP_MS so the server validates against
+   * the world state the client saw at the moment of the tag.
+   */
+  private recordPositionsForLagComp(): void {
+    const now = Date.now();
+    const cutoff = now - POSITION_HISTORY_KEEP_MS;
+    for (const p of this.players.values()) {
+      let hist = this.positionHistory.get(p.id);
+      if (!hist) {
+        hist = [];
+        this.positionHistory.set(p.id, hist);
+      }
+      hist.push({ t: now, x: p.position.x, z: p.position.z });
+      while (hist.length > 0 && hist[0]!.t < cutoff) hist.shift();
+    }
+  }
+
+  /** Closest historical position at or before atMs, or current if missing. */
+  private positionAt(playerId: string, atMs: number): { x: number; z: number } {
+    const hist = this.positionHistory.get(playerId);
+    if (hist && hist.length > 0) {
+      for (let i = hist.length - 1; i >= 0; i -= 1) {
+        if (hist[i]!.t <= atMs) return { x: hist[i]!.x, z: hist[i]!.z };
+      }
+    }
+    const p = this.players.get(playerId);
+    return p ? { x: p.position.x, z: p.position.z } : { x: 0, z: 0 };
   }
 
   private simulateHumans(dt: number): void {

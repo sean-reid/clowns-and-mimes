@@ -82,12 +82,7 @@ function oppositeDir(dir: number): number {
   return (dir + 2) % 4;
 }
 
-function neighborOf(
-  cell: number,
-  dir: number,
-  gridN: number,
-  topology: Topology,
-): Neighbor | null {
+function neighborOf(cell: number, dir: number, gridN: number, topology: Topology): Neighbor | null {
   const cc = cell % gridN;
   const cr = Math.floor(cell / gridN);
   let nc = cc;
@@ -113,11 +108,7 @@ function neighborOf(
   return { cell: nc + nr * gridN, dir, crossesSeam };
 }
 
-function emitWalls(
-  openings: Uint8Array,
-  gridN: number,
-  topology: Topology,
-): WallSegment[] {
+function emitWalls(openings: Uint8Array, gridN: number, topology: Topology): WallSegment[] {
   // For each cell, examine its EAST and NORTH faces. (South and west are
   // mirror images of the neighbor's north and east, so we only emit each
   // wall once.) If the face is closed and is not a wrap seam, drop a wall

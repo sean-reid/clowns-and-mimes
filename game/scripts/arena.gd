@@ -236,16 +236,19 @@ func _on_room_event(event: Dictionary) -> void:
 		"tagged": _handle_tagged(event)
 		"saved": _handle_saved(event)
 		"win": _handle_win(event)
-		"phase": _handle_phase_event(event.get("phase", ""))
+		"phase": _handle_phase_event(event.get("phase", ""), int(event.get("cryIndex", -1)))
 
-func _handle_phase_event(phase: String) -> void:
-	# Server sends 'turn_mime' / 'turn_clown' for the active-turn phases; flash
-	# the team's battle cry as a banner instead of a quiet log line. Anything
-	# else (filling, countdown, free_roam, ended) still posts to the log.
+func _handle_phase_event(phase: String, cry_index: int) -> void:
+	# Server sends 'turn_mime' / 'turn_clown' for the active-turn phases plus a
+	# server-picked cryIndex so every client renders the same banner text. If
+	# the server omits cryIndex (pre-cryIndex room build), falls back to slot 0
+	# rather than a per-client random pick that would diverge across players.
 	if phase == "turn_mime":
-		hud.flash_battle_cry(MIME_BATTLE_CRIES[randi() % MIME_BATTLE_CRIES.size()], "mime")
+		var idx: int = cry_index if cry_index >= 0 else 0
+		hud.flash_battle_cry(MIME_BATTLE_CRIES[idx % MIME_BATTLE_CRIES.size()], "mime")
 	elif phase == "turn_clown":
-		hud.flash_battle_cry(CLOWN_BATTLE_CRIES[randi() % CLOWN_BATTLE_CRIES.size()], "clown")
+		var idx: int = cry_index if cry_index >= 0 else 0
+		hud.flash_battle_cry(CLOWN_BATTLE_CRIES[idx % CLOWN_BATTLE_CRIES.size()], "clown")
 	else:
 		hud.append_log("Phase: %s" % phase)
 

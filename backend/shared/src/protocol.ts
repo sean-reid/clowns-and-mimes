@@ -31,6 +31,12 @@ export interface PlayerState {
   yaw: number;
   frozen: boolean;
   sprintEnergy: number;
+  // Sprint hysteresis: once energy depletes to 0 mid-sprint the player
+  // drops to walk and stays there until energy regens past
+  // SPRINT_ENGAGE_THRESHOLD. Without this latch a sprint-held key would
+  // flip-flop between WALK_SPEED and SPRINT_SPEED tick-to-tick at the
+  // 0-energy line, producing visible 20 Hz jitter.
+  sprinting: boolean;
 }
 
 export type RoomPhase = 'filling' | 'locked' | 'free_roam' | 'turn_mime' | 'turn_clown' | 'ended';

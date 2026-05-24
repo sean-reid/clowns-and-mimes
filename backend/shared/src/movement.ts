@@ -16,6 +16,11 @@ export const MAX_TICK_TRAVEL = SPRINT_SPEED * 1.5;
 export const MAX_SPRINT = 100;
 export const SPRINT_DRAIN_PER_S = 25;
 export const SPRINT_REGEN_PER_S = 15;
+// Once sprint depletes, the player has to regen past this threshold before
+// sprint re-engages. Without the latch, holding shift past the 0-energy line
+// oscillates between sprint and walk every tick because energy regens by
+// SPRINT_REGEN_PER_S * dt > 0 each idle tick and re-arms sprint instantly.
+export const SPRINT_ENGAGE_THRESHOLD = 20;
 
 export interface MoveStepInput {
   move: Vec2;
@@ -26,6 +31,10 @@ export interface MoveStepInput {
 export interface MoveStepState {
   position: Vec2;
   sprintEnergy: number;
+  // Whether the player is currently considered to be sprinting. Set when
+  // sprint engages, cleared when energy hits 0. While false, energy must
+  // refill past SPRINT_ENGAGE_THRESHOLD before sprint can re-arm.
+  sprinting: boolean;
 }
 
 /**
@@ -52,7 +61,14 @@ export function stepMovement(
   worldWidth: number,
   collidesWithOther: PlayerCollisionGate,
 ): MoveStepState {
-  const wantSprint = input.sprint && state.sprintEnergy > 0;
+  // Sprint hysteresis: once disengaged the player has to refill past
+  // SPRINT_ENGAGE_THRESHOLD before re-engaging. While engaged any positive
+  // energy keeps sprint alive. Both edges latch on state.sprinting so the
+  // server and the client's reconciliation see the same truth.
+  let wantSprint = false;
+  if (input.sprint && state.sprintEnergy > 0) {
+    wantSprint = state.sprinting ? true : state.sprintEnergy >= SPRINT_ENGAGE_THRESHOLD;
+  }
   const speed = wantSprint ? SPRINT_SPEED : WALK_SPEED;
   const moveLen = Math.hypot(input.move.x, input.move.z);
   const nx = moveLen > 0 ? input.move.x / moveLen : 0;
@@ -85,7 +101,11 @@ export function stepMovement(
     0,
     MAX_SPRINT,
   );
-  return { position: nextPos, sprintEnergy: nextSprint };
+  // sprinting latch: true while sprint stays alive, drops the moment we
+  // hit 0. The next tick's wantSprint will need >= SPRINT_ENGAGE_THRESHOLD
+  // to re-engage.
+  const nextSprinting = wantSprint && nextSprint > 0;
+  return { position: nextPos, sprintEnergy: nextSprint, sprinting: nextSprinting };
 }
 
 function clamp(v: number, lo: number, hi: number): number {

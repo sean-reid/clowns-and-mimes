@@ -290,6 +290,7 @@ export class Room implements DurableObject {
       yaw: 0,
       frozen: false,
       sprintEnergy: MAX_SPRINT,
+      sprinting: false,
     };
     this.players.set(id, player);
     this.connections.set(ws, { ws, playerId: id });
@@ -327,6 +328,7 @@ export class Room implements DurableObject {
           yaw: 0,
           frozen: false,
           sprintEnergy: MAX_SPRINT,
+          sprinting: false,
         });
         this.botMinds.set(id, {
           patrolTarget: this.randomPatrolPoint(),
@@ -719,7 +721,7 @@ export class Room implements DurableObject {
       const lastSeq = this.lastAppliedSeq.get(id) ?? -1;
       if (input.seq <= lastSeq) continue;
       const next = stepMovement(
-        { position: p.position, sprintEnergy: p.sprintEnergy },
+        { position: p.position, sprintEnergy: p.sprintEnergy, sprinting: p.sprinting },
         // Use the dt the client reported with this input, not the server's
         // tick dt. Reconciliation replay on the client also drives
         // stepMovement from input.dt; if the two diverged the replayed
@@ -732,6 +734,7 @@ export class Room implements DurableObject {
       );
       p.position = next.position;
       p.sprintEnergy = next.sprintEnergy;
+      p.sprinting = next.sprinting;
       p.yaw = input.lookYaw;
       this.lastAppliedSeq.set(id, input.seq);
     }

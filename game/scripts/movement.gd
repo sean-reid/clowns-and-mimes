@@ -17,6 +17,7 @@ const MAX_TICK_TRAVEL := SPRINT_SPEED * 1.5
 const MAX_SPRINT := 100.0
 const SPRINT_DRAIN_PER_S := 25.0
 const SPRINT_REGEN_PER_S := 15.0
+const SPRINT_ENGAGE_THRESHOLD := 20.0
 
 # Wall collision parameters. Match backend/shared/src/labyrinth.ts.
 const WALL_THICKNESS := 0.4
@@ -40,11 +41,20 @@ static func step(
 ) -> Dictionary:
 	var pos: Vector2 = state["position"]
 	var sprint_energy: float = state["sprint_energy"]
+	var sprinting: bool = state.get("sprinting", false)
 	var move: Vector2 = input["move"]
 	var sprint_held: bool = input["sprint"]
 	var dt: float = input["dt"]
 
-	var want_sprint: bool = sprint_held and sprint_energy > 0.0
+	# Hysteresis: while already sprinting any positive energy keeps it alive;
+	# once disengaged, sprint can only re-arm above SPRINT_ENGAGE_THRESHOLD.
+	# Mirrors backend/shared/src/movement.ts.
+	var want_sprint: bool = false
+	if sprint_held and sprint_energy > 0.0:
+		if sprinting:
+			want_sprint = true
+		else:
+			want_sprint = sprint_energy >= SPRINT_ENGAGE_THRESHOLD
 	var speed: float = SPRINT_SPEED if want_sprint else WALK_SPEED
 	var move_len: float = move.length()
 	var nx: float = move.x / move_len if move_len > 0.0 else 0.0
@@ -77,7 +87,12 @@ static func step(
 	var drained: bool = want_sprint and move_len > 0.0
 	var energy_delta: float = (-SPRINT_DRAIN_PER_S if drained else SPRINT_REGEN_PER_S) * dt
 	var next_energy: float = clampf(sprint_energy + energy_delta, 0.0, MAX_SPRINT)
-	return {"position": next_pos, "sprint_energy": next_energy}
+	var next_sprinting: bool = want_sprint and next_energy > 0.0
+	return {
+		"position": next_pos,
+		"sprint_energy": next_energy,
+		"sprinting": next_sprinting,
+	}
 
 static func path_crosses_wall(walls: Array, ax: float, az: float, bx: float, bz: float) -> bool:
 	for w in walls:

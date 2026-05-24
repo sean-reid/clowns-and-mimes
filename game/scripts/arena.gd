@@ -86,6 +86,11 @@ var input_accumulator: float = 0.0
 # to know the yaw at the original tick.
 var pending_inputs: Array = []
 var local_sprint_energy: float = 100.0
+# Mirrors PlayerState.sprinting on the server. Tracks whether the predictor
+# is currently in the "sprint engaged" half of the hysteresis. Server
+# broadcasts the authoritative value in each delta; reconciliation seeds the
+# replay loop from it.
+var local_sprinting: bool = false
 
 # Shared.
 var local_player: Node = null
@@ -271,6 +276,7 @@ func _on_snapshot(snapshot: Dictionary, you_are: String) -> void:
 				float(pos.get("z", 0.0)),
 			)
 			local_sprint_energy = float(entry.get("sprintEnergy", 100.0))
+			local_sprinting = bool(entry.get("sprinting", false))
 			break
 
 func _on_delta(delta: Dictionary) -> void:
@@ -310,11 +316,16 @@ func _reconcile_local_player(delta: Dictionary) -> void:
 		pending_inputs.pop_front()
 	var server_sprint: float = float(server_local.get("sprintEnergy", local_sprint_energy))
 	local_sprint_energy = server_sprint
+	local_sprinting = bool(server_local.get("sprinting", local_sprinting))
 	var walls: Array = labyrinth.wall_endpoints()
 	var replayed_pos: Vector2 = server_pos
 	for entry in pending_inputs:
 		var step := Movement.step(
-			{"position": replayed_pos, "sprint_energy": local_sprint_energy},
+			{
+				"position": replayed_pos,
+				"sprint_energy": local_sprint_energy,
+				"sprinting": local_sprinting,
+			},
 			{
 				"move": entry["world_move"],
 				"sprint": entry["sprint"],
@@ -325,6 +336,7 @@ func _reconcile_local_player(delta: Dictionary) -> void:
 		)
 		replayed_pos = step["position"]
 		local_sprint_energy = step["sprint_energy"]
+		local_sprinting = bool(step["sprinting"])
 	# Both sides run the same stepMovement, so the replayed position is
 	# usually within a few cm of the local prediction. Snap straight to it;
 	# the next physics frame extrapolates forward from there at the screen
@@ -389,21 +401,29 @@ func _advance_local_prediction(delta: float) -> void:
 	var wasd: Vector2 = _sample_move_intent()
 	var yaw: float = local_player.rotation.y
 	var world_move: Vector2 = _rotate_wasd_to_world(wasd, yaw)
-	var sprinting: bool = (
+	var sprint_held: bool = (
 		Input.is_action_pressed("sprint") and _input_active() and wasd.length() > 0.0
 	)
 	var pos2: Vector2 = Vector2(local_player.global_position.x, local_player.global_position.z)
 	var step := Movement.step(
-		{"position": pos2, "sprint_energy": local_sprint_energy},
-		{"move": world_move, "sprint": sprinting, "dt": delta},
+		{
+			"position": pos2,
+			"sprint_energy": local_sprint_energy,
+			"sprinting": local_sprinting,
+		},
+		{"move": world_move, "sprint": sprint_held, "dt": delta},
 		labyrinth.wall_endpoints(),
 		topology,
 	)
 	var new_pos: Vector2 = step["position"]
 	local_sprint_energy = step["sprint_energy"]
+	local_sprinting = bool(step["sprinting"])
 	local_player.global_position = Vector3(new_pos.x, local_player.global_position.y, new_pos.y)
 	var planar: float = (new_pos - pos2).length() / max(delta, 1e-4)
-	local_player.set_external_motion(planar, sprinting and world_move.length() > 0.0)
+	# Pass the latched sprinting state, not just the held key, so the body's
+	# footstep audio matches the resolved hysteresis (no audible flicker
+	# when energy is below the engage threshold).
+	local_player.set_external_motion(planar, local_sprinting and world_move.length() > 0.0)
 
 func _stream_input(delta: float) -> void:
 	input_accumulator += delta

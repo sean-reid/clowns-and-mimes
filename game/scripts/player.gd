@@ -78,13 +78,23 @@ func _setup_footsteps() -> void:
 	add_child(footstep_player)
 	footstep_player.play()
 
+const HEAD_SHADER := preload("res://shaders/avatar_head.gdshader")
+const MIME_BACK_COLOR := Color(0.10, 0.14, 0.40)
+const CLOWN_BACK_COLOR := Color(0.30, 0.05, 0.10)
+
 func _apply_head_texture() -> void:
-	var texture: Texture2D = AssetPaths.try_load_texture(team)
-	if texture == null or head == null:
+	if head == null:
 		return
-	var mat := StandardMaterial3D.new()
-	mat.albedo_texture = texture
-	mat.albedo_color = Color.WHITE
+	var texture: Texture2D = AssetPaths.try_load_texture(team)
+	# Shader splits the sphere: face texture on the front hemisphere, dark
+	# team color on the back. Mime back is dark blue, clown back is dark red.
+	# The shader handles a null face_texture by falling back to a uniform-
+	# colored front, but in practice we always have textures imported.
+	var mat := ShaderMaterial.new()
+	mat.shader = HEAD_SHADER
+	mat.set_shader_parameter("back_color", CLOWN_BACK_COLOR if team == "clown" else MIME_BACK_COLOR)
+	if texture != null:
+		mat.set_shader_parameter("face_texture", texture)
 	head.material_override = mat
 
 func _input(event: InputEvent) -> void:

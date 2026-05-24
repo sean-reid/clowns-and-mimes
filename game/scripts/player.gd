@@ -22,6 +22,13 @@ const LOOK_SENSITIVITY := 0.0025
 @export var bot: bool = false
 @export var is_local: bool = true
 @export var display_name: String = ""
+# When true, arena.gd drives this body's X/Z position via the shared movement
+# predictor instead of player.gd reading input directly. Mirrors what the
+# server is computing, so the position the server sees matches what the
+# client predicts.
+var predicted_externally: bool = false
+var _external_planar_speed: float = 0.0
+var _external_sprinting: bool = false
 
 var sprint_energy: float = MAX_SPRINT:
 	set(value):
@@ -142,6 +149,14 @@ func _physics_process(delta: float) -> void:
 		# Remote body without a snapshot yet (joined this frame). Hold still.
 		_update_footsteps(0.0, false)
 		return
+	# Online local player: arena.gd's reconciler owns the X/Z position via the
+	# shared movement step. Run move_and_slide with zero velocity so the body
+	# settles under gravity but doesn't double-walk on the input axes.
+	if predicted_externally:
+		velocity = Vector3.ZERO
+		move_and_slide()
+		_update_footsteps(_external_planar_speed, _external_sprinting)
+		return
 	# The in-game menu releases the mouse cursor when open. Use that as the
 	# signal that the local player should not be reading input. The world
 	# keeps running, but the character stands still.
@@ -185,6 +200,10 @@ func _apply_bot_movement(delta: float) -> void:
 	else:
 		sprint_energy += SPRINT_REGEN_PER_S * delta
 	_update_footsteps(Vector2(velocity.x, velocity.z).length(), sprinting)
+
+func set_external_motion(planar_speed: float, sprinting: bool) -> void:
+	_external_planar_speed = planar_speed
+	_external_sprinting = sprinting
 
 func _update_footsteps(planar_speed: float, sprinting: bool) -> void:
 	if footstep_player == null:

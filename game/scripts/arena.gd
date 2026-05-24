@@ -21,6 +21,7 @@ signal requested_screen(screen: String)
 
 const PLAYER := preload("res://scenes/player.tscn")
 const LABYRINTH := preload("res://scenes/labyrinth.tscn")
+const Movement := preload("res://scripts/movement.gd")
 const IN_GAME_MENU := preload("res://scenes/in_game_menu.tscn")
 const GameRulesScript := preload("res://scripts/game_rules.gd")
 const TopologyScript := preload("res://scripts/topology/topology.gd")
@@ -79,6 +80,12 @@ var phase_label: String = ""
 var turn_ends_at_ms: int = 0
 var input_seq: int = 0
 var input_accumulator: float = 0.0
+# Pending inputs since the last server ack. Each entry is
+#   {"seq": int, "world_move": Vector2, "sprint": bool, "dt": float}
+# world_move is already rotated into world XZ coords so replay does not need
+# to know the yaw at the original tick.
+var pending_inputs: Array = []
+var local_sprint_energy: float = 100.0
 
 # Shared.
 var local_player: Node = null
@@ -228,6 +235,23 @@ func _on_snapshot(snapshot: Dictionary, you_are: String) -> void:
 	phase_label = snapshot.get("phase", "")
 	turn_ends_at_ms = int(snapshot.get("turnEndsAt", 0))
 	snapshot_received = true
+	# Adopt the server's authoritative spawn coordinates for the local player.
+	# Without this the client-jittered spawn from _spawn_player can sit a few
+	# units off the server's jitter, and the first deltas would dump us
+	# through a wall while reconciling. Reset the input buffer too: any
+	# inputs sent before the snapshot arrived describe motion from a
+	# different origin and replaying them would compound the offset.
+	pending_inputs.clear()
+	for entry in snapshot.get("players", []):
+		if entry.get("id", "") == local_player_id and local_player != null:
+			var pos: Dictionary = entry.get("position", {"x": 0.0, "z": 0.0})
+			local_player.global_position = Vector3(
+				float(pos.get("x", 0.0)),
+				local_player.global_position.y,
+				float(pos.get("z", 0.0)),
+			)
+			local_sprint_energy = float(entry.get("sprintEnergy", 100.0))
+			break
 
 func _on_delta(delta: Dictionary) -> void:
 	if not snapshot_received:
@@ -239,6 +263,51 @@ func _on_delta(delta: Dictionary) -> void:
 	# (otherwise _apply_player_state silently skips them and the lobby looks
 	# empty until someone else joins).
 	_sync_players_from_snapshot(delta.get("players", []))
+	_reconcile_local_player(delta)
+
+func _reconcile_local_player(delta: Dictionary) -> void:
+	# Snap to the server's authoritative position for the local player, then
+	# replay every input the server has not yet acknowledged so the rendered
+	# position matches what we predict the server will compute next tick.
+	# Without this the client-only prediction (this file's _stream_input loop
+	# and the server's simulateHumans) drift apart whenever wall slides or
+	# wrap behavior diverges, and tag distance checks fail with distances of
+	# 30+ units because attacker.position is stale on the server side.
+	if local_player == null or labyrinth == null or topology == null:
+		return
+	var ack_seq: int = int(delta.get("ackSeq", 0))
+	var server_local: Dictionary = {}
+	for entry in delta.get("players", []):
+		if entry.get("id", "") == local_player_id:
+			server_local = entry
+			break
+	if server_local.is_empty():
+		return
+	var pos_dict: Dictionary = server_local.get("position", {"x": 0.0, "z": 0.0})
+	var server_pos := Vector2(float(pos_dict.get("x", 0.0)), float(pos_dict.get("z", 0.0)))
+	# Drop inputs the server has applied; replay the rest.
+	while pending_inputs.size() > 0 and int(pending_inputs[0]["seq"]) <= ack_seq:
+		pending_inputs.pop_front()
+	var server_sprint: float = float(server_local.get("sprintEnergy", local_sprint_energy))
+	local_sprint_energy = server_sprint
+	var walls: Array = labyrinth.wall_endpoints()
+	var replayed_pos: Vector2 = server_pos
+	for entry in pending_inputs:
+		var step := Movement.step(
+			{"position": replayed_pos, "sprint_energy": local_sprint_energy},
+			{
+				"move": entry["world_move"],
+				"sprint": entry["sprint"],
+				"dt": entry["dt"],
+			},
+			walls,
+			topology,
+		)
+		replayed_pos = step["position"]
+		local_sprint_energy = step["sprint_energy"]
+	local_player.global_position = Vector3(
+		replayed_pos.x, local_player.global_position.y, replayed_pos.y
+	)
 
 func _on_room_event(event: Dictionary) -> void:
 	match event.get("kind", event.get("t", "")):
@@ -291,9 +360,55 @@ func _stream_input(delta: float) -> void:
 		return
 	input_accumulator = 0.0
 	input_seq += 1
-	var move: Vector2 = _sample_move_intent()
-	var sprinting: bool = Input.is_action_pressed("sprint") and _input_active()
-	room_client.send_input(input_seq, INPUT_TICK_PERIOD, move, local_player.rotation.y, sprinting)
+	# Sample WASD in player-local axes, then rotate into world XZ. Server and
+	# client both treat input.move as world-space, so reconciliation replay
+	# does not need to know the player's yaw at each historical tick.
+	var wasd: Vector2 = _sample_move_intent()
+	var yaw: float = local_player.rotation.y
+	var world_move: Vector2 = _rotate_wasd_to_world(wasd, yaw)
+	var sprinting: bool = Input.is_action_pressed("sprint") and _input_active() and wasd.length() > 0.0
+	# Frozen players don't move on the server, so don't predict motion locally
+	# either; otherwise the predicted position runs away from the server's
+	# stationary truth and the next delta snaps us back.
+	var frozen: bool = bool(local_player.frozen)
+	var effective_move: Vector2 = Vector2.ZERO if frozen else world_move
+	var effective_sprint: bool = false if frozen else sprinting
+	pending_inputs.append({
+		"seq": input_seq,
+		"world_move": effective_move,
+		"sprint": effective_sprint,
+		"dt": INPUT_TICK_PERIOD,
+	})
+	# Local-player prediction: apply the same step the server will, so the
+	# rendered position matches what the server is computing.
+	_apply_predicted_input(effective_move, effective_sprint, INPUT_TICK_PERIOD)
+	room_client.send_input(input_seq, INPUT_TICK_PERIOD, effective_move, yaw, sprinting)
+
+func _rotate_wasd_to_world(wasd: Vector2, yaw: float) -> Vector2:
+	# wasd.x = right input strength, wasd.y = back-minus-forward. Map to a
+	# player-local 3D dir then rotate by yaw around Y, matching the
+	# transform.basis * input_dir that the offline path uses in player.gd.
+	var cy: float = cos(yaw)
+	var sy: float = sin(yaw)
+	var lx: float = wasd.x
+	var lz: float = wasd.y
+	return Vector2(cy * lx + sy * lz, -sy * lx + cy * lz)
+
+func _apply_predicted_input(world_move: Vector2, sprinting: bool, dt: float) -> void:
+	if local_player == null or labyrinth == null or topology == null:
+		return
+	var pos2 := Vector2(local_player.global_position.x, local_player.global_position.z)
+	var step := Movement.step(
+		{"position": pos2, "sprint_energy": local_sprint_energy},
+		{"move": world_move, "sprint": sprinting, "dt": dt},
+		labyrinth.wall_endpoints(),
+		topology,
+	)
+	var new_pos: Vector2 = step["position"]
+	local_sprint_energy = step["sprint_energy"]
+	local_player.global_position = Vector3(new_pos.x, local_player.global_position.y, new_pos.y)
+	var planar: float = (Vector2(new_pos.x - pos2.x, new_pos.y - pos2.y)).length() / max(dt, 1e-4)
+	local_player.set_external_motion(planar, sprinting and world_move.length() > 0.0)
 
 func _sync_players_from_snapshot(entries: Array) -> void:
 	var seen: Dictionary = {}
@@ -404,6 +519,10 @@ func _spawn_player(id: String, p_name: String, team: String, is_bot: bool, is_lo
 	player_nodes[id] = p
 	if is_local:
 		local_player = p
+		# In online mode, arena.gd's predictor owns the X/Z position; flag the
+		# body so player.gd skips its own input-driven move_and_slide and
+		# avoids double-walking.
+		p.predicted_externally = online_mode
 		p.sprint_changed.connect(hud.set_sprint)
 		p.frozen_changed.connect(_on_local_frozen_changed)
 		hud.set_local_team(team)

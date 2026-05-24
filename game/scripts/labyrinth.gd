@@ -36,6 +36,11 @@ var solid_cells: Dictionary = {}
 var walls_root: Node3D
 var floor_node: MeshInstance3D
 var _wall_segments: Array = []  # [{transform, length}, ...]
+# Raw wall endpoint pairs in world XZ coords, parallel to _wall_segments.
+# The local-player predictor reads this to mirror the server's pathCrossesWall
+# check; the server uses the same {ax,az,bx,bz} representation, so wall
+# collision matches on both sides during reconciliation replay.
+var _wall_endpoints: Array = []  # [{ax, az, bx, bz}, ...]
 
 func build(rng_seed: int, top: TopologyScript) -> void:
 	seed_value = rng_seed
@@ -44,6 +49,7 @@ func build(rng_seed: int, top: TopologyScript) -> void:
 	_ensure_floor()
 	_clear_walls()
 	_wall_segments.clear()
+	_wall_endpoints.clear()
 	var topo_name: String = topology.name()
 	_build_grid_maze(rng_seed, topo_name)
 	_build_pathfinder()
@@ -69,6 +75,10 @@ func _build_grid_maze(rng_seed: int, topo_name: String) -> void:
 		wall.rotation = Vector3(0.0, -yaw, 0.0)
 		walls_root.add_child(wall)
 		_wall_segments.append({"transform": wall.transform, "length": seg_length})
+		_wall_endpoints.append({"ax": ax, "az": az, "bx": bx, "bz": bz})
+
+func wall_endpoints() -> Array:
+	return _wall_endpoints
 
 func find_path(from: Vector3, to: Vector3) -> Array[Vector3]:
 	if pathfinder == null:

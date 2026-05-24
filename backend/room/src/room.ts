@@ -11,6 +11,14 @@ import type {
 import { BATTLE_CRY_COUNT, PROTOCOL_VERSION } from '@cm/shared';
 import { topologyDistance, wrapPosition, wrappedUnitDelta } from '@cm/shared/topology';
 import { generateWalls, pathCrossesWall, type WallSegment } from '@cm/shared/labyrinth';
+import {
+  stepMovement,
+  WALK_SPEED,
+  SPRINT_SPEED,
+  MAX_SPRINT,
+  SPRINT_DRAIN_PER_S,
+  SPRINT_REGEN_PER_S,
+} from '@cm/shared/movement';
 import { BotPathfinder } from './botPathfinder.ts';
 
 const TICK_HZ = 20;
@@ -42,12 +50,8 @@ const UNFREEZE_RADIUS_CLIENT = 3.0;
 const WORLD_WIDTH = 80;
 const MAX_PLAYERS = 16;
 const TEAM_TARGET = 4;
-const MAX_SPRINT = 100;
-const SPRINT_DRAIN_PER_S = 25;
-const SPRINT_REGEN_PER_S = 15;
-const WALK_SPEED = 3.2;
-const SPRINT_SPEED = 5.6;
-const MAX_TICK_TRAVEL = SPRINT_SPEED * 1.5; // anti-cheat: clamp per-tick displacement
+// Movement constants and stepMovement are imported from @cm/shared/movement
+// so the client predictor can call identical math during reconciliation.
 const TURN_FIRST_MS = 30_000;
 const TURN_STEP_MS = 30_000;
 const TURN_CAP_MS = 5 * 60_000;
@@ -117,6 +121,11 @@ export class Room implements DurableObject {
   private readonly connections = new Map<WebSocket, Connection>();
   private readonly players = new Map<string, PlayerState>();
   private readonly lastInputs = new Map<string, PlayerInput>();
+  // Last input seq the server actually fed into stepMovement, per player.
+  // Distinct from lastInputs.seq, which is the most recently received: an
+  // input arriving between two ticks gets stored but only applied on the next
+  // simulate call, so ackSeq must reflect what the simulation consumed.
+  private readonly lastAppliedSeq = new Map<string, number>();
   private phase: RoomPhase = 'filling';
   private turnEndsAt = 0;
   private topology: Topology = 'plane';
@@ -403,6 +412,7 @@ export class Room implements DurableObject {
     this.connections.delete(ws);
     this.players.delete(conn.playerId);
     this.lastInputs.delete(conn.playerId);
+    this.lastAppliedSeq.delete(conn.playerId);
     this.lastSavedAt.delete(conn.playerId);
     this.positionHistory.delete(conn.playerId);
     if (this.humanPlayers().length === 0) {
@@ -677,47 +687,26 @@ export class Room implements DurableObject {
     return p ? { x: p.position.x, z: p.position.z } : { x: 0, z: 0 };
   }
 
-  private simulateHumans(dt: number): void {
+  private simulateHumans(_dt: number): void {
     for (const [id, input] of this.lastInputs) {
       const p = this.players.get(id);
       if (!p || p.bot || p.frozen) continue;
-      const wantSprint = input.sprint && p.sprintEnergy > 0;
-      const speed = wantSprint ? SPRINT_SPEED : WALK_SPEED;
-      const moveLen = Math.hypot(input.move.x, input.move.z);
-      const nx = moveLen > 0 ? input.move.x / moveLen : 0;
-      const nz = moveLen > 0 ? input.move.z / moveLen : 0;
-      const dx = nx * speed * dt;
-      const dz = nz * speed * dt;
-      const travel = Math.hypot(dx, dz);
-      const scale = travel > MAX_TICK_TRAVEL * dt ? (MAX_TICK_TRAVEL * dt) / travel : 1;
-      const candidates: Array<{ x: number; z: number }> = [
-        { x: p.position.x + dx * scale, z: p.position.z + dz * scale },
-        { x: p.position.x + Math.sign(dx) * speed * dt, z: p.position.z },
-        { x: p.position.x, z: p.position.z + Math.sign(dz) * speed * dt },
-      ];
-      // Server-side wall and personal-space gate. Tries the direct move first,
-      // then X-only and Z-only slides. Any accepted move must clear walls
-      // and not push the player into another body. Without this the server
-      // accepted any position the client computed, which made rubber-banding
-      // and same-team overlap show up on every other client.
-      for (const candidate of candidates) {
-        if (candidate.x === p.position.x && candidate.z === p.position.z) continue;
-        if (
-          this.walls.length > 0 &&
-          pathCrossesWall(this.walls, p.position.x, p.position.z, candidate.x, candidate.z)
-        )
-          continue;
-        if (this.collidesWithOtherPlayer(p, candidate.x, candidate.z)) continue;
-        p.position = wrapPosition(candidate, this.topology, WORLD_WIDTH);
-        break;
-      }
-      p.yaw = input.lookYaw;
-      const drained = wantSprint && moveLen > 0;
-      p.sprintEnergy = clamp(
-        p.sprintEnergy + (drained ? -SPRINT_DRAIN_PER_S : SPRINT_REGEN_PER_S) * dt,
-        0,
-        MAX_SPRINT,
+      // Use the dt the client reported with this input, not the server's tick
+      // dt. Reconciliation replay on the client also drives stepMovement from
+      // input.dt; if the two diverged the replayed position would drift from
+      // the server's authoritative result.
+      const next = stepMovement(
+        { position: p.position, sprintEnergy: p.sprintEnergy },
+        { move: input.move, sprint: input.sprint, dt: input.dt },
+        this.walls,
+        this.topology,
+        WORLD_WIDTH,
+        (candidate) => this.collidesWithOtherPlayer(p, candidate.x, candidate.z),
       );
+      p.position = next.position;
+      p.sprintEnergy = next.sprintEnergy;
+      p.yaw = input.lookYaw;
+      this.lastAppliedSeq.set(id, input.seq);
     }
   }
 
@@ -1005,13 +994,16 @@ export class Room implements DurableObject {
   private broadcastDelta(): void {
     const players = [...this.players.values()];
     for (const conn of this.connections.values()) {
-      const last = this.lastInputs.get(conn.playerId);
       this.send(conn.ws, {
         t: 'delta',
         players,
         phase: this.phase,
         turnEndsAt: this.turnEndsAt,
-        ackSeq: last?.seq ?? 0,
+        // ackSeq is the seq of the input most recently applied in
+        // simulateHumans, not the most recently received. The client uses
+        // this to know which buffered inputs to drop and which to replay
+        // when reconciling its predicted position with the server's truth.
+        ackSeq: this.lastAppliedSeq.get(conn.playerId) ?? 0,
       });
     }
   }

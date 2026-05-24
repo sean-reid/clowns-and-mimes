@@ -112,10 +112,14 @@ func _build_wrap_tiles() -> void:
 	if topology == null:
 		return
 	var topo_name: String = topology.name()
-	# Only flat tori (torus, klein) have a simple ±WIDTH lattice in the
-	# universal cover. Sphere uses cube-mapped faces packed 3x2; repeating the
-	# rectangle there would show non-adjacent faces and mislead the player.
-	if topo_name != "torus" and topo_name != "klein":
+	# Plane has a hard boundary and no wrap; everything else gets clones so
+	# the playfield does not end at a void at the seam. Sphere's 3x2 cube
+	# packing technically needs rotated-edge adjacency rather than a flat
+	# ±WIDTH lattice, but the rest of the sphere code (topologyDistance,
+	# wrapPosition, gridMaze) already uses the same torus-style modular
+	# approximation, so cloning by ±WIDTH stays consistent until a strict
+	# cube net lands.
+	if topo_name == "plane":
 		return
 	var tiles_root := Node3D.new()
 	tiles_root.name = "WrapTiles"

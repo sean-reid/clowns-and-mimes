@@ -82,7 +82,45 @@ export function generateGridMazeWalls(
     stack.push(pick.cell);
   }
 
+  braid(openings, gridN, topology, next);
   return emitWalls(openings, gridN, topology);
+}
+
+/**
+ * Walk every cell that ended up with a single opening (a dead end) after the
+ * spanning-tree DFS and knock one of its closed walls down. The result is a
+ * braided maze: no terminal cells, multiple paths between most pairs of
+ * cells, which is closer to a classical labyrinth pattern than the dead-end
+ * mazes spanning trees produce.
+ */
+function braid(
+  openings: Uint8Array,
+  gridN: number,
+  topology: Topology,
+  next: () => number,
+): void {
+  const total = gridN * gridN;
+  for (let cell = 0; cell < total; cell += 1) {
+    if (popCountNibble(openings[cell]!) >= 2) continue;
+    const closedNeighbors: { dir: number; cell: number }[] = [];
+    for (let dir = 0; dir < 4; dir += 1) {
+      if ((openings[cell]! & (1 << dir)) !== 0) continue;
+      const nb = neighborOf(cell, dir, gridN, topology);
+      if (nb === null) continue;
+      closedNeighbors.push({ dir, cell: nb.cell });
+    }
+    if (closedNeighbors.length === 0) continue;
+    const pick = closedNeighbors[next() % closedNeighbors.length]!;
+    openings[cell] |= 1 << pick.dir;
+    openings[pick.cell] |= 1 << oppositeDir(pick.dir);
+  }
+}
+
+function popCountNibble(byte: number): number {
+  let n = byte & 0xf;
+  n = (n & 0x5) + ((n >> 1) & 0x5);
+  n = (n & 0x3) + ((n >> 2) & 0x3);
+  return n;
 }
 
 function oppositeDir(dir: number): number {

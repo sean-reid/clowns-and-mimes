@@ -53,7 +53,40 @@ static func generate(seed_value: int, topology_name: String, grid_n: int = GRID_
 		openings[pick_cell] = openings[pick_cell] | (1 << _opposite(pick_dir))
 		visited[pick_cell] = 1
 		stack.append(pick_cell)
+	rng_state = _braid(openings, grid_n, topology_name, rng_state)
 	return _emit_walls(openings, grid_n, topology_name)
+
+# Knock down one wall per dead-end cell so the labyrinth has loops rather than
+# terminal branches. Mirrors backend/shared/src/gridMaze.ts::braid and uses the
+# same LCG state so client and server end up with identical opening sets.
+static func _braid(openings: PackedByteArray, grid_n: int, topology_name: String, rng_state: int) -> int:
+	var total: int = grid_n * grid_n
+	for cell in total:
+		if _popcount_nibble(openings[cell]) >= 2:
+			continue
+		var closed_neighbors: Array = []
+		for dir in 4:
+			if (openings[cell] & (1 << dir)) != 0:
+				continue
+			var nb: int = _neighbor_of(cell, dir, grid_n, topology_name)
+			if nb < 0:
+				continue
+			closed_neighbors.append([dir, nb])
+		if closed_neighbors.is_empty():
+			continue
+		rng_state = _lcg_next(rng_state)
+		var pick: Array = closed_neighbors[rng_state % closed_neighbors.size()]
+		var pick_dir: int = pick[0]
+		var pick_cell: int = pick[1]
+		openings[cell] = openings[cell] | (1 << pick_dir)
+		openings[pick_cell] = openings[pick_cell] | (1 << _opposite(pick_dir))
+	return rng_state
+
+static func _popcount_nibble(byte: int) -> int:
+	var n: int = byte & 0xf
+	n = (n & 0x5) + ((n >> 1) & 0x5)
+	n = (n & 0x3) + ((n >> 2) & 0x3)
+	return n
 
 static func _opposite(dir: int) -> int:
 	return (dir + 2) % 4

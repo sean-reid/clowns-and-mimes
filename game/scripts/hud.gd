@@ -10,17 +10,10 @@ extends CanvasLayer
 @onready var frozen_overlay: Label = $FrozenOverlay
 @onready var end_overlay: Control = $EndOverlay
 @onready var end_label: Label = $EndOverlay/EndLabel
-@onready var again_button: Button = $EndOverlay/Buttons/Again
-@onready var lobby_button: Button = $EndOverlay/Buttons/Lobby
-
-signal play_again_requested
-signal lobby_requested
 
 func _ready() -> void:
 	frozen_overlay.text = ""
 	end_overlay.visible = false
-	again_button.pressed.connect(func(): play_again_requested.emit())
-	lobby_button.pressed.connect(func(): lobby_requested.emit())
 
 func set_sprint(value: float) -> void:
 	sprint_bar.value = value

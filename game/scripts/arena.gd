@@ -88,8 +88,6 @@ var contact_cooldowns: Dictionary = {}
 func _ready() -> void:
 	online_mode = not GameState.server_url.is_empty()
 	_setup_menu()
-	hud.play_again_requested.connect(_on_play_again)
-	hud.lobby_requested.connect(_on_back_to_menu)
 	hud.set_sprint(100.0)
 	hud.set_countdown_seconds(10.0)
 	# The oompa theme belongs to the menu screens. Silence it for gameplay so
@@ -484,9 +482,6 @@ func _play_stinger(victory: bool) -> void:
 		AudioBus.set_bus_volume("Music", 0.0)
 		player.queue_free()
 	)
-
-func _on_play_again() -> void:
-	requested_screen.emit("arena")
 
 func _on_back_to_menu() -> void:
 	Input.set_mouse_mode(Input.MOUSE_MODE_VISIBLE)

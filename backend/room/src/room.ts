@@ -136,7 +136,7 @@ export class Room implements DurableObject {
       name: this.sanitizeName(name),
       team,
       bot: false,
-      position: jitteredSpawn(team),
+      position: this.pickSpawnPosition(team),
       yaw: 0,
       frozen: false,
       sprintEnergy: MAX_SPRINT,
@@ -169,10 +169,10 @@ export class Room implements DurableObject {
         const id = crypto.randomUUID();
         this.players.set(id, {
           id,
-          name: `Bot-${id.slice(0, 4)}`,
+          name: generateBotName(),
           team,
           bot: true,
-          position: jitteredSpawn(team),
+          position: this.pickSpawnPosition(team),
           yaw: 0,
           frozen: false,
           sprintEnergy: MAX_SPRINT,
@@ -191,11 +191,11 @@ export class Room implements DurableObject {
   }
 
   /**
-   * Returns true if landing at (x, z) would put this bot inside another
-   * player's personal space. Without this check, two bots walking the same
-   * corridor in opposite directions push through each other every tick and
-   * the client renders the back-and-forth as visible jitter. The threshold
-   * is two body radii plus a small buffer so capsules never touch.
+   * Returns true if landing at (x, z) would put this player inside another
+   * player's personal space. Without this check, two bodies in the same
+   * corridor push through each other every tick and the client renders the
+   * back-and-forth as visible jitter. The threshold is two body radii plus
+   * a small buffer so capsules never touch.
    */
   private collidesWithOtherPlayer(self: PlayerState, x: number, z: number): boolean {
     const PERSONAL_SPACE = 1.0; // 2 * PLAYER_RADIUS (0.4) + buffer
@@ -206,6 +206,31 @@ export class Room implements DurableObject {
       if (dx * dx + dz * dz < PERSONAL_SPACE * PERSONAL_SPACE) return true;
     }
     return false;
+  }
+
+  /**
+   * Pick a spawn point inside the team's open cell that does not overlap any
+   * existing player. Tries up to 16 jitter samples; falls back to the last
+   * sample if all are taken (the room is then so full that overlap is
+   * unavoidable anyway).
+   */
+  private pickSpawnPosition(team: Team): { x: number; z: number } {
+    const PERSONAL_SPACE_SQ = 1.0;
+    let candidate = jitteredSpawn(team);
+    for (let attempt = 0; attempt < 16; attempt += 1) {
+      let blocked = false;
+      for (const other of this.players.values()) {
+        const dx = other.position.x - candidate.x;
+        const dz = other.position.z - candidate.z;
+        if (dx * dx + dz * dz < PERSONAL_SPACE_SQ) {
+          blocked = true;
+          break;
+        }
+      }
+      if (!blocked) return candidate;
+      candidate = jitteredSpawn(team);
+    }
+    return candidate;
   }
 
   setTopology(t: Topology): void {
@@ -402,8 +427,27 @@ export class Room implements DurableObject {
       const dz = nz * speed * dt;
       const travel = Math.hypot(dx, dz);
       const scale = travel > MAX_TICK_TRAVEL * dt ? (MAX_TICK_TRAVEL * dt) / travel : 1;
-      const next = { x: p.position.x + dx * scale, z: p.position.z + dz * scale };
-      p.position = wrapPosition(next, this.topology, WORLD_WIDTH);
+      const candidates: Array<{ x: number; z: number }> = [
+        { x: p.position.x + dx * scale, z: p.position.z + dz * scale },
+        { x: p.position.x + Math.sign(dx) * speed * dt, z: p.position.z },
+        { x: p.position.x, z: p.position.z + Math.sign(dz) * speed * dt },
+      ];
+      // Server-side wall and personal-space gate. Tries the direct move first,
+      // then X-only and Z-only slides. Any accepted move must clear walls
+      // and not push the player into another body. Without this the server
+      // accepted any position the client computed, which made rubber-banding
+      // and same-team overlap show up on every other client.
+      for (const candidate of candidates) {
+        if (candidate.x === p.position.x && candidate.z === p.position.z) continue;
+        if (
+          this.walls.length > 0 &&
+          pathCrossesWall(this.walls, p.position.x, p.position.z, candidate.x, candidate.z)
+        )
+          continue;
+        if (this.collidesWithOtherPlayer(p, candidate.x, candidate.z)) continue;
+        p.position = wrapPosition(candidate, this.topology, WORLD_WIDTH);
+        break;
+      }
       p.yaw = input.lookYaw;
       const drained = wantSprint && moveLen > 0;
       p.sprintEnergy = clamp(
@@ -624,4 +668,80 @@ function jitteredSpawn(team: Team): { x: number; z: number } {
     x: center.x + Math.cos(angle) * radius,
     z: center.z + Math.sin(angle) * radius,
   };
+}
+
+// Mirror of game/scripts/username_generator.gd. Bots get the same flavor of
+// silly name human players generate locally, so the team status row reads as
+// a cast of characters instead of "Bot-1a2b / Bot-3c4d". The lists are kept
+// short (28 each) so a single file stays a reasonable size; the full client
+// lists are not required for parity since bot names are server-authored only.
+const BOT_NAME_ADJECTIVES = [
+  'Silent',
+  'Painted',
+  'Loud',
+  'Floppy',
+  'Crooked',
+  'Bashful',
+  'Velvet',
+  'Hushed',
+  'Ruffled',
+  'Striped',
+  'Glossy',
+  'Pale',
+  'Sneaky',
+  'Whiskered',
+  'Brittle',
+  'Tipsy',
+  'Polka',
+  'Wobbly',
+  'Crinkled',
+  'Powdered',
+  'Squeaky',
+  'Tufted',
+  'Knobbly',
+  'Frilly',
+  'Wonky',
+  'Boggled',
+  'Plucky',
+  'Drooping',
+];
+
+const BOT_NAME_NOUNS = [
+  'Bozo',
+  'Coulrophobe',
+  'Pierrot',
+  'Harlequin',
+  'Buffoon',
+  'Jester',
+  'Marceau',
+  'Tramp',
+  'Auguste',
+  'Whiteface',
+  'Carnie',
+  'Pagliacci',
+  'Punchinello',
+  'Hopo',
+  'Cake',
+  'Honk',
+  'Greasepaint',
+  'Stripes',
+  'Tear',
+  'Glove',
+  'Wig',
+  'Nose',
+  'Shoe',
+  'Banana',
+  'Pinwheel',
+  'Smile',
+  'Frown',
+  'Lapel',
+];
+
+function generateBotName(): string {
+  const adj = BOT_NAME_ADJECTIVES[Math.floor(Math.random() * BOT_NAME_ADJECTIVES.length)]!;
+  const noun = BOT_NAME_NOUNS[Math.floor(Math.random() * BOT_NAME_NOUNS.length)]!;
+  const num = Math.floor(Math.random() * 1000)
+    .toString()
+    .padStart(3, '0');
+  return `${adj}${noun}${num}`;
 }

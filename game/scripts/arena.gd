@@ -359,6 +359,7 @@ func _spawn_player(id: String, p_name: String, team: String, is_bot: bool, is_lo
 		local_player = p
 		p.sprint_changed.connect(hud.set_sprint)
 		p.frozen_changed.connect(_on_local_frozen_changed)
+		hud.set_local_team(team)
 
 func _team_spawn_offset(team: String) -> Vector3:
 	# Mimes land at cell (3, 5) center, clowns at cell (6, 5) center. Both are

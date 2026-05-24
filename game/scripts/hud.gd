@@ -7,13 +7,28 @@ extends CanvasLayer
 @onready var countdown_label: Label = $Margins/Countdown
 @onready var team_status: HBoxContainer = $Margins/TeamStatus
 @onready var event_log: VBoxContainer = $Margins/EventLog
+@onready var team_badge: Label = $Margins/TeamBadge
 @onready var frozen_overlay: Label = $FrozenOverlay
 @onready var end_overlay: Control = $EndOverlay
 @onready var end_label: Label = $EndOverlay/EndLabel
 
+const MIME_COLOR := Color(0.95, 0.95, 0.95)
+const CLOWN_COLOR := Color(0.95, 0.18, 0.22)
+
 func _ready() -> void:
 	frozen_overlay.text = ""
 	end_overlay.visible = false
+	team_badge.text = ""
+
+func set_local_team(team: String) -> void:
+	if team == "mime":
+		team_badge.text = "you are a MIME"
+		team_badge.modulate = MIME_COLOR
+		sprint_bar.modulate = MIME_COLOR
+	else:
+		team_badge.text = "you are a CLOWN"
+		team_badge.modulate = CLOWN_COLOR
+		sprint_bar.modulate = CLOWN_COLOR
 
 func set_sprint(value: float) -> void:
 	sprint_bar.value = value

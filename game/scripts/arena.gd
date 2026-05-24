@@ -344,14 +344,31 @@ func _spawn_player(id: String, p_name: String, team: String, is_bot: bool, is_lo
 	p.is_local = is_local
 	p.display_name = p_name
 	world.add_child(p)
+	# The grid maze places walls on cell boundaries every 8 units, including
+	# a wall right through the origin. Spawning at origin would drop players
+	# straight onto a wall seam. Push each team into the open interior of a
+	# cell, and jitter inside SPAWN_RADIUS (still well clear of cell walls
+	# since cells are 8 wide and SPAWN_RADIUS is 2.5).
+	var team_offset: Vector3 = _team_spawn_offset(team)
 	var angle: float = randf() * TAU
 	var radius: float = randf() * SPAWN_RADIUS
-	p.global_position = spawn.global_position + Vector3(cos(angle) * radius, 0.0, sin(angle) * radius)
+	p.global_position = (
+		spawn.global_position + team_offset
+		+ Vector3(cos(angle) * radius, 0.0, sin(angle) * radius)
+	)
 	player_nodes[id] = p
 	if is_local:
 		local_player = p
 		p.sprint_changed.connect(hud.set_sprint)
 		p.frozen_changed.connect(_on_local_frozen_changed)
+
+func _team_spawn_offset(team: String) -> Vector3:
+	# Mimes land at cell (3, 5) center, clowns at cell (6, 5) center. Both are
+	# interior cells of the 10x10 grid (cell size 8.0) so the spawn jitter
+	# stays away from any wall on the cell boundary.
+	if team == "mime":
+		return Vector3(-12.0, 0.0, 4.0)
+	return Vector3(12.0, 0.0, 4.0)
 
 # ---------------------------------------------------------------------------
 # Contact interactions

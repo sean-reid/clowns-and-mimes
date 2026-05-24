@@ -136,7 +136,7 @@ export class Room implements DurableObject {
       name: this.sanitizeName(name),
       team,
       bot: false,
-      position: { x: 0, z: 0 },
+      position: jitteredSpawn(team),
       yaw: 0,
       frozen: false,
       sprintEnergy: MAX_SPRINT,
@@ -172,7 +172,7 @@ export class Room implements DurableObject {
           name: `Bot-${id.slice(0, 4)}`,
           team,
           bot: true,
-          position: { x: (Math.random() - 0.5) * 4, z: (Math.random() - 0.5) * 4 },
+          position: jitteredSpawn(team),
           yaw: 0,
           frozen: false,
           sprintEnergy: MAX_SPRINT,
@@ -579,4 +579,18 @@ function nearTarget(
   threshold = 1.4,
 ): boolean {
   return Math.hypot(to.x - from.x, to.z - from.z) <= threshold;
+}
+
+// Team spawn centers sit in the interior of a grid-maze cell so the jitter
+// stays clear of wall seams. Cell centers in a 10x10 grid (cell size 8) are at
+// every (+-4 + k*8) coord; mimes get (-12, 4) and clowns (12, 4) - two cells
+// apart in the x direction, both well off the origin grid line.
+function jitteredSpawn(team: Team): { x: number; z: number } {
+  const center = team === 'mime' ? { x: -12, z: 4 } : { x: 12, z: 4 };
+  const angle = Math.random() * Math.PI * 2;
+  const radius = Math.random() * 2.5;
+  return {
+    x: center.x + Math.cos(angle) * radius,
+    z: center.z + Math.sin(angle) * radius,
+  };
 }

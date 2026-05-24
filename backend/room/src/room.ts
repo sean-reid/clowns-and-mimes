@@ -468,11 +468,16 @@ export class Room implements DurableObject {
     // has it. Frozen players don't move so this rarely matters, but staying
     // consistent with onTag keeps the rules simple.
     const victimPos = this.positionAt(victim.id, Date.now() - LAG_COMP_MS);
-    if (
-      topologyDistance(savior.position, victimPos, this.topology, WORLD_WIDTH) >
-      UNFREEZE_RADIUS_CLIENT
-    ) {
-      this.send(ws, { t: 'unfreeze_result', ok: false, reason: 'out_of_range' });
+    const dist = topologyDistance(savior.position, victimPos, this.topology, WORLD_WIDTH);
+    if (dist > UNFREEZE_RADIUS_CLIENT) {
+      // Encode the actual distance in the reason so the client diagnostic
+      // can show the magnitude of the gap (helps tune the radius without
+      // wading through Workers logs).
+      this.send(ws, {
+        t: 'unfreeze_result',
+        ok: false,
+        reason: `out_of_range:${dist.toFixed(2)}`,
+      });
       return;
     }
     if (
@@ -518,7 +523,7 @@ export class Room implements DurableObject {
       ? this.positionAt(victim.id, Date.now() - LAG_COMP_MS)
       : victim.position;
     const d = topologyDistance(attacker.position, victimPos, this.topology, WORLD_WIDTH);
-    if (d > radius) return 'out_of_range';
+    if (d > radius) return `out_of_range:${d.toFixed(2)}`;
     if (
       this.walls.length > 0 &&
       pathCrossesWall(

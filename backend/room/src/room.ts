@@ -171,6 +171,14 @@ export class Room implements DurableObject {
     }
     const id = crypto.randomUUID();
     const team = prefer ?? this.pickTeam();
+    // Bot fill runs 3 s after the first human joins, so anyone arriving
+    // later finds bots already occupying TEAM_TARGET slots. Drop one bot
+    // from the joining player's team to make room for them, so the team
+    // saturates with humans instead of staying bot-heavy when there are
+    // people waiting to play.
+    if (this.tally(team) >= TEAM_TARGET) {
+      this.kickOneBotFromTeam(team);
+    }
     const player: PlayerState = {
       id,
       name: this.sanitizeName(name),
@@ -428,6 +436,24 @@ export class Room implements DurableObject {
     let n = 0;
     for (const p of this.players.values()) if (p.team === team) n += 1;
     return n;
+  }
+
+  /**
+   * Drop the first bot found on the given team, along with its bookkeeping.
+   * Used when a human joins and the team is already at TEAM_TARGET capacity:
+   * displacing a bot keeps the team-size budget intact while letting the
+   * human in. The next broadcast delta carries the implicit removal, so
+   * clients reap the bot's Player node via _sync_players_from_snapshot.
+   */
+  private kickOneBotFromTeam(team: Team): void {
+    for (const [id, p] of this.players) {
+      if (p.team === team && p.bot) {
+        this.players.delete(id);
+        this.botMinds.delete(id);
+        this.lastSavedAt.delete(id);
+        return;
+      }
+    }
   }
 
   private humanPlayers(): PlayerState[] {

@@ -12,6 +12,8 @@ height = 0.7
 
 [node name="Player" type="CharacterBody3D"]
 script = ExtResource("1_player")
+collision_layer = 2
+collision_mask = 1
 
 [node name="Collider" type="CollisionShape3D" parent="."]
 shape = SubResource("cap")

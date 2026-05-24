@@ -9,6 +9,7 @@ extends CanvasLayer
 @onready var event_log: VBoxContainer = $Margins/EventLog
 @onready var team_badge: Label = $Margins/TeamBadge
 @onready var frozen_overlay: Label = $FrozenOverlay
+@onready var battle_cry_label: Label = $BattleCry
 @onready var end_overlay: Control = $EndOverlay
 @onready var end_label: Label = $EndOverlay/EndLabel
 
@@ -19,6 +20,8 @@ func _ready() -> void:
 	frozen_overlay.text = ""
 	end_overlay.visible = false
 	team_badge.text = ""
+	battle_cry_label.text = ""
+	battle_cry_label.modulate.a = 0.0
 
 func set_local_team(team: String) -> void:
 	if team == "mime":
@@ -60,9 +63,16 @@ func append_log(message: String) -> void:
 	var line := Label.new()
 	line.text = message
 	event_log.add_child(line)
-	get_tree().create_timer(4.0).timeout.connect(func():
-		if is_instance_valid(line):
-			line.queue_free())
+	# Don't capture the Label in a closure on the SceneTreeTimer's signal: if
+	# the HUD frees while the timer is in flight (scene swap, back-to-menu),
+	# the closure logs 'Lambda capture at index 0 was freed' every match.
+	# Pass the line as a parameter through an async helper instead.
+	_expire_log_line(line)
+
+func _expire_log_line(line: Label) -> void:
+	await get_tree().create_timer(4.0).timeout
+	if is_instance_valid(line):
+		line.queue_free()
 
 func flash_frozen(by_team: String, by_name: String) -> void:
 	var verb := "mimed" if by_team == "mime" else "clowned"
@@ -73,6 +83,14 @@ func flash_frozen(by_team: String, by_name: String) -> void:
 
 func clear_frozen_overlay() -> void:
 	frozen_overlay.text = ""
+
+func flash_battle_cry(text: String, team: String) -> void:
+	battle_cry_label.text = text
+	battle_cry_label.modulate = Color(MIME_COLOR.r, MIME_COLOR.g, MIME_COLOR.b, 1.0) if team == "mime" else Color(CLOWN_COLOR.r, CLOWN_COLOR.g, CLOWN_COLOR.b, 1.0)
+	var tw := create_tween()
+	tw.tween_property(battle_cry_label, "modulate:a", 1.0, 0.15)
+	tw.tween_interval(1.2)
+	tw.tween_property(battle_cry_label, "modulate:a", 0.0, 0.6)
 
 func show_end(victory: bool) -> void:
 	end_label.text = "Victory!" if victory else "Failure."

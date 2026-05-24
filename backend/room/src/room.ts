@@ -21,7 +21,12 @@ import {
 } from '@cm/shared/movement';
 import { BotPathfinder } from './botPathfinder.ts';
 
-const TICK_HZ = 20;
+// Server simulate + broadcast at 60 Hz. Each delta is ~16.7 ms apart so
+// reconciliation corrections arrive 3x faster than the previous 20 Hz
+// schedule and the snap each delta carries is correspondingly smaller. The
+// 3x bandwidth increase is still well under 10 KB/s per client at typical
+// roster sizes.
+const TICK_HZ = 60;
 const TICK_MS = 1000 / TICK_HZ;
 const FREE_ROAM_MS = 30_000;
 // Two-radius tag/unfreeze model.

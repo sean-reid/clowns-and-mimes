@@ -43,7 +43,12 @@ const CONTACT_RADIUS := 1.4
 # legitimate retries when the first attempt fell just outside the server's
 # tag radius due to interpolation lag.
 const CONTACT_COOLDOWN_S := 0.15
-const INPUT_TICK_HZ := 20.0
+## Client input cadence. Matches the server's TICK_HZ in
+## backend/room/src/room.ts so each server tick consumes exactly one input
+## (one stepMovement call) on average. Going lower would queue inputs on the
+## server and lag reconciliation; going higher would skip inputs because the
+## server only applies the most recent input per tick.
+const INPUT_TICK_HZ := 60.0
 const INPUT_TICK_PERIOD := 1.0 / INPUT_TICK_HZ
 
 const MIME_BATTLE_CRIES := [

@@ -234,8 +234,10 @@ func apply_remote_state(pos: Vector3, yaw: float, is_frozen: bool, sprint: float
 			var sample: float = planar.length() / dt
 			_remote_planar_speed = lerpf(_remote_planar_speed, sample, 0.5)
 			# Record the actual snapshot interval; interpolation rides over
-			# this duration so it matches the server's true tick rate.
-			_interp_dt_s = clampf(dt, 0.02, 0.2)
+			# this duration so it matches the server's true tick rate. Floor
+			# at 0.01 so the 60 Hz server tick (~16.7 ms) lands inside the
+			# clamp window instead of being widened.
+			_interp_dt_s = clampf(dt, 0.01, 0.2)
 	_last_remote_position = pos
 	_last_remote_time_s = now_s
 	# Hand off interpolation: the previous target becomes the new start, the

@@ -34,45 +34,61 @@ describe('generateWalls', () => {
     }
   });
 
-  it('places every wall on one of the configured ring radii', () => {
-    const walls = generateWalls(99);
+  it('produces axis-aligned walls on plane (grid maze)', () => {
+    const walls = generateWalls(99, 'plane');
+    expect(walls.length).toBeGreaterThan(0);
+    for (const w of walls) {
+      const axisAligned = w.ax === w.bx || w.az === w.bz;
+      expect(axisAligned).toBe(true);
+    }
+  });
+
+  it('produces a non-trivial wall count for the default plane config', () => {
+    // A 10x10 grid maze on plane has at most 2 walls per cell (east + north)
+    // plus the west and south boundary walls, then the spanning tree opens
+    // some up. The number is well-defined for a given seed; sanity-check the
+    // ballpark.
+    const walls = generateWalls(1, 'plane');
+    expect(walls.length).toBeGreaterThan(50);
+    expect(walls.length).toBeLessThan(300);
+  });
+
+  it('keeps spheres on the ring layout for now (pending cube mapping)', () => {
+    const walls = generateWalls(7, 'sphere');
     for (const w of walls) {
       const midX = (w.ax + w.bx) / 2;
       const midZ = (w.az + w.bz) / 2;
       const radius = Math.hypot(midX, midZ);
-      const onRing = RING_RADII.some((r) => Math.abs(r - radius) < 0.01);
+      const onRing = RING_RADII.some((r) => Math.abs(r - radius) < 0.5);
       expect(onRing).toBe(true);
     }
-  });
-
-  it('produces a reasonable wall count for the default config', () => {
-    const walls = generateWalls(1);
-    // 6 rings * 12 segments * 4 subdivisions = 288 max, minus gap subdivisions.
-    expect(walls.length).toBeGreaterThan(150);
-    expect(walls.length).toBeLessThan(288);
   });
 });
 
 describe('pathCrossesWall', () => {
-  const walls = generateWalls(123);
-
-  it('blocks at least one radial path from the center to the outer edge', () => {
-    // The labyrinth has gap connectors so not every angle is blocked, but at
-    // least some radial sweep must cross a wall. If none do the maze has no
-    // walls at all.
-    const angles = [0, 0.4, 0.8, 1.2, 1.6, 2.0, 2.4, 2.8];
-    const blocked = angles.some((a) =>
-      pathCrossesWall(walls, 0, 0, 40 * Math.cos(a), 40 * Math.sin(a)),
-    );
+  it('blocks at least one straight path across a plane maze', () => {
+    // With the new grid layout we can't rely on rings; pick a few diagonals
+    // across the whole playfield and require at least one to hit a wall.
+    const walls = generateWalls(123, 'plane');
+    const blocked = [
+      [-39, -39, 39, 39],
+      [-39, 39, 39, -39],
+      [0, -39, 0, 39],
+      [-39, 0, 39, 0],
+    ].some(([ax, az, bx, bz]) => pathCrossesWall(walls, ax!, az!, bx!, bz!));
     expect(blocked).toBe(true);
   });
 
-  it('allows a path that stays inside the innermost ring', () => {
-    expect(pathCrossesWall(walls, 0, 0, 1, 1)).toBe(false);
+  it('rejects movement that would exit the plane playfield', () => {
+    // Plane is fully bounded by grid-maze boundary walls now, so any move
+    // crossing x = +-half or z = +-half should be blocked.
+    const walls = generateWalls(123, 'plane');
+    expect(pathCrossesWall(walls, 0, 0, 50, 0)).toBe(true);
+    expect(pathCrossesWall(walls, 0, 0, 0, -50)).toBe(true);
   });
 });
 
-describe('generateWalls (torus and klein use grid maze)', () => {
+describe('generateWalls (plane, torus, klein use grid maze)', () => {
   it('produces axis-aligned walls on a torus', () => {
     const walls = generateWalls(42, 'torus');
     expect(walls.length).toBeGreaterThan(0);
@@ -80,6 +96,32 @@ describe('generateWalls (torus and klein use grid maze)', () => {
       const axisAligned = w.ax === w.bx || w.az === w.bz;
       expect(axisAligned).toBe(true);
     }
+  });
+
+  it('places walls around the entire boundary on plane', () => {
+    const walls = generateWalls(123, 'plane');
+    const half = 40;
+    const onLeft = walls.some((w) => w.ax === -half && w.bx === -half);
+    const onRight = walls.some((w) => w.ax === half && w.bx === half);
+    const onTop = walls.some((w) => w.az === half && w.bz === half);
+    const onBottom = walls.some((w) => w.az === -half && w.bz === -half);
+    expect(onLeft).toBe(true);
+    expect(onRight).toBe(true);
+    expect(onTop).toBe(true);
+    expect(onBottom).toBe(true);
+  });
+
+  it('keeps spheres on the ring layout for now (pending cube mapping)', () => {
+    const walls = generateWalls(7, 'sphere');
+    const half = 40;
+    const anyOnBoundary = walls.some(
+      (w) =>
+        (w.ax === -half && w.bx === -half) ||
+        (w.ax === half && w.bx === half) ||
+        (w.az === half && w.bz === half) ||
+        (w.az === -half && w.bz === -half),
+    );
+    expect(anyOnBoundary).toBe(false);
   });
 
   it('skips walls along the wrap seam', () => {

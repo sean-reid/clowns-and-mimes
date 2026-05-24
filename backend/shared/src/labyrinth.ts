@@ -67,14 +67,17 @@ function chooseGapIndices(seed: number, ringIndex: number): Set<number> {
  * (perpendicular to length); for server-side collision we treat each wall as
  * a thick line segment.
  *
- * Topology dispatch: planes and spheres get the concentric-ring layout with
- * its 12-fold rotational symmetry. Torus and Klein bottle use a grid maze
- * because rings cannot align across a wrap seam. The default-undefined
- * topology argument keeps the old single-arg signature working for tests and
- * legacy callers that didn't pass topology.
+ * Topology dispatch:
+ *   - Plane, torus, Klein: grid maze (the only difference is wrap behavior at
+ *     the boundary; plane adds closed boundary walls, torus and Klein skip
+ *     them).
+ *   - Sphere: still the concentric-ring layout pending cube-mapped topology.
+ *
+ * The default-undefined topology argument keeps the old single-arg signature
+ * working for legacy callers that didn't pass topology.
  */
 export function generateWalls(seed: number, topology: Topology = 'plane'): WallSegment[] {
-  if (topology === 'torus' || topology === 'klein') {
+  if (topology !== 'sphere') {
     return generateGridMazeWalls(seed, topology);
   }
   const out: WallSegment[] = [];

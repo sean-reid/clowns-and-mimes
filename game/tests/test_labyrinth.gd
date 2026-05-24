@@ -21,15 +21,39 @@ func test_build_creates_walls_deterministically() -> void:
 	second.queue_free()
 
 func test_seeds_produce_walls() -> void:
+	# Plane now uses the grid maze too. A 10x10 spanning tree leaves a couple
+	# of dozen interior walls plus the boundary walls, so any plausible seed
+	# clears the lower bound by a comfortable margin.
 	var topology := PlaneTopology.new()
 	var a := LABYRINTH.instantiate()
 	a.build(1, topology)
 	var b := LABYRINTH.instantiate()
 	b.build(2, topology)
-	assert_true(a.walls_root.get_child_count() > 100, "seed 1 produces a populated labyrinth")
-	assert_true(b.walls_root.get_child_count() > 100, "seed 2 produces a populated labyrinth")
+	assert_true(a.walls_root.get_child_count() > 30, "seed 1 produces a populated labyrinth")
+	assert_true(b.walls_root.get_child_count() > 30, "seed 2 produces a populated labyrinth")
 	a.queue_free()
 	b.queue_free()
+
+func test_plane_grid_has_closed_boundary() -> void:
+	var segs: Array = GridMaze.generate(123, "plane")
+	var half: float = 40.0
+	var on_left := false
+	var on_right := false
+	var on_top := false
+	var on_bottom := false
+	for seg in segs:
+		if seg["ax"] == -half and seg["bx"] == -half:
+			on_left = true
+		if seg["ax"] == half and seg["bx"] == half:
+			on_right = true
+		if seg["az"] == half and seg["bz"] == half:
+			on_top = true
+		if seg["az"] == -half and seg["bz"] == -half:
+			on_bottom = true
+	assert_true(on_left, "plane has left boundary wall")
+	assert_true(on_right, "plane has right boundary wall")
+	assert_true(on_top, "plane has top boundary wall")
+	assert_true(on_bottom, "plane has bottom boundary wall")
 
 func test_gap_jitter_matches_ts_for_known_inputs() -> void:
 	# Same expected values as backend/shared/src/labyrinth.test.ts so client and

@@ -16,7 +16,9 @@ const DIR_SOUTH := 3
 const TopologyScript := preload("res://scripts/topology/topology.gd")
 
 static func generate(seed_value: int, topology_name: String, grid_n: int = GRID_MAZE_N) -> Array:
-	if topology_name != "torus" and topology_name != "klein":
+	if topology_name == "sphere":
+		# Sphere still uses concentric rings pending a real cube-mapped
+		# topology. Callers fall back to ring generation when this is empty.
 		return []
 	var total: int = grid_n * grid_n
 	var visited := PackedByteArray()
@@ -51,7 +53,7 @@ static func generate(seed_value: int, topology_name: String, grid_n: int = GRID_
 		openings[pick_cell] = openings[pick_cell] | (1 << _opposite(pick_dir))
 		visited[pick_cell] = 1
 		stack.append(pick_cell)
-	return _emit_walls(openings, grid_n)
+	return _emit_walls(openings, grid_n, topology_name)
 
 static func _opposite(dir: int) -> int:
 	return (dir + 2) % 4
@@ -74,19 +76,24 @@ static func _neighbor_of(cell: int, dir: int, grid_n: int, topology_name: String
 	elif dir == DIR_SOUTH:
 		nr = cr - 1
 	if nc < 0 or nc >= grid_n:
+		if topology_name == "plane":
+			return -1
 		nc = ((nc % grid_n) + grid_n) % grid_n
 		if topology_name == "klein":
 			flip_row = true
 	if nr < 0 or nr >= grid_n:
+		if topology_name == "plane":
+			return -1
 		nr = ((nr % grid_n) + grid_n) % grid_n
 	if flip_row:
 		nr = grid_n - 1 - nr
 	return nc + nr * grid_n
 
-static func _emit_walls(openings: PackedByteArray, grid_n: int) -> Array:
+static func _emit_walls(openings: PackedByteArray, grid_n: int, topology_name: String) -> Array:
 	var cell: float = TopologyScript.WIDTH / float(grid_n)
 	var half: float = TopologyScript.WIDTH / 2.0
 	var out: Array = []
+	var closed_boundary: bool = topology_name == "plane"
 	for r in grid_n:
 		for c in grid_n:
 			var id: int = c + r * grid_n
@@ -94,14 +101,25 @@ static func _emit_walls(openings: PackedByteArray, grid_n: int) -> Array:
 			var is_last_row: bool = r == grid_n - 1
 			var east_closed: bool = (openings[id] & (1 << DIR_EAST)) == 0
 			var north_closed: bool = (openings[id] & (1 << DIR_NORTH)) == 0
-			if east_closed and not is_last_col:
+			if east_closed and (not is_last_col or closed_boundary):
 				var x: float = (float(c + 1) * cell) - half
 				var z0: float = (float(r) * cell) - half
 				var z1: float = (float(r + 1) * cell) - half
 				out.append({"ax": x, "az": z0, "bx": x, "bz": z1})
-			if north_closed and not is_last_row:
+			if north_closed and (not is_last_row or closed_boundary):
 				var z: float = (float(r + 1) * cell) - half
 				var x0: float = (float(c) * cell) - half
 				var x1: float = (float(c + 1) * cell) - half
 				out.append({"ax": x0, "az": z, "bx": x1, "bz": z})
+	# Plane needs the west and south boundary walls; the east+north loop above
+	# can never emit them since those edges have no cell to own them.
+	if closed_boundary:
+		for r in grid_n:
+			var z0: float = (float(r) * cell) - half
+			var z1: float = (float(r + 1) * cell) - half
+			out.append({"ax": -half, "az": z0, "bx": -half, "bz": z1})
+		for c in grid_n:
+			var x0: float = (float(c) * cell) - half
+			var x1: float = (float(c + 1) * cell) - half
+			out.append({"ax": x0, "az": -half, "bx": x1, "bz": -half})
 	return out

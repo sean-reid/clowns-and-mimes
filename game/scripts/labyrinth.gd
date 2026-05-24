@@ -1,11 +1,10 @@
 extends Node3D
 
 ## Labyrinth. The visual layout depends on topology:
-##   * Plane and sphere: concentric ring regions, alternating connector
-##     orientations, 12-fold rotational symmetry.
-##   * Torus and Klein bottle: grid maze (mirrors backend/shared/src/gridMaze.ts)
-##     because concentric rings cannot align across a wrap seam, which is the
-##     bug the user reported when wrapping topologies looked broken.
+##   * Plane, torus, Klein: grid maze (mirrors backend/shared/src/gridMaze.ts).
+##     Plane gets closed boundary walls; torus and Klein skip them since the
+##     wrap folds both edges to the same line.
+##   * Sphere: concentric rings pending cube-mapped topology rework.
 ##
 ## Walls are deterministic given a seed and feed a topology-aware AStar2D graph
 ## for bot pathfinding.
@@ -40,7 +39,7 @@ func build(rng_seed: int, top: TopologyScript) -> void:
 	_clear_walls()
 	_wall_segments.clear()
 	var topo_name: String = topology.name()
-	if topo_name == "torus" or topo_name == "klein":
+	if topo_name != "sphere":
 		_build_grid_maze(rng_seed, topo_name)
 	else:
 		var rng := RandomNumberGenerator.new()

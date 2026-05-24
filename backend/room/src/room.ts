@@ -18,11 +18,15 @@ const FREE_ROAM_MS = 30_000;
 const COUNTDOWN_MS = 10_000;
 // Server tag radius runs wider than the client's CONTACT_RADIUS so a tag
 // fired the moment the client sees contact doesn't fall outside the server's
-// check by the time the message arrives. Client interpolation lags ~50 ms
-// behind authoritative state; opponent at SPRINT_SPEED (5.6 u/s) moves ~0.28
-// units in that window. 1.75 gives margin without making tags trivially long.
-const TAG_RADIUS = 1.75;
-const UNFREEZE_RADIUS = 1.75;
+// check by the time the message arrives. Client interpolation lags one
+// snapshot (~50 ms) behind authoritative state, the input round trip adds
+// another 50-100 ms. At SPRINT_SPEED (5.6 u/s) the opponent can move up to
+// 0.84 units during that combined window; 2.2 leaves 0.8 units of margin
+// over CONTACT_RADIUS (1.4) before tag attempts start failing for
+// chases. Lag compensation (server rewind on tag_attempt) would be cleaner
+// but is a protocol-level rewrite.
+const TAG_RADIUS = 2.2;
+const UNFREEZE_RADIUS = 2.2;
 const WORLD_WIDTH = 80;
 const MAX_PLAYERS = 16;
 const TEAM_TARGET = 4;

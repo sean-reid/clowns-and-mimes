@@ -242,6 +242,23 @@ func _on_room_event(event: Dictionary) -> void:
 		"saved": _handle_saved(event)
 		"win": _handle_win(event)
 		"phase": _handle_phase_event(event.get("phase", ""), int(event.get("cryIndex", -1)))
+		"tag_result": _handle_tag_result(event)
+		"unfreeze_result": _handle_unfreeze_result(event)
+
+func _handle_tag_result(event: Dictionary) -> void:
+	# Server's per-attempt reply. Successes already broadcast a 'tagged' event,
+	# so this only surfaces the failure case to the HUD log to make missed
+	# tags visible during playtest.
+	if bool(event.get("ok", false)):
+		return
+	var reason: String = String(event.get("reason", "rejected"))
+	hud.append_log("tag missed: %s" % reason)
+
+func _handle_unfreeze_result(event: Dictionary) -> void:
+	if bool(event.get("ok", false)):
+		return
+	var reason: String = String(event.get("reason", "rejected"))
+	hud.append_log("unfreeze missed: %s" % reason)
 
 func _handle_phase_event(phase: String, cry_index: int) -> void:
 	# Server sends 'turn_mime' / 'turn_clown' for the active-turn phases plus a

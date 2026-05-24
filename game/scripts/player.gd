@@ -1,9 +1,10 @@
 extends CharacterBody3D
 
 ## Local or remote player. WASD + mouse + sprint for the local one, network or
-## bot inputs drive remote bodies. While frozen, input is disabled and a small
-## floating exclamation marker is rendered above the head for everyone except
-## the player themselves.
+## bot inputs drive remote bodies. While frozen, the body cannot move (velocity
+## is held at zero) but mouse look stays active so the player can watch the
+## round play out around them. A small floating exclamation marker is rendered
+## above the head for everyone except the player themselves.
 
 signal sprint_changed(value: float)
 signal frozen_changed(frozen: bool)
@@ -78,8 +79,11 @@ func _apply_head_texture() -> void:
 	head.material_override = mat
 
 func _input(event: InputEvent) -> void:
-	if bot or not is_local or frozen:
+	if bot or not is_local:
 		return
+	# Mouse look stays available while frozen so the player can watch their
+	# team play around them. Movement input is gated separately in
+	# _physics_process; the frozen branch there holds velocity at zero.
 	if event is InputEventMouseMotion and Input.get_mouse_mode() == Input.MOUSE_MODE_CAPTURED:
 		rotate_y(-event.relative.x * LOOK_SENSITIVITY)
 		camera.rotate_x(-event.relative.y * LOOK_SENSITIVITY)

@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { gapJitter, generateWalls, pathCrossesWall } from './labyrinth.ts';
-import { WORLD_WIDTH } from './topology.ts';
-import { SPHERE_FACE_COLS, SPHERE_FACE_ROWS } from './gridMaze.ts';
+import { SPHERE_FACE_CELLS } from './gridMaze.ts';
+import { CUBE_FACES, faceWorldRect, FACE_GRID_COLS, FACE_GRID_ROWS } from './sphereCubeMap.ts';
+import { SPHERE_FACE_SIDE } from './topology.ts';
 
 describe('gapJitter', () => {
   it('returns 0 or 1', () => {
@@ -124,34 +125,39 @@ describe('generateWalls (plane, torus, klein use grid maze)', () => {
     expect(anyOnBoundary).toBe(false);
   });
 
-  it('omits walls along the 3x2 sphere face boundaries', () => {
-    // A wall lying on the vertical seam between two face columns at
-    // x = -half + col * (WIDTH / 3) would visually bisect the maze. Same for
-    // the horizontal seam at z = 0. Both must stay open so the topology can
-    // wrap a player across them.
+  it('omits walls along sphere T-net face boundaries', () => {
+    // The T-net puts every cube face in its own grid slot; no wall should
+    // sit on a face's outer edge because grid-adjacent face seams are open
+    // for traversal and void-adjacent seams are open for the cube
+    // identification to fire on motion.
     const walls = generateWalls(7, 'sphere');
-    const half = WORLD_WIDTH / 2;
-    const faceWidth = WORLD_WIDTH / SPHERE_FACE_COLS;
-    const faceHeight = WORLD_WIDTH / SPHERE_FACE_ROWS;
-    const verticalSeams: number[] = [];
-    for (let i = 1; i < SPHERE_FACE_COLS; i += 1) {
-      verticalSeams.push(-half + i * faceWidth);
+    const faceEdges: number[] = [];
+    for (const face of CUBE_FACES) {
+      const r = faceWorldRect(face, SPHERE_FACE_SIDE);
+      faceEdges.push(r.xMin, r.xMax, r.zMin, r.zMax);
     }
-    const horizontalSeams: number[] = [];
-    for (let i = 1; i < SPHERE_FACE_ROWS; i += 1) {
-      horizontalSeams.push(-half + i * faceHeight);
-    }
+    // Cell size is SPHERE_FACE_SIDE / SPHERE_FACE_CELLS.
+    const cellSize = SPHERE_FACE_SIDE / SPHERE_FACE_CELLS;
     for (const w of walls) {
       const isVerticalSeg = w.ax === w.bx;
       const isHorizontalSeg = w.az === w.bz;
       if (isVerticalSeg) {
-        for (const seam of verticalSeams) {
-          expect(w.ax).not.toBeCloseTo(seam, 6);
+        for (const e of faceEdges) {
+          // Only check x-aligned edges (vertical walls live on x = const lines).
+          if (Math.abs(e) < FACE_GRID_COLS * SPHERE_FACE_SIDE) {
+            // Walls land on the cell grid; a face's outer edge falls on
+            // multiples of SPHERE_FACE_SIDE relative to the playfield
+            // origin. Use a slack of cellSize/2 to allow interior walls
+            // close to but not on the face boundary.
+            expect(Math.abs(w.ax - e)).not.toBeLessThan(cellSize / 4);
+          }
         }
       }
       if (isHorizontalSeg) {
-        for (const seam of horizontalSeams) {
-          expect(w.az).not.toBeCloseTo(seam, 6);
+        for (const e of faceEdges) {
+          if (Math.abs(e) < FACE_GRID_ROWS * SPHERE_FACE_SIDE) {
+            expect(Math.abs(w.az - e)).not.toBeLessThan(cellSize / 4);
+          }
         }
       }
     }

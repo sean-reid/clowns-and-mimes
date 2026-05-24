@@ -21,21 +21,27 @@
 // neighbors in the same fixed order, so the DFS path is identical.
 
 import type { Topology } from './protocol.ts';
-import { WORLD_WIDTH } from './topology.ts';
+import { WORLD_WIDTH, SPHERE_FACE_SIDE } from './topology.ts';
 import type { WallSegment } from './labyrinth.ts';
+import {
+  CUBE_FACES,
+  FACE_GRID_COLS,
+  FACE_GRID_ROWS,
+  FACE_SLOTS,
+  faceWorldRect,
+} from './sphereCubeMap.ts';
 
 export const GRID_MAZE_N = 10;
 
-// Sphere cube-face layout. The playfield is packed as 3 face-columns by 2
-// face-rows. Each face is its own 4x6 grid of square cells; total grid is
-// therefore 12 wide x 12 tall, matching the per-face cell size (WORLD_WIDTH/12)
-// in both axes.
-export const SPHERE_FACE_COLS = 3;
-export const SPHERE_FACE_ROWS = 2;
-export const SPHERE_FACE_CELLS_X = 4;
-export const SPHERE_FACE_CELLS_Z = 6;
-export const SPHERE_GRID_X = SPHERE_FACE_COLS * SPHERE_FACE_CELLS_X; // 12
-export const SPHERE_GRID_Z = SPHERE_FACE_ROWS * SPHERE_FACE_CELLS_Z; // 12
+// Sphere T-net cube map. Six square faces in a 4 x 3 grid (with the four
+// equator faces in the middle row and the two poles above/below +Z).
+// Per-face mazes are SPHERE_FACE_CELLS on a side, so the global packing is
+// 4N wide by 3N tall in cell counts. The six T-net "void" cells (top and
+// bottom corners) have no floor and no maze; the cube identification rule
+// in topology.ts wraps motion across their boundaries.
+export const SPHERE_FACE_CELLS = 5;
+export const SPHERE_GRID_X = FACE_GRID_COLS * SPHERE_FACE_CELLS; // 20
+export const SPHERE_GRID_Z = FACE_GRID_ROWS * SPHERE_FACE_CELLS; // 15
 
 const DIR_EAST = 0;
 const DIR_NORTH = 1;
@@ -358,14 +364,10 @@ function emitKleinExpandedWalls(openings: Uint8Array, gridN: number): WallSegmen
  * cube edge rotations and per-face spawn zones land in a follow-up.
  */
 export function generateSphereGridWalls(seed: number): WallSegment[] {
-  const fcx = SPHERE_FACE_CELLS_X;
-  const fcz = SPHERE_FACE_CELLS_Z;
-  const faceTotal = fcx * fcz;
-  const totalCells = SPHERE_GRID_X * SPHERE_GRID_Z;
-  // One opening byte per cell in the full 12x12 packing. Each face writes into
-  // its own slice so the emit pass can iterate the full grid uniformly.
-  const openings = new Uint8Array(totalCells);
-
+  const N = SPHERE_FACE_CELLS;
+  const cellSize = SPHERE_FACE_SIDE / N;
+  const faceTotal = N * N;
+  const out: WallSegment[] = [];
   let rng = (seed | 0) >>> 0;
   const next = (): number => {
     rng = ((Math.imul(rng, 1664525) >>> 0) + 1013904223) >>> 0;
@@ -373,112 +375,92 @@ export function generateSphereGridWalls(seed: number): WallSegment[] {
   };
 
   const localNeighbor = (localCell: number, dir: number): Neighbor | null => {
-    const lc = localCell % fcx;
-    const lr = Math.floor(localCell / fcx);
+    const lc = localCell % N;
+    const lr = Math.floor(localCell / N);
     let nc = lc;
     let nr = lr;
     if (dir === DIR_EAST) nc = lc + 1;
     else if (dir === DIR_WEST) nc = lc - 1;
     else if (dir === DIR_NORTH) nr = lr + 1;
     else if (dir === DIR_SOUTH) nr = lr - 1;
-    if (nc < 0 || nc >= fcx) return null;
-    if (nr < 0 || nr >= fcz) return null;
-    return { cell: nc + nr * fcx, dir, crossesSeam: false };
+    if (nc < 0 || nc >= N) return null;
+    if (nr < 0 || nr >= N) return null;
+    return { cell: nc + nr * N, dir, crossesSeam: false };
   };
 
-  // Iterate faces in the documented fixed order so GDScript and TS agree.
-  for (let fr = 0; fr < SPHERE_FACE_ROWS; fr += 1) {
-    for (let fc = 0; fc < SPHERE_FACE_COLS; fc += 1) {
-      const localVisited = new Uint8Array(faceTotal);
-      const localOpenings = new Uint8Array(faceTotal);
+  // Iterate the six cube faces in CUBE_FACES order so GDScript and TS
+  // share the same LCG draw sequence for a given seed.
+  for (const face of CUBE_FACES) {
+    const localVisited = new Uint8Array(faceTotal);
+    const localOpenings = new Uint8Array(faceTotal);
 
-      const start = next() % faceTotal;
-      localVisited[start] = 1;
-      const stack: number[] = [start];
-      while (stack.length > 0) {
-        const cur = stack[stack.length - 1]!;
-        const candidates: Neighbor[] = [];
-        for (let dir = 0; dir < 4; dir += 1) {
-          const nb = localNeighbor(cur, dir);
-          if (nb === null) continue;
-          if (localVisited[nb.cell]) continue;
-          candidates.push(nb);
-        }
-        if (candidates.length === 0) {
-          stack.pop();
-          continue;
-        }
-        const pick = candidates[next() % candidates.length]!;
-        localOpenings[cur] |= 1 << pick.dir;
-        localOpenings[pick.cell] |= 1 << oppositeDir(pick.dir);
-        localVisited[pick.cell] = 1;
-        stack.push(pick.cell);
+    const start = next() % faceTotal;
+    localVisited[start] = 1;
+    const stack: number[] = [start];
+    while (stack.length > 0) {
+      const cur = stack[stack.length - 1]!;
+      const candidates: Neighbor[] = [];
+      for (let dir = 0; dir < 4; dir += 1) {
+        const nb = localNeighbor(cur, dir);
+        if (nb === null) continue;
+        if (localVisited[nb.cell]) continue;
+        candidates.push(nb);
       }
-
-      // Braid this face. Walks the local grid, knocks down one closed wall
-      // per dead-end cell. The same shared LCG state advances through every
-      // face's braid pass.
-      for (let cell = 0; cell < faceTotal; cell += 1) {
-        if (popCountNibble(localOpenings[cell]!) >= 2) continue;
-        const closedNeighbors: { dir: number; cell: number }[] = [];
-        for (let dir = 0; dir < 4; dir += 1) {
-          if ((localOpenings[cell]! & (1 << dir)) !== 0) continue;
-          const nb = localNeighbor(cell, dir);
-          if (nb === null) continue;
-          closedNeighbors.push({ dir, cell: nb.cell });
-        }
-        if (closedNeighbors.length === 0) continue;
-        const pick = closedNeighbors[next() % closedNeighbors.length]!;
-        localOpenings[cell] |= 1 << pick.dir;
-        localOpenings[pick.cell] |= 1 << oppositeDir(pick.dir);
+      if (candidates.length === 0) {
+        stack.pop();
+        continue;
       }
+      const pick = candidates[next() % candidates.length]!;
+      localOpenings[cur] |= 1 << pick.dir;
+      localOpenings[pick.cell] |= 1 << oppositeDir(pick.dir);
+      localVisited[pick.cell] = 1;
+      stack.push(pick.cell);
+    }
 
-      // Copy this face's openings into the global packing. Cell (lc, lr) in
-      // face (fc, fr) lives at global column fc*fcx+lc, row fr*fcz+lr.
-      for (let lr = 0; lr < fcz; lr += 1) {
-        for (let lc = 0; lc < fcx; lc += 1) {
-          const gc = fc * fcx + lc;
-          const gr = fr * fcz + lr;
-          openings[gc + gr * SPHERE_GRID_X] = localOpenings[lc + lr * fcx]!;
+    // Braid this face: dead-end cells get one extra opening so the
+    // labyrinth is loopy rather than tree-shaped.
+    for (let cell = 0; cell < faceTotal; cell += 1) {
+      if (popCountNibble(localOpenings[cell]!) >= 2) continue;
+      const closedNeighbors: { dir: number; cell: number }[] = [];
+      for (let dir = 0; dir < 4; dir += 1) {
+        if ((localOpenings[cell]! & (1 << dir)) !== 0) continue;
+        const nb = localNeighbor(cell, dir);
+        if (nb === null) continue;
+        closedNeighbors.push({ dir, cell: nb.cell });
+      }
+      if (closedNeighbors.length === 0) continue;
+      const pick = closedNeighbors[next() % closedNeighbors.length]!;
+      localOpenings[cell] |= 1 << pick.dir;
+      localOpenings[pick.cell] |= 1 << oppositeDir(pick.dir);
+    }
+
+    // Emit walls in world coords. Drop walls on the face's outer edges so
+    // every face boundary stays open: grid-adjacent face crossings flow
+    // naturally and void-adjacent crossings trigger the cube identification
+    // in stepAcrossSphereFaces.
+    const rect = faceWorldRect(face, SPHERE_FACE_SIDE);
+    for (let r = 0; r < N; r += 1) {
+      for (let c = 0; c < N; c += 1) {
+        const id = c + r * N;
+        const eastClosed = (localOpenings[id]! & (1 << DIR_EAST)) === 0;
+        const northClosed = (localOpenings[id]! & (1 << DIR_NORTH)) === 0;
+        if (eastClosed && c < N - 1) {
+          const x = rect.xMin + (c + 1) * cellSize;
+          const z0 = rect.zMin + r * cellSize;
+          const z1 = rect.zMin + (r + 1) * cellSize;
+          out.push({ ax: x, az: z0, bx: x, bz: z1 });
+        }
+        if (northClosed && r < N - 1) {
+          const z = rect.zMin + (r + 1) * cellSize;
+          const x0 = rect.xMin + c * cellSize;
+          const x1 = rect.xMin + (c + 1) * cellSize;
+          out.push({ ax: x0, az: z, bx: x1, bz: z });
         }
       }
     }
   }
-
-  return emitSphereWalls(openings);
-}
-
-function emitSphereWalls(openings: Uint8Array): WallSegment[] {
-  const cell = WORLD_WIDTH / SPHERE_GRID_X;
-  const half = WORLD_WIDTH / 2;
-  const fcx = SPHERE_FACE_CELLS_X;
-  const fcz = SPHERE_FACE_CELLS_Z;
-  const out: WallSegment[] = [];
-  for (let r = 0; r < SPHERE_GRID_Z; r += 1) {
-    for (let c = 0; c < SPHERE_GRID_X; c += 1) {
-      const id = c + r * SPHERE_GRID_X;
-      const eastClosed = (openings[id]! & (1 << DIR_EAST)) === 0;
-      const northClosed = (openings[id]! & (1 << DIR_NORTH)) === 0;
-      // A face's east edge sits at local column index fcx-1. The wall east of
-      // that cell is the face boundary, so it gets dropped. Same idea for the
-      // north edge at local row fcz-1.
-      const localCol = c % fcx;
-      const localRow = r % fcz;
-      const onFaceEastEdge = localCol === fcx - 1;
-      const onFaceNorthEdge = localRow === fcz - 1;
-      if (eastClosed && !onFaceEastEdge) {
-        const x = (c + 1) * cell - half;
-        const z0 = r * cell - half;
-        const z1 = (r + 1) * cell - half;
-        out.push({ ax: x, az: z0, bx: x, bz: z1 });
-      }
-      if (northClosed && !onFaceNorthEdge) {
-        const z = (r + 1) * cell - half;
-        const x0 = c * cell - half;
-        const x1 = (c + 1) * cell - half;
-        out.push({ ax: x0, az: z, bx: x1, bz: z });
-      }
-    }
-  }
+  // FACE_SLOTS is kept available for callers (used by the bot pathfinder
+  // to know which slots are face territory vs T-net void cells).
+  void FACE_SLOTS;
   return out;
 }

@@ -80,7 +80,10 @@ static func step(
 		# this input's tick, so we always pass the candidate; the server
 		# enforces it and the next delta will snap us back if we walked
 		# through someone.
-		var wrapped3: Vector3 = topology.wrap(Vector3(candidate.x, 0.0, candidate.y))
+		var wrapped3: Vector3 = topology.wrap_step(
+			Vector3(pos.x, 0.0, pos.y),
+			Vector3(candidate.x, 0.0, candidate.y),
+		)
 		next_pos = Vector2(wrapped3.x, wrapped3.z)
 		break
 

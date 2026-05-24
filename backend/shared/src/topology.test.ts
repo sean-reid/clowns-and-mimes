@@ -34,14 +34,21 @@ describe('wrapPosition', () => {
     expect(a.z).toBe(-40);
   });
 
-  it('wraps both axes torus-like on sphere (cube-mapped first cut)', () => {
-    // First cut packs six cube faces 3x2 across the full WIDTH. A simple
-    // modular wrap matches the visual seam crossings; proper cube edge
-    // rotations are a follow-up.
-    const a = wrapPosition({ x: 60, z: 0 }, 'sphere', W);
-    expect(a.x).toBeCloseTo(-40, 6);
-    const b = wrapPosition({ x: 0, z: -60 }, 'sphere', W);
-    expect(b.z).toBeCloseTo(40, 6);
+  it('passes through on the sphere when the point is on a valid face', () => {
+    // Sphere is the T-net cube map: 4*W/4 wide x 3*W/4 tall (100 x 75 here).
+    // A point inside a face slot is returned unchanged; the step-aware
+    // wrap (wrapPositionFromStep) handles cube adjacency on motion.
+    const inside = wrapPosition({ x: 10, z: 5 }, 'sphere', W);
+    expect(inside.x).toBe(10);
+    expect(inside.z).toBe(5);
+  });
+
+  it('snaps an out-of-bounds sphere point to the nearest face center', () => {
+    // (60, 0) is outside the T-net (x range [-50, 50]). Nearest face slot
+    // is the equator's +X at col=2, row=1: center (37.5, 0).
+    const out = wrapPosition({ x: 60, z: 0 }, 'sphere', W);
+    expect(out.x).toBeCloseTo(37.5, 6);
+    expect(out.z).toBeCloseTo(0, 6);
   });
 });
 

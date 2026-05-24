@@ -26,6 +26,17 @@ func wrap(position: Vector3) -> Vector3:
 	push_error("Topology.wrap must be overridden")
 	return position
 
+## Step-aware wrap. Called by the local predictor after computing a
+## candidate world position so sphere can route the step through the cube
+## identification when it crosses a face boundary. Default: discard prev
+## and fall through to wrap(next). Sphere overrides this.
+##
+## `self.wrap(next)` is spelled with the receiver explicitly because
+## Godot's GDScript parser would otherwise resolve `wrap()` to the
+## built-in `wrap(value, min, max)` and complain about argument count.
+func wrap_step(_prev: Vector3, next: Vector3) -> Vector3:
+	return self.wrap(next)
+
 func distance(a: Vector3, b: Vector3) -> float:
 	push_error("Topology.distance must be overridden")
 	var d := a - b

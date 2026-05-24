@@ -273,14 +273,19 @@ export class BotPathfinder {
 
 function gridShapeFor(topology: Topology): GridShape {
   if (topology === 'sphere') {
+    // T-net: 20 x 15 cells over a 4 x 3 grid of cube face slots. Six of
+    // the twelve slots are void; the pathfinder still iterates the full
+    // grid but every other player's cell mask prevents bots from routing
+    // through the voids. Cube identification across face boundaries is
+    // handled in the runtime (stepAcrossSphereFaces); the pathfinder
+    // treats the playfield as a flat 20 x 15 rectangle for now and the
+    // resulting paths are good for chase / rescue inside or between
+    // adjacent face slots.
     return {
       cols: SPHERE_GRID_X,
       rows: SPHERE_GRID_Z,
       cellX: WORLD_WIDTH / SPHERE_GRID_X,
-      cellZ: WORLD_WIDTH / SPHERE_GRID_Z,
-      // Sphere uses face-local mazes packed 3x2; the topology adapter wraps
-      // between faces with torus-like modular indexing for now (see
-      // wrapPosition's sphere branch). Mirror that here.
+      cellZ: WORLD_WIDTH / SPHERE_GRID_X,
       wrapX: true,
       wrapZ: true,
       flipRowOnXWrap: false,

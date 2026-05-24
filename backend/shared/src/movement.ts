@@ -5,7 +5,7 @@
 
 import type { Topology, Vec2 } from './protocol.ts';
 import { pathCrossesWall, type WallSegment } from './labyrinth.ts';
-import { wrapPosition } from './topology.ts';
+import { wrapPositionFromStep } from './topology.ts';
 
 export const WALK_SPEED = 3.2;
 export const SPRINT_SPEED = 5.6;
@@ -92,7 +92,11 @@ export function stepMovement(
       continue;
     }
     if (collidesWithOther(candidate)) continue;
-    nextPos = wrapPosition(candidate, topology, worldWidth);
+    // Sphere needs the step context (prev -> candidate) so cube adjacency
+    // can fire when the candidate lands in a T-net void. Other topologies
+    // ignore prev. wrapPositionFromStep is a no-op delegation to
+    // wrapPosition for everything except sphere.
+    nextPos = wrapPositionFromStep(state.position, candidate, topology, worldWidth);
     break;
   }
   const drained = wantSprint && moveLen > 0;

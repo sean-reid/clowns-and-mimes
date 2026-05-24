@@ -48,14 +48,16 @@ func test_klein_double_cover_wrap() -> void:
 	assert_approx(q.x, -W + 10.0, 0.001, "klein x wraps at 2W")
 	assert_approx(q.z, 5.0, 0.001, "klein z stays modular only")
 
-func test_sphere_wraps_torus_like() -> void:
-	# First-cut sphere uses modular wrap so the 3x2 face packing's seams behave
-	# torus-like. Proper cube-net rotations land in a follow-up.
+func test_sphere_wrap_t_net() -> void:
+	# Sphere is a cube T-net (4 x 3 face slots). A point on a face slot
+	# returns unchanged; a point in the void or off the playfield snaps to
+	# the nearest face center (best-effort recovery; the runtime predictor
+	# uses wrap_step for motion crossings).
 	var sphere := SphereTopology.new()
-	var p := sphere.wrap(Vector3(H + 20.0, 0.0, 0.0))
-	assert_approx(p.x, -H + 20.0, 0.001, "sphere wrap x")
-	var q := sphere.wrap(Vector3(0.0, 0.0, -H - 20.0))
-	assert_approx(q.z, H - 20.0, 0.001, "sphere wrap z")
+	# (10, 5) is on the +Z face (center column, middle row).
+	var inside := sphere.wrap(Vector3(10.0, 0.0, 5.0))
+	assert_approx(inside.x, 10.0, 0.001, "sphere passes through valid face point")
+	assert_approx(inside.z, 5.0, 0.001, "sphere passes through valid face point z")
 
 func test_factory_returns_correct_kind() -> void:
 	assert_eq(TopologyFactory.from_string("plane").kind(), TopologyScript.Kind.PLANE)

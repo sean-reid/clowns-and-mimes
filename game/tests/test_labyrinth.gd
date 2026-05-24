@@ -118,40 +118,36 @@ func test_grid_maze_builds_walls_for_klein_topology() -> void:
 	instance.queue_free()
 
 func test_sphere_grid_has_walls_and_omits_face_boundaries() -> void:
-	# Six 4x6 face mazes, each leaving a handful of interior walls after the
-	# braid pass. The seam between adjacent faces (vertical lines at
-	# x = -half + col * WIDTH/3 and horizontal line at z = 0) must be open so
-	# the topology can wrap a player across.
+	# Six N x N face mazes in the T-net (4 x 3 face slots). Outer face
+	# edges stay open so grid-adjacent face seams flow naturally and
+	# void-adjacent seams let the cube identification in
+	# sphere_topology.gd::wrap_step fire on motion.
 	var segs: Array = GridMaze.generate(7, "sphere")
 	assert_true(segs.size() > 30, "sphere maze has substantial wall count, got %d" % segs.size())
-	var half: float = TopologyScript.WIDTH / 2.0
-	var face_width: float = TopologyScript.WIDTH / float(GridMaze.SPHERE_FACE_COLS)
-	var face_height: float = TopologyScript.WIDTH / float(GridMaze.SPHERE_FACE_ROWS)
+	var face_side: float = TopologyScript.WIDTH / float(GridMaze.FACE_GRID_COLS)
+	var ext_x: float = float(GridMaze.FACE_GRID_COLS) * face_side
+	var ext_z: float = float(GridMaze.FACE_GRID_ROWS) * face_side
+	var face_edges_x: Array[float] = []
+	for col in GridMaze.FACE_GRID_COLS + 1:
+		face_edges_x.append(float(col) * face_side - ext_x * 0.5)
+	var face_edges_z: Array[float] = []
+	for row in GridMaze.FACE_GRID_ROWS + 1:
+		face_edges_z.append(ext_z * 0.5 - float(row) * face_side)
 	for seg in segs:
 		var axis_aligned: bool = seg["ax"] == seg["bx"] or seg["az"] == seg["bz"]
 		assert_true(axis_aligned, "sphere wall axis-aligned: %s" % str(seg))
-		# Playfield boundary walls must not appear.
-		var on_left: bool = seg["ax"] == -half and seg["bx"] == -half
-		var on_right: bool = seg["ax"] == half and seg["bx"] == half
-		var on_top: bool = seg["az"] == half and seg["bz"] == half
-		var on_bottom: bool = seg["az"] == -half and seg["bz"] == -half
-		assert_true(
-			not (on_left or on_right or on_top or on_bottom),
-			"sphere has no playfield boundary wall: %s" % str(seg)
-		)
-		# No wall along an interior face seam either.
+		# No wall sits on any face's outer edge (vertical wall on a face
+		# x-edge or horizontal wall on a face z-edge).
 		if seg["ax"] == seg["bx"]:
-			for i in range(1, GridMaze.SPHERE_FACE_COLS):
-				var seam_x: float = -half + float(i) * face_width
+			for edge in face_edges_x:
 				assert_true(
-					absf(seg["ax"] - seam_x) > 0.001,
-					"sphere has no wall on vertical face seam: %s" % str(seg)
+					absf(seg["ax"] - edge) > 0.001,
+					"sphere has no wall on a face x edge: %s" % str(seg)
 				)
 		if seg["az"] == seg["bz"]:
-			for i in range(1, GridMaze.SPHERE_FACE_ROWS):
-				var seam_z: float = -half + float(i) * face_height
+			for edge in face_edges_z:
 				assert_true(
-					absf(seg["az"] - seam_z) > 0.001,
+					absf(seg["az"] - edge) > 0.001,
 					"sphere has no wall on horizontal face seam: %s" % str(seg)
 				)
 

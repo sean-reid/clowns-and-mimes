@@ -1,16 +1,35 @@
 import type { Topology, Vec2 } from './protocol.ts';
+import {
+  FACE_GRID_COLS,
+  faceWorldRect,
+  spherePlayfieldExtents,
+  stepAcrossSphereFaces,
+  worldToFace,
+  CUBE_FACES,
+  type CubeFace,
+} from './sphereCubeMap.ts';
 
 export const WORLD_WIDTH = 80;
 
 /**
- * Per-topology playfield extents in world units. Klein is the only topology
- * with a non-square playfield: the canonical x domain spans 2 * WORLD_WIDTH
- * so the bottle's z-orientation flip is walkable space (a mirrored right
- * half) instead of an instantaneous snap at the seam. All other topologies
- * are WORLD_WIDTH on each axis.
+ * Cube face side length in world units. The T-net playfield is 4 x 3 faces,
+ * so face = WORLD_WIDTH / 4 gives an x-extent of exactly WORLD_WIDTH and a
+ * z-extent of 0.75 * WORLD_WIDTH.
+ */
+export const SPHERE_FACE_SIDE = WORLD_WIDTH / FACE_GRID_COLS;
+
+/**
+ * Per-topology playfield extents in world units. Klein and sphere are both
+ * non-square. Klein doubles x for its z-mirrored second half; sphere shrinks
+ * z to 3/4 of WORLD_WIDTH so the T-net's 4 x 3 face grid sits at unit aspect
+ * per face.
  */
 export function topologyExtents(topology: Topology, width: number): { x: number; z: number } {
   if (topology === 'klein') return { x: 2 * width, z: width };
+  if (topology === 'sphere') {
+    const faceSide = width / FACE_GRID_COLS;
+    return spherePlayfieldExtents(faceSide);
+  }
   return { x: width, z: width };
 }
 
@@ -45,18 +64,50 @@ export function wrapPosition(p: Vec2, topology: Topology, width: number): Vec2 {
       };
     }
     case 'sphere': {
-      // First-cut sphere uses torus-like modular wrap. The 3x2 face packing
-      // fills the full playfield, so modular wrap is the right primitive for
-      // crossing between faces - close enough to the eventual cube-mapped
-      // adjacency to feel right at small step sizes.
-      // TODO: proper cube-net edge adjacency with the right rotations when
-      // crossing a face boundary.
-      return {
-        x: wrap(p.x, width),
-        z: wrap(p.z, width),
-      };
+      // Single-point sphere wrap is a recovery path: a step that lands on a
+      // valid face just snaps to the nearest face center if the caller
+      // missed `wrapPositionFromStep`. For genuine motion crossings the
+      // caller should use `wrapPositionFromStep(prev, candidate, ...)` so
+      // cube adjacency carries the rotation. The pure-point clamp keeps
+      // the position on a valid face for spawn / initial state.
+      const faceSide = width / FACE_GRID_COLS;
+      const face = worldToFace(p.x, p.z, faceSide);
+      if (face !== null) return p;
+      // Fell into a T-net void: snap to the nearest face's center as a
+      // best-effort recovery. This shouldn't happen during normal play.
+      let bestFace: CubeFace = CUBE_FACES[0];
+      let bestDist = Infinity;
+      for (const f of CUBE_FACES) {
+        const r = faceWorldRect(f, faceSide);
+        const cx = (r.xMin + r.xMax) / 2;
+        const cz = (r.zMin + r.zMax) / 2;
+        const d = Math.hypot(p.x - cx, p.z - cz);
+        if (d < bestDist) {
+          bestDist = d;
+          bestFace = f;
+        }
+      }
+      const r = faceWorldRect(bestFace, faceSide);
+      return { x: (r.xMin + r.xMax) / 2, z: (r.zMin + r.zMax) / 2 };
     }
   }
+}
+
+/**
+ * Step-aware wrap. When motion takes the player from `prev` to `candidate`
+ * on the sphere, route the position through cube adjacency so an edge
+ * crossing lands on the correct face (with the rotation baked in). All
+ * other topologies ignore `prev` and behave the same as `wrapPosition`.
+ */
+export function wrapPositionFromStep(
+  prev: Vec2,
+  candidate: Vec2,
+  topology: Topology,
+  width: number,
+): Vec2 {
+  if (topology !== 'sphere') return wrapPosition(candidate, topology, width);
+  const faceSide = width / FACE_GRID_COLS;
+  return stepAcrossSphereFaces(prev, candidate, faceSide);
 }
 
 export function topologyDistance(a: Vec2, b: Vec2, topology: Topology, width: number): number {
@@ -76,12 +127,14 @@ export function topologyDistance(a: Vec2, b: Vec2, topology: Topology, width: nu
       return Math.hypot(dx, dz);
     }
     case 'sphere': {
-      // First-cut sphere distance mirrors the wrap: torus-like shortest path
-      // across both axes.
-      // TODO: proper sphere geodesic distance across cube faces.
-      const dx = wrappedDelta(a.x, b.x, width);
-      const dz = wrappedDelta(a.z, b.z, width);
-      return Math.hypot(dx, dz);
+      // Sphere distance on the T-net is the Euclidean distance in the
+      // unfolded playfield. Short steps inside a face are exact; longer
+      // distances are approximate because they cross faces in a straight
+      // line on the unfold instead of via the geodesic on the cube. The
+      // approximation is fine for bot vision and tag radius, which only
+      // ever look at sub-face distances.
+      // TODO: cube-geodesic distance for long-range queries.
+      return Math.hypot(a.x - b.x, a.z - b.z);
     }
   }
 }
@@ -102,10 +155,16 @@ export function wrappedUnitDelta(from: Vec2, to: Vec2, topology: Topology, width
       dz = to.z - from.z;
       break;
     }
-    case 'torus':
-    case 'sphere': {
+    case 'torus': {
       dx = wrappedDelta(from.x, to.x, width);
       dz = wrappedDelta(from.z, to.z, width);
+      break;
+    }
+    case 'sphere': {
+      // T-net unfold: short steps use plain Euclidean direction. See
+      // topologyDistance comment for the approximation rationale.
+      dx = to.x - from.x;
+      dz = to.z - from.z;
       break;
     }
     case 'klein': {

@@ -82,14 +82,16 @@ func test_grid_maze_walls_are_axis_aligned() -> void:
 		assert_true(axis_aligned, "wall axis-aligned: %s" % str(seg))
 
 func test_grid_maze_skips_wrap_seam() -> void:
-	# A wall on x=+-half or z=+-half would visually double up since the
-	# topology folds both edges together. The generator must never emit one.
-	var half: float = 40.0
+	# A wall on the outer playfield boundary would visually double up since the
+	# topology folds both edges together. Klein is now a 2W x W double cover,
+	# so its outer seams are at x = +-W and z = +-W/2.
+	var half_x: float = TopologyScript.WIDTH
+	var half_z: float = TopologyScript.WIDTH / 2.0
 	for seg in GridMaze.generate(7, "klein"):
-		var on_left: bool = seg["ax"] == -half and seg["bx"] == -half
-		var on_right: bool = seg["ax"] == half and seg["bx"] == half
-		var on_top: bool = seg["az"] == half and seg["bz"] == half
-		var on_bottom: bool = seg["az"] == -half and seg["bz"] == -half
+		var on_left: bool = seg["ax"] == -half_x and seg["bx"] == -half_x
+		var on_right: bool = seg["ax"] == half_x and seg["bx"] == half_x
+		var on_top: bool = seg["az"] == half_z and seg["bz"] == half_z
+		var on_bottom: bool = seg["az"] == -half_z and seg["bz"] == -half_z
 		assert_true(
 			not (on_left or on_right or on_top or on_bottom),
 			"no wall on the wrap seam: %s" % str(seg)

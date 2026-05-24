@@ -34,11 +34,19 @@ func test_torus_distance_takes_shortest_path() -> void:
 	var d := torus.distance(Vector3(-H + 5.0, 0.0, 0.0), Vector3(H - 5.0, 0.0, 0.0))
 	assert_approx(d, 10.0, 0.001, "torus shortest distance")
 
-func test_klein_flips_z_on_x_wrap() -> void:
+func test_klein_double_cover_wrap() -> void:
+	# Klein is now a 2W x W double cover: x wraps with period 2W and z with
+	# period W. The bottle's z-orientation flip is in the geometry of the
+	# right half (z-mirrored), not in the wrap rule.
 	var klein := KleinTopology.new()
+	# Inside the x domain [-W, W], wrap is a no-op.
 	var p := klein.wrap(Vector3(H + 20.0, 0.0, 20.0))
-	assert_approx(p.x, -H + 20.0, 0.001, "klein wrap x")
-	assert_approx(p.z, -20.0, 0.001, "klein flip z")
+	assert_approx(p.x, H + 20.0, 0.001, "klein no-op inside double cover")
+	assert_approx(p.z, 20.0, 0.001, "klein z preserved inside")
+	# Past x=W (the 2W seam at x=+W), wrap pulls back across the full 2W period.
+	var q := klein.wrap(Vector3(W + 10.0, 0.0, 5.0))
+	assert_approx(q.x, -W + 10.0, 0.001, "klein x wraps at 2W")
+	assert_approx(q.z, 5.0, 0.001, "klein z stays modular only")
 
 func test_sphere_wraps_torus_like() -> void:
 	# First-cut sphere uses modular wrap so the 3x2 face packing's seams behave

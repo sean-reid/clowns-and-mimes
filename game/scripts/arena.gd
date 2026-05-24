@@ -105,7 +105,11 @@ func _ready() -> void:
 	online_mode = not GameState.server_url.is_empty()
 	_setup_menu()
 	hud.set_sprint(100.0)
-	hud.set_countdown_seconds(10.0)
+	# Leave the countdown label blank until the first phase update arrives;
+	# seeding "10" was a leftover from the removed pre-match countdown phase
+	# and flashed 10 -> 0 on every round start before the free-roam timer
+	# took over.
+	hud.set_countdown_seconds(-1.0)
 	# The oompa theme belongs to the menu screens. Silence it for gameplay so
 	# the stingers and footsteps come through clearly. The menu re-arms it on
 	# its _ready when the player returns.

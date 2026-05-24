@@ -59,18 +59,37 @@ func render_team_status(players: Array) -> void:
 		icon.modulate.a = 0.35 if frozen else 1.0
 		team_status.add_child(icon)
 
+const MAX_LOG_LINES := 5
+
 func append_log(message: String) -> void:
 	var line := Label.new()
 	line.text = message
 	event_log.add_child(line)
+	# Cap visible lines so the column can't grow off the bottom of the
+	# screen during high-frequency events (rescues + tags overlap).
+	while event_log.get_child_count() > MAX_LOG_LINES:
+		var oldest: Node = event_log.get_child(0)
+		if is_instance_valid(oldest):
+			oldest.queue_free()
+	# Fade older lines so the eye lands on the newest entry. The bottom of
+	# the column is the newest; each line above is dimmer.
+	_refresh_log_fade()
 	# Don't capture the Label in a closure on the SceneTreeTimer's signal: if
 	# the HUD frees while the timer is in flight (scene swap, back-to-menu),
 	# the closure logs 'Lambda capture at index 0 was freed' every match.
 	# Pass the line as a parameter through an async helper instead.
 	_expire_log_line(line)
 
+func _refresh_log_fade() -> void:
+	var count: int = event_log.get_child_count()
+	for i in count:
+		var child: Node = event_log.get_child(i)
+		if child is Control:
+			var age_from_newest: int = count - 1 - i
+			(child as Control).modulate.a = maxf(0.15, pow(0.65, age_from_newest))
+
 func _expire_log_line(line: Label) -> void:
-	await get_tree().create_timer(4.0).timeout
+	await get_tree().create_timer(2.5).timeout
 	if is_instance_valid(line):
 		line.queue_free()
 

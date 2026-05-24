@@ -29,12 +29,13 @@ build/
 .wrangler/
 wrangler.toml.bak
 
-# Godot
+# Godot: track .import sidecars and .uid files (Godot 4 recommends committing
+# them so import settings and resource UIDs are stable across machines).
+# Only the derived caches and build outputs are ignored.
 game/.godot/
 game/.import/
 game/builds/
 game/*.translation
-game/*.import
 
 # Game export artifacts
 out/

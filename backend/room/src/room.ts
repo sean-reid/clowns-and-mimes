@@ -190,6 +190,24 @@ export class Room implements DurableObject {
     };
   }
 
+  /**
+   * Returns true if landing at (x, z) would put this bot inside another
+   * player's personal space. Without this check, two bots walking the same
+   * corridor in opposite directions push through each other every tick and
+   * the client renders the back-and-forth as visible jitter. The threshold
+   * is two body radii plus a small buffer so capsules never touch.
+   */
+  private collidesWithOtherPlayer(self: PlayerState, x: number, z: number): boolean {
+    const PERSONAL_SPACE = 1.0; // 2 * PLAYER_RADIUS (0.4) + buffer
+    for (const other of this.players.values()) {
+      if (other.id === self.id) continue;
+      const dx = other.position.x - x;
+      const dz = other.position.z - z;
+      if (dx * dx + dz * dz < PERSONAL_SPACE * PERSONAL_SPACE) return true;
+    }
+    return false;
+  }
+
   setTopology(t: Topology): void {
     this.topology = t;
     // The wall set depends on topology now: torus/klein use a grid maze, the
@@ -455,19 +473,15 @@ export class Room implements DurableObject {
       let moved = false;
       for (const candidate of candidates) {
         if (candidate.chosen.x === 0 && candidate.chosen.z === 0) continue;
-        if (
-          this.walls.length === 0 ||
-          !pathCrossesWall(this.walls, bot.position.x, bot.position.z, candidate.x, candidate.z)
-        ) {
-          bot.position = wrapPosition(
-            { x: candidate.x, z: candidate.z },
-            this.topology,
-            WORLD_WIDTH,
-          );
-          bot.yaw = Math.atan2(-candidate.chosen.x, -candidate.chosen.z);
-          moved = true;
-          break;
-        }
+        const wallBlocked =
+          this.walls.length > 0 &&
+          pathCrossesWall(this.walls, bot.position.x, bot.position.z, candidate.x, candidate.z);
+        if (wallBlocked) continue;
+        if (this.collidesWithOtherPlayer(bot, candidate.x, candidate.z)) continue;
+        bot.position = wrapPosition({ x: candidate.x, z: candidate.z }, this.topology, WORLD_WIDTH);
+        bot.yaw = Math.atan2(-candidate.chosen.x, -candidate.chosen.z);
+        moved = true;
+        break;
       }
       if (!moved) {
         // Pinned on every axis. Two cases: the bot is in a tight corner

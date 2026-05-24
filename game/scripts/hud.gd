@@ -50,14 +50,25 @@ func set_countdown_seconds(seconds: float) -> void:
 func render_team_status(players: Array) -> void:
 	for child in team_status.get_children():
 		child.queue_free()
+	team_status.add_theme_constant_override("separation", 8)
 	for player in players:
-		var icon := ColorRect.new()
-		icon.custom_minimum_size = Vector2(20, 20)
 		var clown_team: bool = player.get("team") == "clown"
 		var frozen: bool = bool(player.get("frozen"))
-		icon.color = Color(0.9, 0.2, 0.22) if clown_team else Color(0.95, 0.95, 0.95)
-		icon.modulate.a = 0.35 if frozen else 1.0
-		team_status.add_child(icon)
+		var name_text: String = String(player.get("name", ""))
+		var row := HBoxContainer.new()
+		row.add_theme_constant_override("separation", 4)
+		row.modulate.a = 0.4 if frozen else 1.0
+		var dot := ColorRect.new()
+		dot.custom_minimum_size = Vector2(12, 12)
+		dot.color = Color(0.9, 0.2, 0.22) if clown_team else Color(0.95, 0.95, 0.95)
+		dot.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+		row.add_child(dot)
+		var label := Label.new()
+		label.text = name_text
+		label.add_theme_font_size_override("font_size", 14)
+		label.add_theme_color_override("font_color", Color(0.92, 0.92, 0.95))
+		row.add_child(label)
+		team_status.add_child(row)
 
 func append_log(message: String) -> void:
 	var line := Label.new()

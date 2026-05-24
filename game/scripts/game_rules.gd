@@ -7,9 +7,8 @@ extends Node
 
 const TopologyScript := preload("res://scripts/topology/topology.gd")
 
-enum Phase { LOBBY, COUNTDOWN, FREE_ROAM, TURN_MIME, TURN_CLOWN, ENDED }
+enum Phase { LOBBY, FREE_ROAM, TURN_MIME, TURN_CLOWN, ENDED }
 
-const COUNTDOWN_S := 10.0
 const FREE_ROAM_S := 30.0
 const FIRST_TURN_S := 30.0
 const TURN_STEP_S := 30.0
@@ -51,7 +50,7 @@ func start(top: TopologyScript) -> void:
 	topology = top
 	round_number = 0
 	first_team = "mime" if randi() % 2 == 0 else "clown"
-	_set_phase(Phase.COUNTDOWN, COUNTDOWN_S)
+	_set_phase(Phase.FREE_ROAM, FREE_ROAM_S)
 
 func tick(now_s: float) -> void:
 	if phase == Phase.LOBBY or phase == Phase.ENDED:
@@ -59,8 +58,6 @@ func tick(now_s: float) -> void:
 	if now_s < phase_ends_at:
 		return
 	match phase:
-		Phase.COUNTDOWN:
-			_set_phase(Phase.FREE_ROAM, FREE_ROAM_S)
 		Phase.FREE_ROAM:
 			_begin_next_turn()
 		Phase.TURN_MIME, Phase.TURN_CLOWN:

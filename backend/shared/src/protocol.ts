@@ -33,14 +33,7 @@ export interface PlayerState {
   sprintEnergy: number;
 }
 
-export type RoomPhase =
-  | 'filling'
-  | 'locked'
-  | 'countdown'
-  | 'free_roam'
-  | 'turn_mime'
-  | 'turn_clown'
-  | 'ended';
+export type RoomPhase = 'filling' | 'locked' | 'free_roam' | 'turn_mime' | 'turn_clown' | 'ended';
 
 export interface RoomSnapshot {
   v: typeof PROTOCOL_VERSION;

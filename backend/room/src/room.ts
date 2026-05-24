@@ -15,7 +15,6 @@ import { generateWalls, pathCrossesWall, type WallSegment } from '@cm/shared/lab
 const TICK_HZ = 20;
 const TICK_MS = 1000 / TICK_HZ;
 const FREE_ROAM_MS = 30_000;
-const COUNTDOWN_MS = 10_000;
 // Two-radius tag/unfreeze model.
 //
 // BOT tags have no lag - server has current authoritative positions on both
@@ -179,7 +178,7 @@ export class Room implements DurableObject {
     this.send(ws, { t: 'snapshot', snapshot: this.snapshot(), youAre: id });
     this.broadcast({ t: 'event', kind: { kind: 'phase', phase: this.phase } });
     if (this.phase === 'filling' && this.humanPlayers().length >= 2 && !this.tickHandle) {
-      this.startCountdown();
+      this.startMatch();
     } else if (this.phase === 'filling' && this.botFillHandle === null && !this.tickHandle) {
       this.scheduleBotFill();
     }
@@ -191,7 +190,7 @@ export class Room implements DurableObject {
       this.botFillHandle = null;
       if (this.phase !== 'filling' || this.tickHandle) return;
       this.fillBots();
-      this.startCountdown();
+      this.startMatch();
     }, BOT_FILL_DELAY_MS);
   }
 
@@ -437,21 +436,17 @@ export class Room implements DurableObject {
     }
   }
 
-  private startCountdown(): void {
+  private startMatch(): void {
     this.firstTeam = Math.random() < 0.5 ? 'mime' : 'clown';
-    this.phase = 'countdown';
-    this.turnEndsAt = Date.now() + COUNTDOWN_MS;
+    this.phase = 'free_roam';
+    this.turnEndsAt = Date.now() + FREE_ROAM_MS;
     this.broadcast({ t: 'event', kind: { kind: 'phase', phase: this.phase } });
     this.tickHandle = setInterval(() => this.tick(), TICK_MS);
   }
 
   private tick(): void {
     const now = Date.now();
-    if (this.phase === 'countdown' && now >= this.turnEndsAt) {
-      this.phase = 'free_roam';
-      this.turnEndsAt = now + FREE_ROAM_MS;
-      this.broadcast({ t: 'event', kind: { kind: 'phase', phase: this.phase } });
-    } else if (this.phase === 'free_roam' && now >= this.turnEndsAt) {
+    if (this.phase === 'free_roam' && now >= this.turnEndsAt) {
       this.beginNextTurn();
     } else if (
       (this.phase === 'turn_mime' || this.phase === 'turn_clown') &&

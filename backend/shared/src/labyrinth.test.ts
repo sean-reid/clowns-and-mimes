@@ -71,3 +71,43 @@ describe('pathCrossesWall', () => {
     expect(pathCrossesWall(walls, 0, 0, 1, 1)).toBe(false);
   });
 });
+
+describe('generateWalls (torus and klein use grid maze)', () => {
+  it('produces axis-aligned walls on a torus', () => {
+    const walls = generateWalls(42, 'torus');
+    expect(walls.length).toBeGreaterThan(0);
+    for (const w of walls) {
+      const axisAligned = w.ax === w.bx || w.az === w.bz;
+      expect(axisAligned).toBe(true);
+    }
+  });
+
+  it('skips walls along the wrap seam', () => {
+    // The grid maze should never put a wall on the outermost boundary of the
+    // playfield, since the topology already collapses both edges to the same
+    // line on a wrap surface. Picking up such a wall would visually double up.
+    const walls = generateWalls(7, 'klein');
+    const half = 40; // WORLD_WIDTH / 2
+    for (const w of walls) {
+      const onLeft = w.ax === -half && w.bx === -half;
+      const onRight = w.ax === half && w.bx === half;
+      const onTop = w.az === half && w.bz === half;
+      const onBottom = w.az === -half && w.bz === -half;
+      expect(onLeft || onRight || onTop || onBottom).toBe(false);
+    }
+  });
+
+  it('is deterministic across calls for the same seed and topology', () => {
+    const a = generateWalls(99, 'torus');
+    const b = generateWalls(99, 'torus');
+    expect(a).toEqual(b);
+  });
+
+  it('torus and klein at the same seed differ', () => {
+    // Klein flips the row index when crossing the x-seam, so the spanning
+    // tree explores a different cell set and the wall list cannot match.
+    const t = generateWalls(2026, 'torus');
+    const k = generateWalls(2026, 'klein');
+    expect(t).not.toEqual(k);
+  });
+});

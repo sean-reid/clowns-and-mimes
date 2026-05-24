@@ -60,7 +60,7 @@ export class Room implements DurableObject {
   private walls: readonly WallSegment[] = [];
 
   constructor(private readonly state: DurableObjectState) {
-    this.walls = generateWalls(this.seed);
+    this.walls = generateWalls(this.seed, this.topology);
   }
 
   async fetch(req: Request): Promise<Response> {
@@ -192,11 +192,15 @@ export class Room implements DurableObject {
 
   setTopology(t: Topology): void {
     this.topology = t;
+    // The wall set depends on topology now: torus/klein use a grid maze, the
+    // others use concentric rings. Rebuild so pathCrossesWall checks against
+    // the right geometry.
+    this.walls = generateWalls(this.seed, t);
   }
 
   setSeed(seed: number): void {
     this.seed = seed;
-    this.walls = generateWalls(seed);
+    this.walls = generateWalls(seed, this.topology);
   }
 
   private detach(ws: WebSocket): void {

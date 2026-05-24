@@ -8,6 +8,7 @@
 
 import type { Topology } from './protocol.ts';
 import { WORLD_WIDTH } from './topology.ts';
+import { generateGridMazeWalls } from './gridMaze.ts';
 
 export const WALL_THICKNESS = 0.4;
 export const WALL_HALF_THICKNESS = WALL_THICKNESS / 2;
@@ -59,8 +60,17 @@ function chooseGapIndices(seed: number, ringIndex: number): Set<number> {
  * Wall centerline endpoints. The visual mesh adds height (Y) and thickness
  * (perpendicular to length); for server-side collision we treat each wall as
  * a thick line segment.
+ *
+ * Topology dispatch: planes and spheres get the concentric-ring layout with
+ * its 12-fold rotational symmetry. Torus and Klein bottle use a grid maze
+ * because rings cannot align across a wrap seam. The default-undefined
+ * topology argument keeps the old single-arg signature working for tests and
+ * legacy callers that didn't pass topology.
  */
-export function generateWalls(seed: number): WallSegment[] {
+export function generateWalls(seed: number, topology: Topology = 'plane'): WallSegment[] {
+  if (topology === 'torus' || topology === 'klein') {
+    return generateGridMazeWalls(seed, topology);
+  }
   const out: WallSegment[] = [];
   const subdivisions = 4;
   for (let ringIndex = 0; ringIndex < RING_RADII.length; ringIndex += 1) {

@@ -1,10 +1,17 @@
 extends Node3D
 
-## Symmetric labyrinth with concentric ring regions. Walls are deterministic
-## given a seed, alternate connector orientation between rings, are solid
-## colliders, and feed a topology-aware AStar2D graph for bot pathfinding.
+## Labyrinth. The visual layout depends on topology:
+##   * Plane and sphere: concentric ring regions, alternating connector
+##     orientations, 12-fold rotational symmetry.
+##   * Torus and Klein bottle: grid maze (mirrors backend/shared/src/gridMaze.ts)
+##     because concentric rings cannot align across a wrap seam, which is the
+##     bug the user reported when wrapping topologies looked broken.
+##
+## Walls are deterministic given a seed and feed a topology-aware AStar2D graph
+## for bot pathfinding.
 
 const TopologyScript := preload("res://scripts/topology/topology.gd")
+const GridMaze := preload("res://scripts/grid_maze.gd")
 
 const WALL_HEIGHT := 6.0
 const WALL_THICKNESS := 0.4
@@ -32,11 +39,36 @@ func build(rng_seed: int, top: TopologyScript) -> void:
 	_ensure_floor()
 	_clear_walls()
 	_wall_segments.clear()
-	var rng := RandomNumberGenerator.new()
-	rng.seed = rng_seed
-	for ring_index in RING_RADII.size():
-		_build_ring(ring_index, rng)
+	var topo_name: String = topology.name()
+	if topo_name == "torus" or topo_name == "klein":
+		_build_grid_maze(rng_seed, topo_name)
+	else:
+		var rng := RandomNumberGenerator.new()
+		rng.seed = rng_seed
+		for ring_index in RING_RADII.size():
+			_build_ring(ring_index, rng)
 	_build_pathfinder()
+
+func _build_grid_maze(rng_seed: int, topo_name: String) -> void:
+	# Each maze segment is a thin straight wall between two grid cells. The
+	# rest of the labyrinth code already treats walls as oriented boxes, so we
+	# translate each {ax,az,bx,bz} into the same transform shape _add_arc_wall
+	# would produce.
+	for seg in GridMaze.generate(rng_seed, topo_name):
+		var ax: float = float(seg["ax"])
+		var az: float = float(seg["az"])
+		var bx: float = float(seg["bx"])
+		var bz: float = float(seg["bz"])
+		var mid := Vector3((ax + bx) * 0.5, WALL_HEIGHT / 2.0, (az + bz) * 0.5)
+		var dx: float = bx - ax
+		var dz: float = bz - az
+		var seg_length: float = sqrt(dx * dx + dz * dz)
+		var yaw: float = atan2(dz, dx)
+		var wall: StaticBody3D = _make_wall(seg_length)
+		wall.position = mid
+		wall.rotation = Vector3(0.0, -yaw, 0.0)
+		walls_root.add_child(wall)
+		_wall_segments.append({"transform": wall.transform, "length": seg_length})
 
 func find_path(from: Vector3, to: Vector3) -> Array[Vector3]:
 	if pathfinder == null:

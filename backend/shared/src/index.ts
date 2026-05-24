@@ -1,3 +1,4 @@
 export * from './protocol.ts';
 export * from './topology.ts';
 export * from './labyrinth.ts';
+export * from './gridMaze.ts';

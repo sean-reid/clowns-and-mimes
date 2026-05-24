@@ -464,13 +464,19 @@ func _play_stinger(victory: bool) -> void:
 	var stinger_path: String = AssetPaths.WIN_STINGER if victory else AssetPaths.LOSE_STINGER
 	var stinger: AudioStream = AssetPaths.try_load_audio(stinger_path)
 	if stinger == null:
+		# Restore the duck even when there is no stinger to play, otherwise the
+		# Music bus stays muted for the rest of the session.
+		AudioBus.set_bus_volume("Music", 0.0)
 		return
 	var player := AudioStreamPlayer.new()
 	player.bus = "SFX"
 	player.stream = stinger
 	add_child(player)
 	player.play()
-	player.finished.connect(player.queue_free)
+	player.finished.connect(func() -> void:
+		AudioBus.set_bus_volume("Music", 0.0)
+		player.queue_free()
+	)
 
 func _on_play_again() -> void:
 	requested_screen.emit("arena")

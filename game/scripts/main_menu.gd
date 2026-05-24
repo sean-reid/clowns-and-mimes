@@ -2,6 +2,8 @@ extends Control
 
 signal requested_screen(screen: String)
 
+const AssetPaths := preload("res://scripts/asset_paths.gd")
+
 @onready var host_button: Button = $Center/Buttons/HostButton
 @onready var code_button: Button = $Center/Buttons/CodeButton
 @onready var open_button: Button = $Center/Buttons/OpenButton
@@ -18,6 +20,11 @@ func _ready() -> void:
 	open_button.pressed.connect(_join_open)
 	_populate_topologies()
 	username_input.text = GameState.username
+	# Idempotent: keeps the theme alive if the player returned here from a
+	# match, and starts it if they somehow reached the menu without the title.
+	# Unduck the Music bus in case a stinger left it lowered.
+	AudioBus.set_bus_volume("Music", 0.0)
+	AudioBus.play_music_from_path(AssetPaths.THEME_AUDIO)
 
 func _populate_topologies() -> void:
 	topology_picker.clear()

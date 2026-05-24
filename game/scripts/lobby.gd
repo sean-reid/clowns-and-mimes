@@ -99,9 +99,20 @@ func _placeholder_code_if_missing() -> String:
 	return "------"
 
 func _seed_player_list() -> void:
+	# Placeholder roster shown while the matchmaker call is in flight. Real bot
+	# names are server-authored and arrive in the first snapshot (the server
+	# spawns bots 3 seconds after the human joins, after this lobby has
+	# already transitioned to the arena), so what we render here is purely
+	# preview. Use the same UsernameGenerator humans use rather than the
+	# 'Bot Mime' / 'Bot Clown' placeholders that read as the actual names.
 	for child in players_box.get_children():
 		child.queue_free()
-	for p in [GameState.username, "Bot Mime", "Bot Clown"]:
+	var roster: Array[String] = [GameState.username]
+	for i in 3:
+		roster.append(UsernameGenerator.generate())
+	for i in 3:
+		roster.append(UsernameGenerator.generate())
+	for p in roster:
 		var l := Label.new()
 		l.text = "- " + p
 		players_box.add_child(l)

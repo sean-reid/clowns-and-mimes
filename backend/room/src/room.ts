@@ -16,17 +16,23 @@ const TICK_HZ = 20;
 const TICK_MS = 1000 / TICK_HZ;
 const FREE_ROAM_MS = 30_000;
 const COUNTDOWN_MS = 10_000;
-// Server tag radius runs wider than the client's CONTACT_RADIUS so a tag
-// fired the moment the client sees contact doesn't fall outside the server's
-// check by the time the message arrives. Client interpolation lags one
-// snapshot (~50 ms) behind authoritative state, the input round trip adds
-// another 50-100 ms. At SPRINT_SPEED (5.6 u/s) the opponent can move up to
-// 0.84 units during that combined window; 2.2 leaves 0.8 units of margin
-// over CONTACT_RADIUS (1.4) before tag attempts start failing for
-// chases. Lag compensation (server rewind on tag_attempt) would be cleaner
-// but is a protocol-level rewrite.
-const TAG_RADIUS = 2.2;
-const UNFREEZE_RADIUS = 2.2;
+// Two-radius tag/unfreeze model.
+//
+// BOT tags have no lag - server has current authoritative positions on both
+// sides - so the strict radius matches the CONTACT_RADIUS (1.4) the client
+// expects visually. Any wider and bot tags feel like they're firing from
+// nowhere.
+//
+// CLIENT tags pass through client interp (one snapshot ~50 ms behind state)
+// and an input round trip (50-100 ms). At SPRINT_SPEED (5.6 u/s) the
+// opponent drifts up to 0.84 units in that combined window. 2.2 leaves
+// roughly 0.8 unit of headroom over the client's CONTACT_RADIUS so
+// chase-tags fired by humans land reliably. Lag compensation would be
+// cleaner but is a protocol-level rewrite.
+const TAG_RADIUS_BOT = 1.4;
+const TAG_RADIUS_CLIENT = 2.2;
+const UNFREEZE_RADIUS_BOT = 1.4;
+const UNFREEZE_RADIUS_CLIENT = 2.2;
 const WORLD_WIDTH = 80;
 const MAX_PLAYERS = 16;
 const TEAM_TARGET = 4;
@@ -321,7 +327,7 @@ export class Room implements DurableObject {
       this.send(ws, { t: 'tag_result', ok: false, reason: 'missing' });
       return;
     }
-    if (!this.canTag(attacker, victim)) {
+    if (!this.canTag(attacker, victim, TAG_RADIUS_CLIENT)) {
       this.send(ws, { t: 'tag_result', ok: false, reason: 'invalid' });
       return;
     }
@@ -345,9 +351,22 @@ export class Room implements DurableObject {
     }
     if (
       topologyDistance(savior.position, victim.position, this.topology, WORLD_WIDTH) >
-      UNFREEZE_RADIUS
+      UNFREEZE_RADIUS_CLIENT
     ) {
       this.send(ws, { t: 'unfreeze_result', ok: false, reason: 'out_of_range' });
+      return;
+    }
+    if (
+      this.walls.length > 0 &&
+      pathCrossesWall(
+        this.walls,
+        savior.position.x,
+        savior.position.z,
+        victim.position.x,
+        victim.position.z,
+      )
+    ) {
+      this.send(ws, { t: 'unfreeze_result', ok: false, reason: 'wall_in_way' });
       return;
     }
     victim.frozen = false;
@@ -358,13 +377,28 @@ export class Room implements DurableObject {
     });
   }
 
-  private canTag(attacker: PlayerState, victim: PlayerState): boolean {
+  private canTag(attacker: PlayerState, victim: PlayerState, radius: number): boolean {
     if (attacker.team === victim.team) return false;
     if (attacker.frozen) return false;
     if (victim.frozen) return false;
     if (this.phase !== `turn_${attacker.team}`) return false;
     const d = topologyDistance(attacker.position, victim.position, this.topology, WORLD_WIDTH);
-    return d <= TAG_RADIUS;
+    if (d > radius) return false;
+    // A wall between them blocks the tag even if the radius reaches. Bots
+    // and humans both go through this check, so neither can freeze through
+    // a wall.
+    if (
+      this.walls.length > 0 &&
+      pathCrossesWall(
+        this.walls,
+        attacker.position.x,
+        attacker.position.z,
+        victim.position.x,
+        victim.position.z,
+      )
+    )
+      return false;
+    return true;
   }
 
   private tally(team: Team): number {
@@ -539,16 +573,37 @@ export class Room implements DurableObject {
       }
       mind.engagedTargetId = target ? target.id : null;
 
+      // Scan for a frozen teammate to rescue. Rescue is allowed in any phase
+      // (unlike tagging) so we always consider it. Priority later: flee >
+      // rescue > chase > patrol.
+      let rescueTarget: PlayerState | null = null;
+      let rescueDist = Infinity;
+      for (const other of this.players.values()) {
+        if (other.id === bot.id) continue;
+        if (other.team !== bot.team) continue;
+        if (!other.frozen) continue;
+        const d = topologyDistance(bot.position, other.position, this.topology, WORLD_WIDTH);
+        if (d < BOT_VISION_RADIUS && d < rescueDist) {
+          rescueDist = d;
+          rescueTarget = other;
+        }
+      }
+
       const chasing = target !== null && enemyDist < BOT_VISION_RADIUS && active === bot.team;
       const fleeing =
         target !== null && enemyDist < BOT_VISION_RADIUS && active && active !== bot.team;
+      const rescuing = rescueTarget !== null;
 
       let dir = { x: 0, z: 0 };
-      if (chasing && target) {
-        dir = unitDelta(bot.position, target.position);
-      } else if (fleeing && target) {
+      if (fleeing && target) {
+        // Survival first. A bot chased by an active-turn enemy runs even if
+        // a teammate is frozen nearby.
         const away = unitDelta(target.position, bot.position);
         dir = away;
+      } else if (rescuing && rescueTarget) {
+        dir = unitDelta(bot.position, rescueTarget.position);
+      } else if (chasing && target) {
+        dir = unitDelta(bot.position, target.position);
       } else {
         if (now >= mind.patrolUntil || nearTarget(bot.position, mind.patrolTarget)) {
           mind.patrolTarget = this.randomPatrolPoint();
@@ -572,11 +627,14 @@ export class Room implements DurableObject {
 
       // Bots sprint when engaged and the target is within striking distance,
       // assuming they have energy. Without this they only ever walked and a
-      // sprinting human could never be caught or escape from.
-      const wantSprint =
-        (chasing || fleeing) &&
-        enemyDist < BOT_SPRINT_TRIGGER_RADIUS &&
-        bot.sprintEnergy > MAX_SPRINT * 0.15;
+      // sprinting human could never be caught or escape from. Rescues also
+      // trigger sprint when close to a frozen teammate so saves don't take
+      // forever.
+      const closeEnemyOrRescue =
+        (chasing && enemyDist < BOT_SPRINT_TRIGGER_RADIUS) ||
+        (fleeing && enemyDist < BOT_SPRINT_TRIGGER_RADIUS) ||
+        (rescuing && rescueDist < BOT_SPRINT_TRIGGER_RADIUS);
+      const wantSprint = closeEnemyOrRescue && bot.sprintEnergy > MAX_SPRINT * 0.15;
       const speed = wantSprint ? SPRINT_SPEED : WALK_SPEED;
       const step = speed * dt;
       // Try the straight-ahead move first. If a wall blocks it, try sliding
@@ -638,13 +696,44 @@ export class Room implements DurableObject {
         bot.yaw = Math.atan2(-dir.x, -dir.z);
       }
 
-      if (chasing && target && enemyDist <= TAG_RADIUS && this.canTag(bot, target)) {
+      // Bot tag: strict radius, no lag to compensate for. canTag also blocks
+      // through-wall tags so a bot can't freeze someone on the other side of
+      // a maze segment.
+      if (
+        chasing &&
+        target &&
+        enemyDist <= TAG_RADIUS_BOT &&
+        this.canTag(bot, target, TAG_RADIUS_BOT)
+      ) {
         target.frozen = true;
         this.broadcast({
           t: 'event',
           kind: { kind: 'tagged', attackerId: bot.id, victimId: target.id, team: bot.team },
         });
         this.checkWin();
+      }
+
+      // Bot rescue: when a frozen teammate is within UNFREEZE_RADIUS_BOT and
+      // not blocked by a wall, unfreeze them. Mirrors what a human would do
+      // via the onUnfreeze handler.
+      if (
+        rescuing &&
+        rescueTarget &&
+        rescueDist <= UNFREEZE_RADIUS_BOT &&
+        (this.walls.length === 0 ||
+          !pathCrossesWall(
+            this.walls,
+            bot.position.x,
+            bot.position.z,
+            rescueTarget.position.x,
+            rescueTarget.position.z,
+          ))
+      ) {
+        rescueTarget.frozen = false;
+        this.broadcast({
+          t: 'event',
+          kind: { kind: 'saved', saviorId: bot.id, victimId: rescueTarget.id },
+        });
       }
 
       // Mirror the human sprint energy model so a bot that just sprinted has

@@ -35,8 +35,13 @@ const RoomClientScript := preload("res://scripts/network/room_client.gd")
 
 const BOT_COUNT_PER_TEAM := 3
 const SPAWN_RADIUS := 2.5
-const CONTACT_RADIUS := 1.2
-const CONTACT_COOLDOWN_S := 0.6
+const CONTACT_RADIUS := 1.4
+# Short cooldown only to keep one physics frame from firing the same tag
+# repeatedly. The server already de-dupes via its own cooldown / frozen state
+# checks, so we don't need a long client-side gate that would suppress
+# legitimate retries when the first attempt fell just outside the server's
+# tag radius due to interpolation lag.
+const CONTACT_COOLDOWN_S := 0.15
 const INPUT_TICK_HZ := 20.0
 const INPUT_TICK_PERIOD := 1.0 / INPUT_TICK_HZ
 

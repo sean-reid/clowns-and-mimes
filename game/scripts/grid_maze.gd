@@ -414,7 +414,11 @@ const MOBIUS_HALF_X := 80.0
 const MOBIUS_HALF_Z := 20.0
 
 static func _mobius_fundamental_neighbor(cell: int, dir: int, fcols: int, rows: int) -> int:
-	# Pure-modular x wrap within the fundamental half; z hard-bounded.
+	# Möbius identification on the x-wrap: col fcols-1's east neighbour is
+	# col 0 at row (rows - 1 - r). z is hard-bounded. The mirrored right
+	# half of the cover only lines up at the seam if the fundamental DFS
+	# uses this flip; a plain cylinder wrap leaves mismatched openings at
+	# x = 0 in the cover and can disconnect the two halves.
 	var cc: int = cell % fcols
 	var cr: int = cell / fcols
 	var nc: int = cc
@@ -427,10 +431,14 @@ static func _mobius_fundamental_neighbor(cell: int, dir: int, fcols: int, rows: 
 		nr = cr + 1
 	elif dir == DIR_SOUTH:
 		nr = cr - 1
-	if nc < 0 or nc >= fcols:
-		nc = posmod(nc, fcols)
 	if nr < 0 or nr >= rows:
 		return -1
+	var flip_row: bool = false
+	if nc < 0 or nc >= fcols:
+		nc = posmod(nc, fcols)
+		flip_row = true
+	if flip_row:
+		nr = rows - 1 - nr
 	return nc + nr * fcols
 
 static func _generate_mobius(seed_value: int) -> Array:
@@ -439,7 +447,8 @@ static func _generate_mobius(seed_value: int) -> Array:
 	var fcols: int = cols / 2
 	var total: int = cols * rows
 	var ftotal: int = fcols * rows
-	var cell_size: float = (2.0 * MOBIUS_HALF_X) / float(cols)
+	var cell_x: float = (2.0 * MOBIUS_HALF_X) / float(cols)
+	var cell_z: float = (2.0 * MOBIUS_HALF_Z) / float(rows)
 	var half_x: float = MOBIUS_HALF_X
 	var half_z: float = MOBIUS_HALF_Z
 
@@ -518,20 +527,27 @@ static func _generate_mobius(seed_value: int) -> Array:
 			var north_closed: bool = (openings[id] & (1 << DIR_NORTH)) == 0
 			var is_last_col: bool = c == cols - 1
 			var is_last_row: bool = r == rows - 1
-			if east_closed and not is_last_col:
-				var x: float = float(c + 1) * cell_size - half_x
-				var z0: float = float(r) * cell_size - half_z
-				var z1: float = float(r + 1) * cell_size - half_z
-				out.append({"ax": x, "az": z0, "bx": x, "bz": z1})
+			if east_closed:
+				var z0: float = float(r) * cell_z - half_z
+				var z1: float = float(r + 1) * cell_z - half_z
+				if is_last_col:
+					# Cover seam: emit at both x = +halfX and x = -halfX so the
+					# player gets blocked approaching from either side
+					# (pathCrossesWall uses pre-wrap coordinates).
+					out.append({"ax": half_x, "az": z0, "bx": half_x, "bz": z1})
+					out.append({"ax": -half_x, "az": z0, "bx": -half_x, "bz": z1})
+				else:
+					var x: float = float(c + 1) * cell_x - half_x
+					out.append({"ax": x, "az": z0, "bx": x, "bz": z1})
 			if north_closed and not is_last_row:
-				var z: float = float(r + 1) * cell_size - half_z
-				var x0: float = float(c) * cell_size - half_x
-				var x1: float = float(c + 1) * cell_size - half_x
+				var z: float = float(r + 1) * cell_z - half_z
+				var x0: float = float(c) * cell_x - half_x
+				var x1: float = float(c + 1) * cell_x - half_x
 				out.append({"ax": x0, "az": z, "bx": x1, "bz": z})
 	# Hard top and bottom boundary walls.
 	for c in range(cols):
-		var x0: float = float(c) * cell_size - half_x
-		var x1: float = float(c + 1) * cell_size - half_x
+		var x0: float = float(c) * cell_x - half_x
+		var x1: float = float(c + 1) * cell_x - half_x
 		out.append({"ax": x0, "az": half_z, "bx": x1, "bz": half_z})
 		out.append({"ax": x0, "az": -half_z, "bx": x1, "bz": -half_z})
 	return out

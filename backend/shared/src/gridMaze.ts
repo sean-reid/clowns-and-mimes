@@ -488,21 +488,34 @@ export const MOBIUS_GRID_X = 2 * GRID_MAZE_N;
 export const MOBIUS_GRID_Z = GRID_MAZE_N;
 
 /**
- * Möbius strip maze rendered as the cylindrical double cover. Generates
- * a DFS spanning tree on the left half (cols 0..N-1) with x wrapping
- * pure-modular to itself, then mirrors the openings across z to fill
- * the right half (cols N..2N-1). x wraps modular at 2 * MOBIUS_HALF_X;
- * z is hard-bounded by top/bottom walls. The Möbius "twist" lives in
- * the z-mirror that fills the right half - walking from x = 0 into the
- * right half is the same as walking into the z-flipped image of the
- * left, exactly the Möbius identification (x, z) ~ (x + L, -z).
+ * Möbius strip maze rendered as the cylindrical double cover.
+ *
+ * Step 1: DFS spanning tree on the FUNDAMENTAL Möbius (N cols x Z rows),
+ *   with the Möbius identification on the x-edges: col N-1's east neighbour
+ *   is col 0 at row (rows - 1 - r). z is hard-bounded.
+ * Step 2: Unfold into a 2N x Z cover. Left half is the fundamental
+ *   verbatim. Right half is the z-mirror of the fundamental: the cell
+ *   at cover (N + c, r) is the fundamental cell at (c, rows - 1 - r) with
+ *   north / south openings swapped.
+ *
+ * Why the fundamental must use the Möbius wrap, not a plain cylinder
+ * wrap: the cover at the middle seam (x = 0, cover cols N-1 / N) must
+ * have matching openings. Cover[N-1, r].east comes from fundamental
+ * [N-1, r].east; cover[N, r].west is taken from the mirror, which sets
+ * it to fundamental[0, rows - 1 - r].west. The DFS pairs those two
+ * exactly when col N-1's east-neighbour is treated as col 0 at row
+ * (rows - 1 - r). If the fundamental wraps as a cylinder instead, the
+ * openings at the cover seam land on mismatched rows: visible walls
+ * disagree with walkability and the two halves can come out as
+ * unreachable islands.
  */
 export function generateMobiusGridWalls(seed: number): WallSegment[] {
   const cols = MOBIUS_GRID_X;
   const rows = MOBIUS_GRID_Z;
   const fundamentalCols = cols / 2; // = N, the left-half count
   const total = cols * rows;
-  const cellSize = (2 * MOBIUS_HALF_X) / cols;
+  const cellX = (2 * MOBIUS_HALF_X) / cols;
+  const cellZ = (2 * MOBIUS_HALF_Z) / rows;
   const halfX = MOBIUS_HALF_X;
   const halfZ = MOBIUS_HALF_Z;
 
@@ -512,9 +525,6 @@ export function generateMobiusGridWalls(seed: number): WallSegment[] {
     return rng;
   };
 
-  // Build the fundamental-half maze: DFS over the left N cols, treating
-  // the left and right ends of this half as a torus seam (x wraps pure
-  // modular within the fundamental). z is hard-bounded.
   const fundamentalNeighbor = (cell: number, dir: number): { cell: number; dir: number } | null => {
     const cc = cell % fundamentalCols;
     const cr = Math.floor(cell / fundamentalCols);
@@ -524,9 +534,13 @@ export function generateMobiusGridWalls(seed: number): WallSegment[] {
     else if (dir === DIR_WEST) nc = cc - 1;
     else if (dir === DIR_NORTH) nr = cr + 1;
     else if (dir === DIR_SOUTH) nr = cr - 1;
-    if (nc < 0 || nc >= fundamentalCols)
-      nc = ((nc % fundamentalCols) + fundamentalCols) % fundamentalCols;
     if (nr < 0 || nr >= rows) return null;
+    let flipRow = false;
+    if (nc < 0 || nc >= fundamentalCols) {
+      nc = ((nc % fundamentalCols) + fundamentalCols) % fundamentalCols;
+      flipRow = true;
+    }
+    if (flipRow) nr = rows - 1 - nr;
     return { cell: nc + nr * fundamentalCols, dir };
   };
   const fundamentalOpenings = new Uint8Array(fundamentalCols * rows);
@@ -568,22 +582,21 @@ export function generateMobiusGridWalls(seed: number): WallSegment[] {
     fundamentalOpenings[pick.cell] |= 1 << oppositeDir(pick.dir);
   }
 
-  // Expand to the double cover: left half = fundamental, right half =
-  // z-mirror of fundamental. The mirror swaps north <-> south openings.
   const openings = new Uint8Array(total);
   for (let r = 0; r < rows; r += 1) {
     for (let c = 0; c < fundamentalCols; c += 1) {
       openings[c + r * cols] = fundamentalOpenings[c + r * fundamentalCols]!;
-    }
-    for (let c = 0; c < fundamentalCols; c += 1) {
       const mirroredR = rows - 1 - r;
       const fundOpening = fundamentalOpenings[c + r * fundamentalCols]!;
       openings[c + fundamentalCols + mirroredR * cols] = swapNorthSouth(fundOpening);
     }
   }
 
-  // Emit walls. East/north of each cell; skip the right-edge seam (last
-  // col's east is the x wrap, open). Add hard top/bottom walls explicitly.
+  // Interior walls + the outer cover seam at x = +-halfX. The cover
+  // seam is one logical edge but lives at both ends of the cover, so
+  // when col 2N-1's east is closed we emit a wall at x = halfX and a
+  // mirror at x = -halfX so collision blocks the player approaching
+  // from either side (pathCrossesWall tests pre-wrap coordinates).
   const out: WallSegment[] = [];
   for (let r = 0; r < rows; r += 1) {
     for (let c = 0; c < cols; c += 1) {
@@ -592,23 +605,28 @@ export function generateMobiusGridWalls(seed: number): WallSegment[] {
       const northClosed = (openings[id]! & (1 << DIR_NORTH)) === 0;
       const isLastCol = c === cols - 1;
       const isLastRow = r === rows - 1;
-      if (eastClosed && !isLastCol) {
-        const x = (c + 1) * cellSize - halfX;
-        const z0 = r * cellSize - halfZ;
-        const z1 = (r + 1) * cellSize - halfZ;
-        out.push({ ax: x, az: z0, bx: x, bz: z1 });
+      if (eastClosed) {
+        const z0 = r * cellZ - halfZ;
+        const z1 = (r + 1) * cellZ - halfZ;
+        if (isLastCol) {
+          out.push({ ax: halfX, az: z0, bx: halfX, bz: z1 });
+          out.push({ ax: -halfX, az: z0, bx: -halfX, bz: z1 });
+        } else {
+          const x = (c + 1) * cellX - halfX;
+          out.push({ ax: x, az: z0, bx: x, bz: z1 });
+        }
       }
       if (northClosed && !isLastRow) {
-        const z = (r + 1) * cellSize - halfZ;
-        const x0 = c * cellSize - halfX;
-        const x1 = (c + 1) * cellSize - halfX;
+        const z = (r + 1) * cellZ - halfZ;
+        const x0 = c * cellX - halfX;
+        const x1 = (c + 1) * cellX - halfX;
         out.push({ ax: x0, az: z, bx: x1, bz: z });
       }
     }
   }
   for (let c = 0; c < cols; c += 1) {
-    const x0 = c * cellSize - halfX;
-    const x1 = (c + 1) * cellSize - halfX;
+    const x0 = c * cellX - halfX;
+    const x1 = (c + 1) * cellX - halfX;
     out.push({ ax: x0, az: halfZ, bx: x1, bz: halfZ });
     out.push({ ax: x0, az: -halfZ, bx: x1, bz: -halfZ });
   }

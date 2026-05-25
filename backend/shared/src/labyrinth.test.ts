@@ -1,5 +1,13 @@
 import { describe, expect, it } from 'vitest';
-import { gapJitter, generateWalls, pathCrossesWall } from './labyrinth.ts';
+import {
+  gapJitter,
+  generateWalls,
+  pathCrossesWall,
+  pointBlockedByWall,
+  PLAYER_RADIUS,
+  WALL_CLEARANCE,
+  type WallSegment,
+} from './labyrinth.ts';
 
 describe('gapJitter', () => {
   it('returns 0 or 1', () => {
@@ -129,5 +137,49 @@ describe('generateWalls (plane, torus, klein use grid maze)', () => {
     const t = generateWalls(2026, 'torus');
     const k = generateWalls(2026, 'klein');
     expect(t).not.toEqual(k);
+  });
+});
+
+describe('pointBlockedByWall', () => {
+  const wall: WallSegment = { ax: 0, az: -5, bx: 0, bz: 5 };
+
+  it('rejects a point sitting directly on the wall segment', () => {
+    expect(pointBlockedByWall([wall], 0, 0)).toBe(true);
+  });
+
+  it('rejects a point closer than WALL_CLEARANCE perpendicular to the wall', () => {
+    // A player disc just inside the clearance band overlaps the wall body.
+    expect(pointBlockedByWall([wall], WALL_CLEARANCE - 0.05, 0)).toBe(true);
+  });
+
+  it('accepts a point one player diameter clear of the wall', () => {
+    // Just outside clearance: collision system would not stop a player here,
+    // so neither should the spawn validator.
+    expect(pointBlockedByWall([wall], WALL_CLEARANCE + 0.05, 0)).toBe(false);
+    expect(pointBlockedByWall([wall], -WALL_CLEARANCE - 0.05, 0)).toBe(false);
+  });
+
+  it('accepts a point well past the wall endpoint', () => {
+    // The segment runs z in [-5, 5]; (0, 10) is past the end with no nearby
+    // wall body. Distance to segment is 5, much more than WALL_CLEARANCE.
+    expect(pointBlockedByWall([wall], 0, 10)).toBe(false);
+  });
+
+  it('returns false for an empty wall list', () => {
+    expect(pointBlockedByWall([], 0, 0)).toBe(false);
+  });
+
+  it('flags any spawn point inside a generated plane maze that sits on a wall', () => {
+    // For a plane maze, every emitted wall segment's midpoint should be
+    // flagged as blocked. Sanity check that the predicate sees real maze
+    // walls.
+    const walls = generateWalls(1, 'plane');
+    expect(walls.length).toBeGreaterThan(0);
+    for (const w of walls) {
+      const mx = (w.ax + w.bx) / 2;
+      const mz = (w.az + w.bz) / 2;
+      expect(pointBlockedByWall(walls, mx, mz)).toBe(true);
+    }
+    void PLAYER_RADIUS;
   });
 });

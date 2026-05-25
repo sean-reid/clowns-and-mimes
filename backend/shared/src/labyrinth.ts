@@ -155,6 +155,19 @@ export function pathCrossesWall(
   return false;
 }
 
+/**
+ * True if a player whose collision disc is centered at (x, z) would
+ * overlap any wall in `walls`. Uses the same WALL_CLEARANCE the runtime
+ * collision test uses, so a spawn that passes this predicate is also a
+ * valid resting position.
+ */
+export function pointBlockedByWall(walls: readonly WallSegment[], x: number, z: number): boolean {
+  for (const w of walls) {
+    if (pointToSegmentDistance(x, z, w) < WALL_CLEARANCE) return true;
+  }
+  return false;
+}
+
 export function topologyExpectedWidth(_t: Topology): number {
   return WORLD_WIDTH;
 }

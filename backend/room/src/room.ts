@@ -10,7 +10,13 @@ import type {
 } from '@cm/shared';
 import { BATTLE_CRY_COUNT, PROTOCOL_VERSION } from '@cm/shared';
 import { topologyDistance, wrapPosition, wrappedUnitDelta } from '@cm/shared/topology';
-import { generateWalls, pathCrossesWall, type WallSegment } from '@cm/shared/labyrinth';
+import {
+  generateWalls,
+  pathCrossesWall,
+  pointBlockedByWall,
+  PLAYER_RADIUS,
+  type WallSegment,
+} from '@cm/shared/labyrinth';
 import {
   stepMovement,
   WALK_SPEED,
@@ -394,28 +400,47 @@ export class Room implements DurableObject {
   }
 
   /**
-   * Pick a spawn point inside the team's open cell that does not overlap any
-   * existing player. Tries up to 16 jitter samples; falls back to the last
-   * sample if all are taken (the room is then so full that overlap is
-   * unavoidable anyway).
+   * Pick a spawn point that (a) is not inside a wall, and (b) does not
+   * overlap any existing player. Tries up to SPAWN_PICK_ATTEMPTS jitter
+   * samples around the team center, then falls back to a hex-spiral search
+   * outward if every jitter sample is blocked. The final fallback (the
+   * team center itself) is only returned when the team area is so cramped
+   * that no spawn can satisfy both constraints, and downstream collision
+   * resolution will nudge the player out of any remaining overlap on the
+   * next tick.
    */
   private pickSpawnPosition(team: Team): { x: number; z: number } {
-    const PERSONAL_SPACE_SQ = 1.0;
-    let candidate = jitteredSpawn(team);
-    for (let attempt = 0; attempt < 16; attempt += 1) {
-      let blocked = false;
+    const minPlayerSep = 2 * PLAYER_RADIUS + 0.2;
+    const minPlayerSepSq = minPlayerSep * minPlayerSep;
+    const center = teamSpawnCenter(team);
+    const isValid = (x: number, z: number): boolean => {
+      if (this.walls.length > 0 && pointBlockedByWall(this.walls, x, z)) return false;
       for (const other of this.players.values()) {
-        const dx = other.position.x - candidate.x;
-        const dz = other.position.z - candidate.z;
-        if (dx * dx + dz * dz < PERSONAL_SPACE_SQ) {
-          blocked = true;
-          break;
-        }
+        const dx = other.position.x - x;
+        const dz = other.position.z - z;
+        if (dx * dx + dz * dz < minPlayerSepSq) return false;
       }
-      if (!blocked) return candidate;
-      candidate = jitteredSpawn(team);
+      return true;
+    };
+    for (let attempt = 0; attempt < 24; attempt += 1) {
+      const candidate = jitteredSpawn(team);
+      if (isValid(candidate.x, candidate.z)) return candidate;
     }
-    return candidate;
+    // Deterministic outward sweep: rings of 6, 12, 18 candidates at
+    // increasing radius around the team center. Catches the case where
+    // the team's open cell is densely packed and the random jitter keeps
+    // landing on overlap.
+    for (let ring = 1; ring <= 6; ring += 1) {
+      const radius = ring * (2 * PLAYER_RADIUS + 0.1);
+      const count = 6 * ring;
+      for (let k = 0; k < count; k += 1) {
+        const angle = (k / count) * Math.PI * 2;
+        const x = center.x + Math.cos(angle) * radius;
+        const z = center.z + Math.sin(angle) * radius;
+        if (isValid(x, z)) return { x, z };
+      }
+    }
+    return center;
   }
 
   setTopology(t: Topology): void {
@@ -952,7 +977,7 @@ export class Room implements DurableObject {
             bot.position.z,
           )
         ) {
-          bot.position = jitteredSpawn(bot.team);
+          bot.position = this.pickSpawnPosition(bot.team);
         }
         mind.patrolTarget = this.randomPatrolPoint();
         mind.patrolUntil = now + BOT_PATROL_RETARGET_MS;
@@ -1103,8 +1128,12 @@ function nearTarget(
 // stays clear of wall seams. Cell centers in a 10x10 grid (cell size 8) are at
 // every (+-4 + k*8) coord; mimes get (-12, 4) and clowns (12, 4) - two cells
 // apart in the x direction, both well off the origin grid line.
+function teamSpawnCenter(team: Team): { x: number; z: number } {
+  return team === 'mime' ? { x: -12, z: 4 } : { x: 12, z: 4 };
+}
+
 function jitteredSpawn(team: Team): { x: number; z: number } {
-  const center = team === 'mime' ? { x: -12, z: 4 } : { x: 12, z: 4 };
+  const center = teamSpawnCenter(team);
   const angle = Math.random() * Math.PI * 2;
   const radius = Math.random() * 2.5;
   return {

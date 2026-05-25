@@ -52,7 +52,7 @@ export interface RoomSnapshot {
   winner?: Team;
 }
 
-export type Topology = 'plane' | 'torus' | 'mobius' | 'klein' | 'genus2';
+export type Topology = 'plane' | 'torus' | 'mobius' | 'klein';
 
 export type ClientToServer =
   | { t: 'join'; v: number; name: string; preferTeam?: Team }

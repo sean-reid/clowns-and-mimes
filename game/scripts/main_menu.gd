@@ -32,7 +32,6 @@ func _populate_topologies() -> void:
 	topology_picker.add_item("Torus", GameState.Topology.TORUS)
 	topology_picker.add_item("Möbius strip", GameState.Topology.MOBIUS)
 	topology_picker.add_item("Klein bottle", GameState.Topology.KLEIN)
-	topology_picker.add_item("Double torus", GameState.Topology.GENUS2)
 
 func _randomize_name() -> void:
 	username_input.text = UsernameGenerator.generate()

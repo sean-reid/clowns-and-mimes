@@ -71,9 +71,7 @@ function chooseGapIndices(seed: number, ringIndex: number): Set<number> {
  *   - Plane: closed rectangle with boundary walls.
  *   - Torus and Klein: boundary walls skipped because the wrap folds both
  *     edges to the same line.
- *   - Double torus (genus2): grid inscribed in the octagonal playfield;
- *     cells whose centres fall outside the polygon are masked out and the
- *     boundary itself is the identification seam (no perimeter walls).
+ *   - Möbius: cylindrical double cover with hard top/bottom walls.
  *
  * The concentric-ring layout is no longer dispatched anywhere but is kept in
  * the module (chooseGapIndices, RING_RADII, gapJitter) so a future variant

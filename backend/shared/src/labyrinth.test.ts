@@ -52,15 +52,6 @@ describe('generateWalls', () => {
     expect(walls.length).toBeGreaterThan(50);
     expect(walls.length).toBeLessThan(300);
   });
-
-  it('produces axis-aligned walls on a double torus (octagon-inscribed grid)', () => {
-    const walls = generateWalls(7, 'genus2');
-    expect(walls.length).toBeGreaterThan(0);
-    for (const w of walls) {
-      const axisAligned = w.ax === w.bx || w.az === w.bz;
-      expect(axisAligned).toBe(true);
-    }
-  });
 });
 
 describe('pathCrossesWall', () => {
@@ -107,12 +98,6 @@ describe('generateWalls (plane, torus, klein use grid maze)', () => {
     expect(onRight).toBe(true);
     expect(onTop).toBe(true);
     expect(onBottom).toBe(true);
-  });
-
-  it('produces different walls for double torus and torus at the same seed', () => {
-    const g = generateWalls(2026, 'genus2');
-    const t = generateWalls(2026, 'torus');
-    expect(g).not.toEqual(t);
   });
 
   it('skips walls along the wrap seam', () => {

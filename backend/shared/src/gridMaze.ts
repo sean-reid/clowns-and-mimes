@@ -12,11 +12,7 @@
 //     visually double up).
 //   - Klein: same as torus but the x-seam flips the row index, matching the
 //     Klein topology adapter.
-//   - Genus-2 ("double torus"): cells are inscribed in the octagon's
-//     bounding box; cells whose centres fall outside the polygon are
-//     masked out and a DFS spanning tree runs only on the walkable cells
-//     (see generateGenus2GridWalls). The octagon's boundary is the
-//     identification seam itself, so no perimeter walls are emitted.
+//   - Möbius: cylindrical double cover (see generateMobiusGridWalls).
 //
 // Determinism: GDScript and TS must produce the same wall list for the same
 // (seed, topology, gridN). Both use the same 32-bit LCG and traverse
@@ -25,7 +21,6 @@
 import type { Topology } from './protocol.ts';
 import { WORLD_WIDTH } from './topology.ts';
 import type { WallSegment } from './labyrinth.ts';
-import { OCTAGON_CIRCUMRADIUS, pointInOctagon } from './genus2.ts';
 import { MOBIUS_HALF_X, MOBIUS_HALF_Z } from './mobius.ts';
 
 export const GRID_MAZE_N = 10;
@@ -48,9 +43,6 @@ export function generateGridMazeWalls(
 ): WallSegment[] {
   if (topology === 'klein') {
     return generateKleinGridWalls(seed, gridN);
-  }
-  if (topology === 'genus2') {
-    return generateGenus2GridWalls(seed);
   }
   if (topology === 'mobius') {
     return generateMobiusGridWalls(seed);
@@ -333,144 +325,6 @@ function emitKleinExpandedWalls(openings: Uint8Array, gridN: number): WallSegmen
         const z = (r + 1) * cell - halfZ;
         const x0 = c * cell - halfX;
         const x1 = (c + 1) * cell - halfX;
-        out.push({ ax: x0, az: z, bx: x1, bz: z });
-      }
-    }
-  }
-  return out;
-}
-
-/**
- * Maze cell count along each axis of the octagon's bounding box. Cells
- * are inscribed in the [-R, R] x [-R, R] bounding box; cells whose centres
- * fall outside the octagonal playfield are masked out (treated as
- * non-walkable, no maze edges emitted around them). The walkable cells
- * form an octagonal region of the grid.
- */
-export const GENUS2_GRID_N = 12;
-
-/**
- * Octagon maze. A square N x N grid is inscribed in the octagon's
- * bounding box. Cells whose centres fall inside the octagon are
- * walkable and participate in the DFS spanning tree; cells outside the
- * octagon are skipped. Edges between two walkable cells become maze
- * walls when the spanning tree didn't open them. The octagon's
- * boundary itself is an identification seam (no perimeter walls); cells
- * adjacent to the boundary just have one side open to the wrap.
- *
- * Faces visit order: top-to-bottom, left-to-right walkable cells under
- * the seed LCG, matching what the GDScript mirror does.
- */
-export function generateGenus2GridWalls(seed: number): WallSegment[] {
-  const N = GENUS2_GRID_N;
-  const totalCells = N * N;
-  const cellSize = (2 * OCTAGON_CIRCUMRADIUS) / N;
-  const halfExt = OCTAGON_CIRCUMRADIUS;
-
-  // Pre-compute which cells are walkable (centre inside the octagon).
-  const walkable = new Uint8Array(totalCells);
-  for (let r = 0; r < N; r += 1) {
-    for (let c = 0; c < N; c += 1) {
-      const cx = (c + 0.5) * cellSize - halfExt;
-      const cz = (r + 0.5) * cellSize - halfExt;
-      walkable[c + r * N] = pointInOctagon({ x: cx, z: cz }) ? 1 : 0;
-    }
-  }
-
-  let rng = (seed | 0) >>> 0;
-  const nextRand = (): number => {
-    rng = ((Math.imul(rng, 1664525) >>> 0) + 1013904223) >>> 0;
-    return rng;
-  };
-
-  const visited = new Uint8Array(totalCells);
-  const openings = new Uint8Array(totalCells);
-
-  const cellNeighbor = (cell: number, dir: number): number | null => {
-    const cc = cell % N;
-    const cr = Math.floor(cell / N);
-    let nc = cc;
-    let nr = cr;
-    if (dir === DIR_EAST) nc = cc + 1;
-    else if (dir === DIR_WEST) nc = cc - 1;
-    else if (dir === DIR_NORTH) nr = cr + 1;
-    else if (dir === DIR_SOUTH) nr = cr - 1;
-    if (nc < 0 || nc >= N || nr < 0 || nr >= N) return null;
-    const idx = nc + nr * N;
-    return walkable[idx] ? idx : null;
-  };
-
-  // Start the DFS at the first walkable cell to keep the maze deterministic.
-  let start = -1;
-  for (let i = 0; i < totalCells; i += 1) {
-    if (walkable[i]) {
-      start = i;
-      break;
-    }
-  }
-  if (start < 0) return [];
-
-  visited[start] = 1;
-  const stack: number[] = [start];
-  while (stack.length > 0) {
-    const cur = stack[stack.length - 1]!;
-    const candidates: number[] = [];
-    for (let dir = 0; dir < 4; dir += 1) {
-      const nb = cellNeighbor(cur, dir);
-      if (nb === null) continue;
-      if (visited[nb]) continue;
-      candidates.push(dir);
-    }
-    if (candidates.length === 0) {
-      stack.pop();
-      continue;
-    }
-    const pickDir = candidates[nextRand() % candidates.length]!;
-    const nb = cellNeighbor(cur, pickDir)!;
-    openings[cur] |= 1 << pickDir;
-    openings[nb] |= 1 << oppositeDir(pickDir);
-    visited[nb] = 1;
-    stack.push(nb);
-  }
-
-  // Braid: knock down one extra wall at each dead end so the maze loops.
-  for (let cell = 0; cell < totalCells; cell += 1) {
-    if (!walkable[cell]) continue;
-    if (popCountNibble(openings[cell]!) >= 2) continue;
-    const closedNeighbors: { dir: number; cell: number }[] = [];
-    for (let dir = 0; dir < 4; dir += 1) {
-      if ((openings[cell]! & (1 << dir)) !== 0) continue;
-      const nb = cellNeighbor(cell, dir);
-      if (nb === null) continue;
-      closedNeighbors.push({ dir, cell: nb });
-    }
-    if (closedNeighbors.length === 0) continue;
-    const pick = closedNeighbors[nextRand() % closedNeighbors.length]!;
-    openings[cell] |= 1 << pick.dir;
-    openings[pick.cell] |= 1 << oppositeDir(pick.dir);
-  }
-
-  // Emit walls between two walkable cells whose shared edge is closed.
-  // The octagon boundary is an identification seam, so no perimeter walls.
-  const out: WallSegment[] = [];
-  for (let r = 0; r < N; r += 1) {
-    for (let c = 0; c < N; c += 1) {
-      const id = c + r * N;
-      if (!walkable[id]) continue;
-      const eastClosed = (openings[id]! & (1 << DIR_EAST)) === 0;
-      const northClosed = (openings[id]! & (1 << DIR_NORTH)) === 0;
-      const eastNbr = cellNeighbor(id, DIR_EAST);
-      const northNbr = cellNeighbor(id, DIR_NORTH);
-      if (eastClosed && eastNbr !== null) {
-        const x = (c + 1) * cellSize - halfExt;
-        const z0 = r * cellSize - halfExt;
-        const z1 = (r + 1) * cellSize - halfExt;
-        out.push({ ax: x, az: z0, bx: x, bz: z1 });
-      }
-      if (northClosed && northNbr !== null) {
-        const z = (r + 1) * cellSize - halfExt;
-        const x0 = c * cellSize - halfExt;
-        const x1 = (c + 1) * cellSize - halfExt;
         out.push({ ax: x0, az: z, bx: x1, bz: z });
       }
     }

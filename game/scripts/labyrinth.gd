@@ -5,9 +5,7 @@ extends Node3D
 ##   * Plane: closed rectangle with boundary walls.
 ##   * Torus and Klein: wrap seams have no walls so the topology folds both
 ##     edges to the same line.
-##   * Double torus (genus2): grid inscribed in the octagonal playfield;
-##     cells outside the polygon are masked, and the octagon's 8 sides
-##     identify pairwise so the boundary itself is open.
+##   * Möbius: cylindrical double cover with hard top/bottom walls.
 ##
 ## The ring layout (_build_ring, _add_arc_wall) is no longer dispatched but is
 ## kept for an experimental lobby mode that may opt back in.
@@ -131,15 +129,6 @@ func _build_wrap_tiles() -> void:
 	var tiles_root := Node3D.new()
 	tiles_root.name = "WrapTiles"
 	add_child(tiles_root)
-	if topo_name == "genus2":
-		# Genus-2 fundamental polygon: each of the 8 octagon sides identifies
-		# to its mate (k XOR 2) with the parameter reversed. The portal
-		# transform per side is a rigid affine isometry (90 deg rotation +
-		# translation) that places the mate side's interior just outside
-		# the source side, so the player sees the destination geometry
-		# ahead of the wrap_step teleport.
-		_build_genus2_portal_tiles(tiles_root)
-		return
 	# Torus / Klein / Möbius: 3x3 flat-translated wrap-tile lattice. Klein
 	# and Möbius bake their orientation flip into the maze geometry (right
 	# half is the z-mirror of the left), so a pure translation works for
@@ -157,22 +146,6 @@ func _build_wrap_tiles() -> void:
 			tile.position = Vector3(float(dx) * ext_x, 0.0, float(dz) * ext_z)
 			tiles_root.add_child(tile)
 			_populate_wrap_tile(tile)
-
-
-func _build_genus2_portal_tiles(tiles_root: Node3D) -> void:
-	# Per-side portal: render the playfield's geometry transformed by the
-	# side's gluing isometry. The 8 tiles together surround the octagon
-	# so every seam the player can approach has a visible destination
-	# preview, eliminating the position-of-walls jump on a wrap step.
-	for k in 8:
-		var t: Dictionary = topology.portal_transform(k)
-		var tile := Node3D.new()
-		tile.transform = Transform3D(
-			Basis().rotated(Vector3.UP, t["rotation_y"]),
-			Vector3(t["tx"], 0.0, t["tz"]),
-		)
-		tiles_root.add_child(tile)
-		_populate_wrap_tile(tile)
 
 func _populate_wrap_tile(tile: Node3D) -> void:
 	var floor_clone := MeshInstance3D.new()

@@ -92,10 +92,8 @@ export function stepMovement(
       continue;
     }
     if (collidesWithOther(candidate)) continue;
-    // Genus-2 needs the step context (prev -> candidate) so the octagon's
-    // side identification can route the candidate onto the mate side when
-    // it leaves the polygon. Other topologies ignore prev;
-    // wrapPositionFromStep delegates to wrapPosition for everything else.
+    // Möbius uses prev->candidate so the step can be rejected at the hard
+    // z-bounds. Other topologies ignore prev.
     nextPos = wrapPositionFromStep(state.position, candidate, topology, worldWidth);
     break;
   }

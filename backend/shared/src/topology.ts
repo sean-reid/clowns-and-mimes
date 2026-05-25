@@ -1,5 +1,4 @@
 import type { Topology, Vec2 } from './protocol.ts';
-import { genus2Extents, stepAcrossGenus2Boundary, wrapGenus2Point } from './genus2.ts';
 import {
   MOBIUS_HALF_X,
   mobiusExtents,
@@ -11,16 +10,10 @@ export const WORLD_WIDTH = 80;
 
 /**
  * Per-topology playfield extents in world units. Klein doubles x for its
- * z-mirrored second half. Genus2 uses the octagon's bounding box (square
- * around the polygon with circumradius set in genus2.ts). Plane and torus
- * are plain WxW squares.
+ * z-mirrored second half. Plane and torus are plain WxW squares.
  */
 export function topologyExtents(topology: Topology, width: number): { x: number; z: number } {
   if (topology === 'klein') return { x: 2 * width, z: width };
-  if (topology === 'genus2') {
-    void width;
-    return genus2Extents();
-  }
   if (topology === 'mobius') {
     void width;
     return mobiusExtents();
@@ -58,13 +51,6 @@ export function wrapPosition(p: Vec2, topology: Topology, width: number): Vec2 {
         z: wrap(p.z, width),
       };
     }
-    case 'genus2': {
-      // Recovery wrap: a point inside the octagon passes through. A point
-      // outside (shouldn't happen in normal play, but spawn / reconcile
-      // can land off-polygon) gets identified through its crossing side.
-      void width;
-      return wrapGenus2Point(p);
-    }
     case 'mobius': {
       // Möbius strip: x past +/-MOBIUS_HALF_X identifies to the opposite
       // edge with z negated; z stays clamped because top and bottom are
@@ -76,10 +62,9 @@ export function wrapPosition(p: Vec2, topology: Topology, width: number): Vec2 {
 }
 
 /**
- * Step-aware wrap. When motion takes the player from `prev` to `candidate`
- * on the genus-2 surface, route the position through the octagon
- * identification so a seam crossing lands on the mate side. All other
- * topologies ignore `prev` and behave the same as `wrapPosition`.
+ * Step-aware wrap. Only Möbius needs the prev->candidate context (so the
+ * cylindrical double cover's hard z-bounds reject the step instead of
+ * silently clamping). Other topologies behave the same as wrapPosition.
  */
 export function wrapPositionFromStep(
   prev: Vec2,
@@ -87,9 +72,6 @@ export function wrapPositionFromStep(
   topology: Topology,
   width: number,
 ): Vec2 {
-  if (topology === 'genus2') {
-    return stepAcrossGenus2Boundary(prev, candidate);
-  }
   if (topology === 'mobius') {
     return stepAcrossMobiusBoundary(prev, candidate);
   }
@@ -111,13 +93,6 @@ export function topologyDistance(a: Vec2, b: Vec2, topology: Topology, width: nu
       const dx = wrappedDelta(a.x, b.x, 2 * width);
       const dz = wrappedDelta(a.z, b.z, width);
       return Math.hypot(dx, dz);
-    }
-    case 'genus2': {
-      // Octagon distance is Euclidean inside the polygon. Cross-boundary
-      // shortest paths are not yet implemented; sub-octagon queries are
-      // exact and bot vision / tag radius only ever look at small ranges.
-      void width;
-      return Math.hypot(a.x - b.x, a.z - b.z);
     }
     case 'mobius': {
       // Möbius cylindrical double cover: x wraps modular at 2*MOBIUS_HALF_X
@@ -154,15 +129,6 @@ export function wrappedUnitDelta(from: Vec2, to: Vec2, topology: Topology, width
     case 'klein': {
       dx = wrappedDelta(from.x, to.x, 2 * width);
       dz = wrappedDelta(from.z, to.z, width);
-      break;
-    }
-    case 'genus2': {
-      // Octagon: short-range directions use plain Euclidean. Identification
-      // crossings would need shortest-path solving across mate sides; the
-      // gameplay loop only queries this for chase / flee headings within a
-      // small radius, so the approximation is fine.
-      dx = to.x - from.x;
-      dz = to.z - from.z;
       break;
     }
     case 'mobius': {

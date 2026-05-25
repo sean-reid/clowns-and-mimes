@@ -33,14 +33,6 @@ describe('wrapPosition', () => {
     expect(a.x).toBe(0);
     expect(a.z).toBe(-40);
   });
-
-  it('passes interior octagon points through on genus2', () => {
-    // The octagon has circumradius 40 (independent of W); (5, 3) sits
-    // safely inside the polygon centre region.
-    const out = wrapPosition({ x: 5, z: 3 }, 'genus2', W);
-    expect(out.x).toBeCloseTo(5, 6);
-    expect(out.z).toBeCloseTo(3, 6);
-  });
 });
 
 describe('topologyDistance', () => {

@@ -12,7 +12,6 @@
     "./labyrinth": "./src/labyrinth.ts",
     "./gridMaze": "./src/gridMaze.ts",
     "./movement": "./src/movement.ts",
-    "./genus2": "./src/genus2.ts",
     "./mobius": "./src/mobius.ts"
   },
   "scripts": {

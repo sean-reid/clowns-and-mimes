@@ -382,8 +382,8 @@ func _handle_phase_event(phase: String, cry_index: int) -> void:
 	elif phase == "turn_clown":
 		var idx: int = cry_index if cry_index >= 0 else 0
 		hud.flash_battle_cry(CLOWN_BATTLE_CRIES[idx % CLOWN_BATTLE_CRIES.size()], "clown")
-	else:
-		hud.append_log("Phase: %s" % phase)
+	elif phase == "free_roam":
+		hud.flash_disperse()
 
 func _on_room_error(code: String, message: String) -> void:
 	hud.append_log("Server error %s: %s" % [code, message])
@@ -694,7 +694,7 @@ func _on_offline_won(team: String) -> void:
 func _on_offline_phase_changed(phase: int) -> void:
 	match phase:
 		GameRulesScript.Phase.FREE_ROAM:
-			hud.append_log("Free roam begins.")
+			hud.flash_disperse()
 		GameRulesScript.Phase.TURN_MIME:
 			hud.flash_battle_cry(MIME_BATTLE_CRIES[randi() % MIME_BATTLE_CRIES.size()], "mime")
 		GameRulesScript.Phase.TURN_CLOWN:

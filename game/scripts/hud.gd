@@ -137,6 +137,18 @@ func flash_battle_cry(text: String, team: String) -> void:
 	tw.tween_interval(1.2)
 	tw.tween_property(battle_cry_label, "modulate:a", 0.0, 0.6)
 
+## Reuses the centered BattleCry label to flash "DISPERSE!" in white when the
+## free-roam phase begins, so the call to spread out is as visible as a
+## turn battle cry. The small left-side event log gets no entry for this
+## phase - the centered banner is the entire announcement.
+func flash_disperse() -> void:
+	battle_cry_label.text = "DISPERSE!"
+	battle_cry_label.modulate = Color(1.0, 1.0, 1.0, 1.0)
+	var tw := create_tween()
+	tw.tween_property(battle_cry_label, "modulate:a", 1.0, 0.15)
+	tw.tween_interval(1.6)
+	tw.tween_property(battle_cry_label, "modulate:a", 0.0, 0.6)
+
 func show_end(victory: bool) -> void:
 	end_label.text = "Victory!" if victory else "Failure."
 	end_overlay.visible = true

@@ -53,6 +53,7 @@ func _start_matchmaking() -> void:
 	add_child(matchmaker)
 	matchmaker.lobby_created.connect(_on_lobby_created)
 	matchmaker.lobby_joined.connect(_on_lobby_joined)
+	matchmaker.lobby_not_found.connect(_on_lobby_not_found)
 	matchmaker.request_failed.connect(_on_request_failed)
 	_seed_player_list()
 	match GameState.mode:
@@ -92,6 +93,21 @@ func _on_lobby_joined(_room_id: String, ws_url: String) -> void:
 
 func _on_request_failed(reason: String) -> void:
 	_go_offline(reason)
+
+func _on_lobby_not_found(code: String) -> void:
+	# Don't fall back to offline mode for an invalid code. The player typed
+	# something we can't honour - tell them, then bounce back to the menu.
+	if network_resolved:
+		return
+	network_resolved = true
+	GameState.server_url = ""
+	GameState.lobby_code = ""
+	status_label.text = 'Lobby "%s" not found. Returning to menu.' % code
+	code_label.text = ""
+	code_actions.visible = false
+	await get_tree().create_timer(2.0).timeout
+	if is_inside_tree():
+		requested_screen.emit("menu")
 
 func _go_offline(reason: String) -> void:
 	if network_resolved:

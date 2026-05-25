@@ -8,25 +8,37 @@ const ServerConfig := preload("res://scripts/network/server_config.gd")
 
 signal lobby_created(code: String, room_id: String, ws_url: String)
 signal lobby_joined(room_id: String, ws_url: String)
+## Emitted when the matchmaker returns 404 on a join-by-code request. The
+## room never existed (or has expired); the lobby treats this as a hard
+## error, not a "fall back to offline" trigger.
+signal lobby_not_found(code: String)
 signal request_failed(reason: String)
 
 func create_private(topology: String) -> void:
 	_post("/lobby", {"topology": topology}, _on_create_response)
 
+var _last_join_code: String = ""
+
 func join_code(code: String) -> void:
 	if code.length() < 4:
 		request_failed.emit("code too short")
 		return
-	_post("/lobby/%s/join" % code.to_upper(), {}, _on_join_response)
+	_last_join_code = code.to_upper()
+	_post("/lobby/%s/join" % _last_join_code, {}, _on_join_response, _on_join_code_failure)
 
 func join_open() -> void:
 	_post("/open/join", {}, _on_join_response)
 
-func _post(path: String, body: Dictionary, on_response: Callable) -> void:
+func _post(
+	path: String,
+	body: Dictionary,
+	on_response: Callable,
+	on_failure: Callable = Callable(),
+) -> void:
 	var http := HTTPRequest.new()
 	add_child(http)
 	http.timeout = 10.0
-	http.request_completed.connect(_make_handler(http, on_response))
+	http.request_completed.connect(_make_handler(http, on_response, on_failure))
 	var url: String = ServerConfig.matchmaker_url() + path
 	var headers: PackedStringArray = ["Content-Type: application/json", "Accept: application/json"]
 	var payload: String = JSON.stringify(body) if body.size() > 0 else "{}"
@@ -35,10 +47,12 @@ func _post(path: String, body: Dictionary, on_response: Callable) -> void:
 		request_failed.emit("could not start request: %d" % err)
 		http.queue_free()
 
-func _make_handler(http: HTTPRequest, on_response: Callable) -> Callable:
+func _make_handler(http: HTTPRequest, on_response: Callable, on_failure: Callable) -> Callable:
 	return func(_result: int, code: int, _headers: PackedStringArray, body: PackedByteArray) -> void:
 		http.queue_free()
 		if code < 200 or code >= 300:
+			if on_failure.is_valid() and on_failure.call(code, body):
+				return
 			request_failed.emit("matchmaker returned %d" % code)
 			return
 		var parsed: Variant = JSON.parse_string(body.get_string_from_utf8())
@@ -46,6 +60,14 @@ func _make_handler(http: HTTPRequest, on_response: Callable) -> Callable:
 			request_failed.emit("matchmaker response was not json")
 			return
 		on_response.call(parsed)
+
+# Returns true when the failure has been handled by a specific signal,
+# suppressing the generic request_failed emission.
+func _on_join_code_failure(http_status: int, _body: PackedByteArray) -> bool:
+	if http_status == 404:
+		lobby_not_found.emit(_last_join_code)
+		return true
+	return false
 
 func _on_create_response(parsed: Dictionary) -> void:
 	var code: String = parsed.get("code", "")

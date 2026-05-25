@@ -34,25 +34,6 @@ describe('wrapPosition', () => {
     expect(a.z).toBe(-40);
   });
 
-  it('passes through on the sphere when the point is on a walkable face', () => {
-    // Sphere is the rhombicuboctahedron unfold: 8 * W/8 wide x 7 * W/8 tall
-    // (100 x 87.5 here). A point inside a walkable cell is returned
-    // unchanged; the step-aware wrap (wrapPositionFromStep) handles edge
-    // identification on motion. With W=100 the cell at (col=2, row=3) is
-    // +Z, centered at (-18.75, 0); (-10, 5) sits inside that cell.
-    const inside = wrapPosition({ x: -10, z: 5 }, 'sphere', W);
-    expect(inside.x).toBe(-10);
-    expect(inside.z).toBe(5);
-  });
-
-  it('snaps an out-of-bounds sphere point to the nearest walkable face center', () => {
-    // (60, 0) is past the equator's east boundary. Nearest walkable face
-    // is eL at (col=7, row=3) with center x = 43.75.
-    const out = wrapPosition({ x: 60, z: 0 }, 'sphere', W);
-    expect(out.x).toBeCloseTo(43.75, 6);
-    expect(out.z).toBeCloseTo(0, 6);
-  });
-
   it('passes interior octagon points through on genus2', () => {
     // The octagon has circumradius 40 (independent of W); (5, 3) sits
     // safely inside the polygon centre region.

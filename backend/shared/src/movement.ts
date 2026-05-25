@@ -92,10 +92,10 @@ export function stepMovement(
       continue;
     }
     if (collidesWithOther(candidate)) continue;
-    // Sphere needs the step context (prev -> candidate) so cube adjacency
-    // can fire when the candidate lands in a T-net void. Other topologies
-    // ignore prev. wrapPositionFromStep is a no-op delegation to
-    // wrapPosition for everything except sphere.
+    // Genus-2 needs the step context (prev -> candidate) so the octagon's
+    // side identification can route the candidate onto the mate side when
+    // it leaves the polygon. Other topologies ignore prev;
+    // wrapPositionFromStep delegates to wrapPosition for everything else.
     nextPos = wrapPositionFromStep(state.position, candidate, topology, worldWidth);
     break;
   }

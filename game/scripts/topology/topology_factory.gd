@@ -4,7 +4,6 @@ const TopologyScript := preload("res://scripts/topology/topology.gd")
 const PLANE_SCRIPT := preload("res://scripts/topology/plane_topology.gd")
 const TORUS_SCRIPT := preload("res://scripts/topology/torus_topology.gd")
 const KLEIN_SCRIPT := preload("res://scripts/topology/klein_topology.gd")
-const SPHERE_SCRIPT := preload("res://scripts/topology/sphere_rhombicuboctahedron_topology.gd")
 const GENUS2_SCRIPT := preload("res://scripts/topology/genus2_topology.gd")
 
 static func create(kind: int) -> TopologyScript:
@@ -15,8 +14,6 @@ static func create(kind: int) -> TopologyScript:
 			return TORUS_SCRIPT.new()
 		TopologyScript.Kind.KLEIN:
 			return KLEIN_SCRIPT.new()
-		TopologyScript.Kind.SPHERE:
-			return SPHERE_SCRIPT.new()
 		TopologyScript.Kind.GENUS2:
 			return GENUS2_SCRIPT.new()
 	push_error("unknown topology")
@@ -30,8 +27,6 @@ static func from_string(value: String) -> TopologyScript:
 			return create(TopologyScript.Kind.TORUS)
 		"klein":
 			return create(TopologyScript.Kind.KLEIN)
-		"sphere":
-			return create(TopologyScript.Kind.SPHERE)
 		"genus2":
 			return create(TopologyScript.Kind.GENUS2)
 	push_error("unknown topology string: %s" % value)

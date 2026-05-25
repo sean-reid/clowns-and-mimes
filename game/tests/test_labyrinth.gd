@@ -4,7 +4,6 @@ const LABYRINTH := preload("res://scenes/labyrinth.tscn")
 const PlaneTopology := preload("res://scripts/topology/plane_topology.gd")
 const TorusTopology := preload("res://scripts/topology/torus_topology.gd")
 const KleinTopology := preload("res://scripts/topology/klein_topology.gd")
-const SphereTopology := preload("res://scripts/topology/sphere_rhombicuboctahedron_topology.gd")
 const GridMaze := preload("res://scripts/grid_maze.gd")
 const TopologyScript := preload("res://scripts/topology/topology.gd")
 
@@ -114,81 +113,6 @@ func test_grid_maze_builds_walls_for_klein_topology() -> void:
 	assert_true(
 		instance.walls_root.get_child_count() > 30,
 		"klein maze has substantial wall count, got %d" % instance.walls_root.get_child_count()
-	)
-	instance.queue_free()
-
-func test_sphere_grid_has_walls_and_open_walkable_seams() -> void:
-	# Rhombicuboctahedron unfold: 18 walkable faces with interior mazes
-	# plus perimeter walls along edges that border a triangle barrier.
-	# Edges shared by two walkable cells must stay open so the player can
-	# walk between them.
-	var segs: Array = GridMaze.generate(7, "sphere")
-	assert_true(segs.size() > 30, "sphere maze has substantial wall count, got %d" % segs.size())
-	var face_side: float = TopologyScript.WIDTH / float(GridMaze.NET_COLS)
-	var ext_x: float = float(GridMaze.NET_COLS) * face_side
-	var ext_z: float = float(GridMaze.NET_ROWS) * face_side
-	# Build the open-edge segments: for each walkable face, take its
-	# east-side and north-side boundary segments that face another
-	# walkable cell in the unfold.
-	var open_v: Array = []  # [x, z_min, z_max]
-	var open_h: Array = []  # [z, x_min, x_max]
-	for face in GridMaze.SPHERE_FACE_SLOTS.keys():
-		var slot: Vector2i = GridMaze.SPHERE_FACE_SLOTS[face]
-		var x_min: float = slot.x * face_side - ext_x * 0.5
-		var x_max: float = x_min + face_side
-		var z_max: float = ext_z * 0.5 - slot.y * face_side
-		var z_min: float = z_max - face_side
-		# East neighbour shares x_max boundary.
-		var east_neighbour_slot := Vector2i(slot.x + 1, slot.y)
-		for other in GridMaze.SPHERE_FACE_SLOTS.keys():
-			if GridMaze.SPHERE_FACE_SLOTS[other] == east_neighbour_slot:
-				open_v.append([x_max, z_min, z_max])
-				break
-		# North neighbour shares z_max boundary.
-		var north_neighbour_slot := Vector2i(slot.x, slot.y - 1)
-		for other in GridMaze.SPHERE_FACE_SLOTS.keys():
-			if GridMaze.SPHERE_FACE_SLOTS[other] == north_neighbour_slot:
-				open_h.append([z_max, x_min, x_max])
-				break
-	for seg in segs:
-		var axis_aligned: bool = seg["ax"] == seg["bx"] or seg["az"] == seg["bz"]
-		assert_true(axis_aligned, "sphere wall axis-aligned: %s" % str(seg))
-		if seg["ax"] == seg["bx"]:
-			var wmin: float = minf(seg["az"], seg["bz"])
-			var wmax: float = maxf(seg["az"], seg["bz"])
-			for line in open_v:
-				if absf(seg["ax"] - line[0]) > 0.001:
-					continue
-				var disjoint: bool = wmax <= line[1] + 0.001 or wmin >= line[2] - 0.001
-				assert_true(disjoint, "vertical wall on open walkable seam: %s" % str(seg))
-		if seg["az"] == seg["bz"]:
-			var wmin2: float = minf(seg["ax"], seg["bx"])
-			var wmax2: float = maxf(seg["ax"], seg["bx"])
-			for line in open_h:
-				if absf(seg["az"] - line[0]) > 0.001:
-					continue
-				var disjoint: bool = wmax2 <= line[1] + 0.001 or wmin2 >= line[2] - 0.001
-				assert_true(disjoint, "horizontal wall on open walkable seam: %s" % str(seg))
-
-func test_sphere_grid_differs_from_torus() -> void:
-	var s: Array = GridMaze.generate(2026, "sphere")
-	var t: Array = GridMaze.generate(2026, "torus")
-	# Even if counts happen to coincide, at least one segment must differ.
-	var same: bool = s.size() == t.size()
-	if same:
-		for i in s.size():
-			if s[i] != t[i]:
-				same = false
-				break
-	assert_true(not same, "sphere and torus diverge at the same seed")
-
-func test_sphere_grid_builds_walls() -> void:
-	var topology := SphereTopology.new()
-	var instance := LABYRINTH.instantiate()
-	instance.build(2026, topology)
-	assert_true(
-		instance.walls_root.get_child_count() > 30,
-		"sphere maze has substantial wall count, got %d" % instance.walls_root.get_child_count()
 	)
 	instance.queue_free()
 

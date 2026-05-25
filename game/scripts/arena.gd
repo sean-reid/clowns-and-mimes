@@ -767,7 +767,7 @@ func _topology_kind(name: String) -> int:
 	match name:
 		"torus": return GameState.Topology.TORUS
 		"klein": return GameState.Topology.KLEIN
-		"sphere": return GameState.Topology.SPHERE
+		"genus2": return GameState.Topology.GENUS2
 		_: return GameState.Topology.PLANE
 
 func _sample_move_intent() -> Vector2:

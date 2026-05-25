@@ -1088,13 +1088,7 @@ function clamp(v: number, lo: number, hi: number): number {
 }
 
 function isValidTopology(value: string): value is Topology {
-  return (
-    value === 'plane' ||
-    value === 'torus' ||
-    value === 'klein' ||
-    value === 'sphere' ||
-    value === 'genus2'
-  );
+  return value === 'plane' || value === 'torus' || value === 'klein' || value === 'genus2';
 }
 
 function nearTarget(

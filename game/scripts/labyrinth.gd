@@ -5,9 +5,9 @@ extends Node3D
 ##   * Plane: closed rectangle with boundary walls.
 ##   * Torus and Klein: wrap seams have no walls so the topology folds both
 ##     edges to the same line.
-##   * Sphere: six independent 4x6 face mazes packed 3x2 in the playfield;
-##     face boundaries are open so the topology wraps a player crossing an
-##     edge onto the adjacent face.
+##   * Double torus (genus2): grid inscribed in the octagonal playfield;
+##     cells outside the polygon are masked, and the octagon's 8 sides
+##     identify pairwise so the boundary itself is open.
 ##
 ## The ring layout (_build_ring, _add_arc_wall) is no longer dispatched but is
 ## kept for an experimental lobby mode that may opt back in.
@@ -140,10 +140,9 @@ func _build_wrap_tiles() -> void:
 		# ahead of the wrap_step teleport.
 		_build_genus2_portal_tiles(tiles_root)
 		return
-	# Torus / Klein / sphere: legacy 3x3 flat-translated wrap-tile lattice.
-	# Klein's z-mirror is baked into the maze itself; sphere's T-net edges
-	# are an approximation that stays consistent with the rest of the
-	# sphere code path.
+	# Torus / Klein: 3x3 flat-translated wrap-tile lattice. Klein's z-mirror
+	# is baked into the maze geometry itself, so a pure translation works
+	# for the visual seam too.
 	var ext_x: float = topology.extent_x()
 	var ext_z: float = topology.extent_z()
 	for dx in [-1, 0, 1]:

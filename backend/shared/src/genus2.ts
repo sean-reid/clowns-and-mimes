@@ -219,7 +219,10 @@ export function stepAcrossGenus2Boundary(prev: Vec2, next: Vec2): Vec2 {
   // Inward displacement clamped to at least SAFE_INWARD: the player needs
   // to land far enough off the receiving side that no maze wall near the
   // boundary catches them in its WALL_CLEARANCE band on the next tick.
-  // Same class of fix as the sphere safe-nudge in #124.
+  // Without the clamp the overshoot is typically ~ 0.04 world units,
+  // which lands the destination exactly at the maze-cell boundary and
+  // IEEE-754 rounding flips the wall check below WALL_CLEARANCE for
+  // the start point of every subsequent tick.
   const inward = Math.max(overshoot, SAFE_INWARD);
   return {
     x: arrival.x + inward * inw.x,

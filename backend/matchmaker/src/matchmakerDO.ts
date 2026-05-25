@@ -1,12 +1,6 @@
 import type { Topology } from '@cm/shared';
 
-export const VALID_TOPOLOGIES: readonly Topology[] = [
-  'plane',
-  'torus',
-  'klein',
-  'sphere',
-  'genus2',
-];
+export const VALID_TOPOLOGIES: readonly Topology[] = ['plane', 'torus', 'klein', 'genus2'];
 
 export const OPEN_ROOM_SOFT_CAPACITY = 12;
 export const OPEN_ROOM_FRESH_MS = 5 * 60 * 1000;

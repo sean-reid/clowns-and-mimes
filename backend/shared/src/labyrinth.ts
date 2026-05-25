@@ -71,9 +71,9 @@ function chooseGapIndices(seed: number, ringIndex: number): Set<number> {
  *   - Plane: closed rectangle with boundary walls.
  *   - Torus and Klein: boundary walls skipped because the wrap folds both
  *     edges to the same line.
- *   - Sphere: six independent 4x6 face mazes packed 3x2 in the playfield;
- *     face boundaries are open so the topology wraps the player to the
- *     adjacent face.
+ *   - Double torus (genus2): grid inscribed in the octagonal playfield;
+ *     cells whose centres fall outside the polygon are masked out and the
+ *     boundary itself is the identification seam (no perimeter walls).
  *
  * The concentric-ring layout is no longer dispatched anywhere but is kept in
  * the module (chooseGapIndices, RING_RADII, gapJitter) so a future variant

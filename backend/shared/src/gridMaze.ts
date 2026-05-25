@@ -12,65 +12,22 @@
 //     visually double up).
 //   - Klein: same as torus but the x-seam flips the row index, matching the
 //     Klein topology adapter.
-//   - Sphere: 3x2 cube-face packing. Six independent 4x6 mazes share the
-//     playfield; face boundaries carry no walls so a crossing player wraps
-//     onto the adjacent face (see generateSphereGridWalls).
+//   - Genus-2 ("double torus"): cells are inscribed in the octagon's
+//     bounding box; cells whose centres fall outside the polygon are
+//     masked out and a DFS spanning tree runs only on the walkable cells
+//     (see generateGenus2GridWalls). The octagon's boundary is the
+//     identification seam itself, so no perimeter walls are emitted.
 //
 // Determinism: GDScript and TS must produce the same wall list for the same
 // (seed, topology, gridN). Both use the same 32-bit LCG and traverse
 // neighbors in the same fixed order, so the DFS path is identical.
 
 import type { Topology } from './protocol.ts';
-import { WORLD_WIDTH, SPHERE_FACE_SIDE } from './topology.ts';
+import { WORLD_WIDTH } from './topology.ts';
 import type { WallSegment } from './labyrinth.ts';
-import {
-  ADJACENCY,
-  NET_COLS,
-  NET_ROWS,
-  faceWorldRect,
-  type FaceId,
-} from './sphereRhombicuboctahedron.ts';
 import { OCTAGON_CIRCUMRADIUS, pointInOctagon } from './genus2.ts';
 
 export const GRID_MAZE_N = 10;
-
-// Sphere rhombicuboctahedron unfold. 18 walkable squares (6 axials + 12
-// edge squares) separated by 8 triangle barriers on an 8 x 7 net. Each
-// walkable face holds an SPHERE_FACE_CELLS x SPHERE_FACE_CELLS DFS maze,
-// so the global pathfinder grid is NET_COLS * N wide by NET_ROWS * N
-// tall. Edges between walkable faces stay open (grid-adjacent crossings
-// flow naturally and off-net seams identify via stepAcrossSphereFaces).
-// Edges that border a triangle barrier get a wall segment so collision
-// blocks the player at the triangle's perimeter.
-export const SPHERE_FACE_CELLS = 3;
-export const SPHERE_GRID_X = NET_COLS * SPHERE_FACE_CELLS; // 24
-export const SPHERE_GRID_Z = NET_ROWS * SPHERE_FACE_CELLS; // 21
-
-/**
- * Order in which walkable faces are visited by the maze generator. Both
- * the TS and GDScript implementations iterate this list with a shared
- * LCG state so the same seed produces the same wall list on both sides.
- */
-const SPHERE_MAZE_ORDER: FaceId[] = [
-  '+Y',
-  'ePYn',
-  'ePYe',
-  'ePYs',
-  'ePYw',
-  '-X',
-  'eN',
-  '+Z',
-  'eS',
-  '+X',
-  'eR',
-  '-Z',
-  'eL',
-  'eNYn',
-  'eNYe',
-  'eNYs',
-  'eNYw',
-  '-Y',
-];
 
 const DIR_EAST = 0;
 const DIR_NORTH = 1;
@@ -88,15 +45,13 @@ export function generateGridMazeWalls(
   topology: Topology,
   gridN: number = GRID_MAZE_N,
 ): WallSegment[] {
-  if (topology === 'sphere') {
-    return generateSphereGridWalls(seed);
-  }
   if (topology === 'klein') {
     return generateKleinGridWalls(seed, gridN);
   }
   if (topology === 'genus2') {
     return generateGenus2GridWalls(seed);
   }
+  // Plane and torus share the rectangular grid path below.
   const total = gridN * gridN;
   const visited = new Uint8Array(total);
   // openings[cell] is a 4-bit mask: bit `dir` set means the wall in that
@@ -376,125 +331,6 @@ function emitKleinExpandedWalls(openings: Uint8Array, gridN: number): WallSegmen
         const x1 = (c + 1) * cell - halfX;
         out.push({ ax: x0, az: z, bx: x1, bz: z });
       }
-    }
-  }
-  return out;
-}
-
-/**
- * Sphere wall list: 18 independent per-face mazes plus perimeter walls
- * where a walkable face borders a triangle barrier. Edges between two
- * walkable faces (whether grid-adjacent in the unfold or joined through
- * the polyhedron's edge graph) carry no walls; the runtime predictor and
- * stepAcrossSphereFaces handle the crossing.
- *
- * Faces are visited in SPHERE_MAZE_ORDER, sharing one LCG state, so the
- * generator is deterministic for a given seed and matches the GDScript
- * mirror in game/scripts/grid_maze.gd.
- */
-export function generateSphereGridWalls(seed: number): WallSegment[] {
-  const N = SPHERE_FACE_CELLS;
-  const cellSize = SPHERE_FACE_SIDE / N;
-  const faceTotal = N * N;
-  const out: WallSegment[] = [];
-  let rng = (seed | 0) >>> 0;
-  const next = (): number => {
-    rng = ((Math.imul(rng, 1664525) >>> 0) + 1013904223) >>> 0;
-    return rng;
-  };
-
-  const localNeighbor = (localCell: number, dir: number): Neighbor | null => {
-    const lc = localCell % N;
-    const lr = Math.floor(localCell / N);
-    let nc = lc;
-    let nr = lr;
-    if (dir === DIR_EAST) nc = lc + 1;
-    else if (dir === DIR_WEST) nc = lc - 1;
-    else if (dir === DIR_NORTH) nr = lr + 1;
-    else if (dir === DIR_SOUTH) nr = lr - 1;
-    if (nc < 0 || nc >= N) return null;
-    if (nr < 0 || nr >= N) return null;
-    return { cell: nc + nr * N, dir, crossesSeam: false };
-  };
-
-  for (const face of SPHERE_MAZE_ORDER) {
-    const localVisited = new Uint8Array(faceTotal);
-    const localOpenings = new Uint8Array(faceTotal);
-
-    const start = next() % faceTotal;
-    localVisited[start] = 1;
-    const stack: number[] = [start];
-    while (stack.length > 0) {
-      const cur = stack[stack.length - 1]!;
-      const candidates: Neighbor[] = [];
-      for (let dir = 0; dir < 4; dir += 1) {
-        const nb = localNeighbor(cur, dir);
-        if (nb === null) continue;
-        if (localVisited[nb.cell]) continue;
-        candidates.push(nb);
-      }
-      if (candidates.length === 0) {
-        stack.pop();
-        continue;
-      }
-      const pick = candidates[next() % candidates.length]!;
-      localOpenings[cur] |= 1 << pick.dir;
-      localOpenings[pick.cell] |= 1 << oppositeDir(pick.dir);
-      localVisited[pick.cell] = 1;
-      stack.push(pick.cell);
-    }
-
-    for (let cell = 0; cell < faceTotal; cell += 1) {
-      if (popCountNibble(localOpenings[cell]!) >= 2) continue;
-      const closedNeighbors: { dir: number; cell: number }[] = [];
-      for (let dir = 0; dir < 4; dir += 1) {
-        if ((localOpenings[cell]! & (1 << dir)) !== 0) continue;
-        const nb = localNeighbor(cell, dir);
-        if (nb === null) continue;
-        closedNeighbors.push({ dir, cell: nb.cell });
-      }
-      if (closedNeighbors.length === 0) continue;
-      const pick = closedNeighbors[next() % closedNeighbors.length]!;
-      localOpenings[cell] |= 1 << pick.dir;
-      localOpenings[pick.cell] |= 1 << oppositeDir(pick.dir);
-    }
-
-    const rect = faceWorldRect(face, SPHERE_FACE_SIDE);
-    // Interior maze walls.
-    for (let r = 0; r < N; r += 1) {
-      for (let c = 0; c < N; c += 1) {
-        const id = c + r * N;
-        const eastClosed = (localOpenings[id]! & (1 << DIR_EAST)) === 0;
-        const northClosed = (localOpenings[id]! & (1 << DIR_NORTH)) === 0;
-        if (eastClosed && c < N - 1) {
-          const x = rect.xMin + (c + 1) * cellSize;
-          const z0 = rect.zMin + r * cellSize;
-          const z1 = rect.zMin + (r + 1) * cellSize;
-          out.push({ ax: x, az: z0, bx: x, bz: z1 });
-        }
-        if (northClosed && r < N - 1) {
-          const z = rect.zMin + (r + 1) * cellSize;
-          const x0 = rect.xMin + c * cellSize;
-          const x1 = rect.xMin + (c + 1) * cellSize;
-          out.push({ ax: x0, az: z, bx: x1, bz: z });
-        }
-      }
-    }
-    // Perimeter walls where the face borders a triangle barrier. An edge
-    // with no ADJACENCY entry has no walkable destination, so collision
-    // must stop the player here.
-    const faceAdj = ADJACENCY[face];
-    if (faceAdj?.east === undefined) {
-      out.push({ ax: rect.xMax, az: rect.zMin, bx: rect.xMax, bz: rect.zMax });
-    }
-    if (faceAdj?.west === undefined) {
-      out.push({ ax: rect.xMin, az: rect.zMin, bx: rect.xMin, bz: rect.zMax });
-    }
-    if (faceAdj?.north === undefined) {
-      out.push({ ax: rect.xMin, az: rect.zMax, bx: rect.xMax, bz: rect.zMax });
-    }
-    if (faceAdj?.south === undefined) {
-      out.push({ ax: rect.xMin, az: rect.zMin, bx: rect.xMax, bz: rect.zMin });
     }
   }
   return out;

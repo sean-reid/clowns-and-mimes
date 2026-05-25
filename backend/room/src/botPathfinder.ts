@@ -13,7 +13,7 @@
 
 import type { Topology, Vec2 } from '@cm/shared';
 import { pathCrossesWall, type WallSegment } from '@cm/shared/labyrinth';
-import { GENUS2_GRID_N, GRID_MAZE_N, SPHERE_GRID_X, SPHERE_GRID_Z } from '@cm/shared/gridMaze';
+import { GENUS2_GRID_N, GRID_MAZE_N } from '@cm/shared/gridMaze';
 import { WORLD_WIDTH } from '@cm/shared/topology';
 
 interface GridShape {
@@ -24,7 +24,7 @@ interface GridShape {
   wrapX: boolean;
   wrapZ: boolean;
   // Klein: when crossing the x seam, the row index flips. The wrap on the z
-  // axis is plain modular. Sphere and torus do not flip.
+  // axis is plain modular. Torus and genus2 do not flip.
   flipRowOnXWrap: boolean;
 }
 
@@ -272,25 +272,6 @@ export class BotPathfinder {
 }
 
 function gridShapeFor(topology: Topology): GridShape {
-  if (topology === 'sphere') {
-    // Rhombicuboctahedron unfold: SPHERE_GRID_X x SPHERE_GRID_Z cells over
-    // an 8 x 7 net of face slots. 18 of the 56 slots are walkable; the
-    // rest are triangle barriers or off-net voids. Edge identification
-    // across face boundaries is handled in the runtime
-    // (stepAcrossSphereFaces); the pathfinder treats the playfield as a
-    // flat rectangle and relies on the wall list (perimeter walls around
-    // triangles) plus the cell occupancy mask to keep routes off the
-    // non-walkable cells.
-    return {
-      cols: SPHERE_GRID_X,
-      rows: SPHERE_GRID_Z,
-      cellX: WORLD_WIDTH / SPHERE_GRID_X,
-      cellZ: WORLD_WIDTH / SPHERE_GRID_X,
-      wrapX: true,
-      wrapZ: true,
-      flipRowOnXWrap: false,
-    };
-  }
   if (topology === 'klein') {
     // Klein's playfield is the double cover: 2N x N cells over a 2W x W
     // domain. The maze generator places the z-mirror of the fundamental in

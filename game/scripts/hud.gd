@@ -58,7 +58,7 @@ func set_topology(name: String) -> void:
 	elif name == "genus2":
 		pretty = "Double Torus"
 	elif name == "mobius":
-		pretty = "Möbius Strip"
+		pretty = "Möbius strip"
 	else:
 		pretty = name.substr(0, 1).to_upper() + name.substr(1)
 	topology_badge.text = "on the %s" % pretty

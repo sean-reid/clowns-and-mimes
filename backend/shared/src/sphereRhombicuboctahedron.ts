@@ -154,10 +154,9 @@ export type Edge = 'east' | 'north' | 'west' | 'south';
  * Identification rule for a step crossing `fromFace`'s `fromEdge`. The
  * rule names the destination face and which of its edges receives the
  * step, plus a `rotation` that controls how the edge parameter maps and
- * (indirectly) how face-local bases relate. The convention follows the
- * cube T-net's `crossEdge`: when `rotation` is 1 or 3 the parameter `t`
- * along the departing edge maps to `1 - t` on the receiving edge; for 0
- * or 2 it maps to `t`.
+ * (indirectly) how face-local bases relate. Convention: when `rotation`
+ * is 1 or 3 the parameter `t` along the departing edge maps to `1 - t`
+ * on the receiving edge; for 0 or 2 it maps to `t`.
  *
  * Most edges in the rhombicuboctahedron net are grid-adjacent in the
  * unfold; those carry rotation 0 because the two cells sit side by side

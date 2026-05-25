@@ -4,7 +4,7 @@ const LABYRINTH := preload("res://scenes/labyrinth.tscn")
 const PlaneTopology := preload("res://scripts/topology/plane_topology.gd")
 const TorusTopology := preload("res://scripts/topology/torus_topology.gd")
 const KleinTopology := preload("res://scripts/topology/klein_topology.gd")
-const SphereTopology := preload("res://scripts/topology/sphere_topology.gd")
+const SphereTopology := preload("res://scripts/topology/sphere_rhombicuboctahedron_topology.gd")
 const GridMaze := preload("res://scripts/grid_maze.gd")
 const TopologyScript := preload("res://scripts/topology/topology.gd")
 

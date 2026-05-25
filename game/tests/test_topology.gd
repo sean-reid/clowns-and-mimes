@@ -4,7 +4,6 @@ const TopologyScript := preload("res://scripts/topology/topology.gd")
 const PlaneTopology := preload("res://scripts/topology/plane_topology.gd")
 const TorusTopology := preload("res://scripts/topology/torus_topology.gd")
 const KleinTopology := preload("res://scripts/topology/klein_topology.gd")
-const SphereTopology := preload("res://scripts/topology/sphere_topology.gd")
 const SphereRhomboTopology := preload("res://scripts/topology/sphere_rhombicuboctahedron_topology.gd")
 const TopologyFactory := preload("res://scripts/topology/topology_factory.gd")
 
@@ -48,17 +47,6 @@ func test_klein_double_cover_wrap() -> void:
 	var q := klein.wrap(Vector3(W + 10.0, 0.0, 5.0))
 	assert_approx(q.x, -W + 10.0, 0.001, "klein x wraps at 2W")
 	assert_approx(q.z, 5.0, 0.001, "klein z stays modular only")
-
-func test_sphere_wrap_t_net() -> void:
-	# Sphere is a cube T-net (4 x 3 face slots). A point on a face slot
-	# returns unchanged; a point in the void or off the playfield snaps to
-	# the nearest face center (best-effort recovery; the runtime predictor
-	# uses wrap_step for motion crossings).
-	var sphere := SphereTopology.new()
-	# (10, 5) is on the +Z face (center column, middle row).
-	var inside := sphere.wrap(Vector3(10.0, 0.0, 5.0))
-	assert_approx(inside.x, 10.0, 0.001, "sphere passes through valid face point")
-	assert_approx(inside.z, 5.0, 0.001, "sphere passes through valid face point z")
 
 func test_sphere_rhombo_extents() -> void:
 	# 8 cols x 7 rows of FACE_SIDE = WIDTH / 8 squares. Width should still be

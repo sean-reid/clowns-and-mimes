@@ -146,6 +146,34 @@ func test_sphere_rhombo_wrap_step_cap_identification() -> void:
 		"wrap_step landed in ePYe z range: z=%f range=[%f,%f]" % [out.z, ePYe_zmin, ePYe_zmax],
 	)
 
+func test_sphere_rhombo_wrap_step_clears_perpendicular_wall() -> void:
+	# Repro for the polyhedron-vertex bounce trap. Crossing -X.south near
+	# its SW corner identifies to eNYw.west near its south end. eNYw has a
+	# south perimeter wall (no walkable adjacency through the triangle
+	# at t-x-y-z). Without the safe-nudge, the destination lands at
+	# exactly WALL_CLEARANCE from that wall and IEEE-754 rounding pins
+	# the player there. The destination must clear the perpendicular wall
+	# by at least WALL_CLEARANCE so the next tick can collision-check from
+	# a position that isn't already inside clearance.
+	var sphere := SphereRhomboTopology.new()
+	var face_side: float = SphereRhomboTopology.FACE_SIDE
+	var ext_x: float = sphere.extent_x()
+	var ext_z: float = sphere.extent_z()
+	var nx_xmin: float = -ext_x * 0.5
+	var nx_zmin: float = ext_z * 0.5 - 4.0 * face_side
+	var prev := Vector3(nx_xmin + 0.6, 0.0, nx_zmin + 0.02)
+	var next := Vector3(nx_xmin + 0.5, 0.0, nx_zmin - 0.04)
+	var out := sphere.wrap_step(prev, next)
+	# eNYw at slot (1, 5); its south wall lives at z = eNYw_zmin.
+	var eNYw_zmin: float = ext_z * 0.5 - 6.0 * face_side
+	# eNYw_zmin = halfZ - 6*faceSide. With halfZ=35 and faceSide=10, that's -25.
+	var distance_to_south_wall: float = out.z - eNYw_zmin
+	assert_true(
+		distance_to_south_wall >= SphereRhomboTopology.SPHERE_WALL_CLEARANCE,
+		"wrap_step destination clears the south perimeter wall: dist=%f required>=%f"
+			% [distance_to_south_wall, SphereRhomboTopology.SPHERE_WALL_CLEARANCE],
+	)
+
 func test_factory_returns_correct_kind() -> void:
 	assert_eq(TopologyFactory.from_string("plane").kind(), TopologyScript.Kind.PLANE)
 	assert_eq(TopologyFactory.from_string("torus").kind(), TopologyScript.Kind.TORUS)

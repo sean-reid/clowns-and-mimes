@@ -337,6 +337,38 @@ describe('stepAcrossSphereFaces', () => {
     const out = stepAcrossSphereFaces(prev, next, FACE_SIDE);
     expect(worldToFace(out.x, out.z, FACE_SIDE)).toBe('-Z');
   });
+
+  it('places the destination clear of a perpendicular perimeter wall', () => {
+    // Repro for the polyhedron-vertex bounce trap. Crossing -X.south near
+    // its west end identifies to eNYw.west near its south end. eNYw has a
+    // south perimeter wall (no walkable adjacency through the triangle
+    // barrier at t-x-y-z). Without the safe nudge, the destination lands
+    // exactly WALL_CLEARANCE from that wall and IEEE-754 rounding pins the
+    // player there. The destination must sit at least WALL_CLEARANCE off
+    // the perpendicular wall so the next tick's collision check passes.
+    const xRect = faceWorldRect('-X', FACE_SIDE);
+    // Approach -X's south edge close to the SW corner so t lands near 0.
+    const prev = { x: xRect.xMin + 0.6, z: xRect.zMin + 0.02 };
+    const next = { x: xRect.xMin + 0.5, z: xRect.zMin - 0.04 };
+    const out = stepAcrossSphereFaces(prev, next, FACE_SIDE);
+    const eRect = faceWorldRect('eNYw', FACE_SIDE);
+    expect(worldToFace(out.x, out.z, FACE_SIDE)).toBe('eNYw');
+    // eNYw's south wall is at z = eRect.zMin. The destination must clear
+    // it by at least WALL_CLEARANCE (0.6) in world units.
+    const distanceToSouthWall = out.z - eRect.zMin;
+    expect(distanceToSouthWall).toBeGreaterThanOrEqual(0.6);
+  });
+
+  it('places the destination clear of a perpendicular wall for the inverse crossing', () => {
+    // The mirror direction: cross eNYw.west onto -X.south near the bottom.
+    // -X has no perimeter walls so no safe nudge fires here, but the test
+    // confirms the round-trip mate of the previous case lands cleanly.
+    const eRect = faceWorldRect('eNYw', FACE_SIDE);
+    const prev = { x: eRect.xMin + 0.05, z: eRect.zMin + 0.6 };
+    const next = { x: eRect.xMin - 0.05, z: eRect.zMin + 0.6 };
+    const out = stepAcrossSphereFaces(prev, next, FACE_SIDE);
+    expect(worldToFace(out.x, out.z, FACE_SIDE)).toBe('-X');
+  });
 });
 
 describe('equator belt grid layout', () => {

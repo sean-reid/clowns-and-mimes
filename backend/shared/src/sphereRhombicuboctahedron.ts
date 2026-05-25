@@ -38,6 +38,15 @@ export const NET_COLS = 8;
 export const NET_ROWS = 7;
 
 /**
+ * Wall clearance used when nudging crossing destinations off perpendicular
+ * perimeter walls. Mirrors WALL_THICKNESS / 2 + PLAYER_RADIUS in
+ * labyrinth.ts. Kept here as a local constant so this module doesn't have
+ * to import from labyrinth; update both when collision constants change.
+ */
+const SPHERE_WALL_CLEARANCE = 0.6;
+const SAFE_MARGIN_EPSILON = 0.05;
+
+/**
  * Cell kinds in the planar net. `axial` and `edge` are walkable squares.
  * `triangle` is a barrier. `void` is empty space outside the net (no
  * floor, no walls; the player can't reach it because the surrounding
@@ -471,5 +480,26 @@ export function stepAcrossSphereFaces(
   else if (u === 1) u = 1 - inwardLocal;
   else if (v === 0) v = inwardLocal;
   else if (v === 1) v = 1 - inwardLocal;
+  // Clamp the *free* axis off the receiving edge to a safe distance from
+  // any perpendicular perimeter wall on the destination. Without this,
+  // a crossing near a polyhedron-vertex corner lands at exactly
+  // WALL_CLEARANCE from the perpendicular wall, and IEEE-754 rounding
+  // pushes that distance just below the clearance threshold every other
+  // tick - pinning the player at the seam. WALL_CLEARANCE mirrors the
+  // labyrinth.ts constant; epsilon adds a small safety margin so float
+  // wobble can't drag the result back into the unsafe band.
+  const safeMargin = (SPHERE_WALL_CLEARANCE + SAFE_MARGIN_EPSILON) / faceSide;
+  const destAdj = ADJACENCY[dest.face] ?? {};
+  if (dest.u === 0 || dest.u === 1) {
+    // Receiving edge is east or west: v is the free axis. Perpendicular
+    // walls are on the receiving face's north (v=1) and south (v=0).
+    if (destAdj.south === undefined && v < safeMargin) v = safeMargin;
+    if (destAdj.north === undefined && v > 1 - safeMargin) v = 1 - safeMargin;
+  } else {
+    // Receiving edge is north or south: u is the free axis. Perpendicular
+    // walls are on the receiving face's east (u=1) and west (u=0).
+    if (destAdj.west === undefined && u < safeMargin) u = safeMargin;
+    if (destAdj.east === undefined && u > 1 - safeMargin) u = 1 - safeMargin;
+  }
   return faceLocalToWorld(dest.face, u, v, faceSide);
 }

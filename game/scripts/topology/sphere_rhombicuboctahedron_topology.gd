@@ -29,6 +29,14 @@ const NET_COLS := 8
 const NET_ROWS := 7
 const FACE_SIDE := WIDTH / float(NET_COLS)
 
+# Wall clearance for the safe-nudge that keeps wrap_step destinations off
+# perpendicular perimeter walls. Mirrors Movement.WALL_CLEARANCE
+# (WALL_HALF_THICKNESS + PLAYER_RADIUS = 0.6). Kept here as a local const
+# so this script doesn't have to depend on Movement; update both when the
+# collision constants change.
+const SPHERE_WALL_CLEARANCE := 0.6
+const SAFE_MARGIN_EPSILON := 0.05
+
 const AXIAL_FACES: Array[String] = ['+X', '-X', '+Y', '-Y', '+Z', '-Z']
 const CAP_EDGE_FACES: Array[String] = [
 	'ePYn', 'ePYe', 'ePYs', 'ePYw',
@@ -256,14 +264,39 @@ func wrap_step(prev: Vector3, next: Vector3) -> Vector3:
 	# Nudge inward off the receiving edge so the next tick sits unambiguously
 	# inside `to_face`.
 	var inward: float = clampf(overshoot / FACE_SIDE, 0.0, 0.999)
+	var pegged_axis: String = ""  # tracks which axis got pegged before nudge
 	if u == 0.0:
+		pegged_axis = "u"
 		u = inward
 	elif u == 1.0:
+		pegged_axis = "u"
 		u = 1.0 - inward
 	elif v == 0.0:
+		pegged_axis = "v"
 		v = inward
 	elif v == 1.0:
+		pegged_axis = "v"
 		v = 1.0 - inward
+	# Clamp the *free* axis off the receiving edge so the destination sits
+	# clear of any perpendicular perimeter wall on `to_face`. Without this,
+	# crossings near a polyhedron-vertex corner land at exactly
+	# WALL_CLEARANCE from the perpendicular wall and IEEE-754 rounding pins
+	# the player there. The triangle barriers remain the visible walls;
+	# this just prevents the float-precision trap.
+	var safe_margin: float = (SPHERE_WALL_CLEARANCE + SAFE_MARGIN_EPSILON) / FACE_SIDE
+	var dest_face_adj: Variant = ADJACENCY.get(to_face, {})
+	if pegged_axis == "u":
+		# Receiving east or west edge; v is the free axis. Check north/south.
+		if dest_face_adj.get("south", null) == null and v < safe_margin:
+			v = safe_margin
+		if dest_face_adj.get("north", null) == null and v > 1.0 - safe_margin:
+			v = 1.0 - safe_margin
+	elif pegged_axis == "v":
+		# Receiving north or south edge; u is the free axis. Check east/west.
+		if dest_face_adj.get("west", null) == null and u < safe_margin:
+			u = safe_margin
+		if dest_face_adj.get("east", null) == null and u > 1.0 - safe_margin:
+			u = 1.0 - safe_margin
 	var dest_rect := _face_world_rect(to_face)
 	var world_x: float = dest_rect[0] + u * FACE_SIDE
 	var world_z: float = dest_rect[2] + v * FACE_SIDE

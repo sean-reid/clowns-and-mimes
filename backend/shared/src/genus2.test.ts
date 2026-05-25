@@ -5,6 +5,7 @@ import {
   OCTAGON_VERTICES,
   SIDE_COUNT,
   genus2Extents,
+  genus2PortalTransform,
   inwardNormal,
   mateSide,
   parametrizeAlongSide,
@@ -220,10 +221,13 @@ describe('stepAcrossGenus2Boundary', () => {
     const out = stepAcrossGenus2Boundary(prev, next);
     // Should land inside the octagon, near side 2 (the mate).
     expect(pointInOctagon(out)).toBe(true);
-    // The departure point was t = 0.5 along side 0, so the arrival should
-    // be at t = 0.5 on side 2 (mirror) shifted slightly inward.
+    // The departure t = 0.5 along side 0 maps to t = 0.5 on side 2 (the
+    // parameter flip); the destination then nudges inward by at least
+    // SAFE_INWARD off side 2, so the result sits roughly SAFE_INWARD
+    // (= 0.65) world units from the side-2 arrival point along its
+    // inward normal.
     const arrivalApprox = pointOnSide(2, 0.5);
-    expect(Math.hypot(out.x - arrivalApprox.x, out.z - arrivalApprox.z)).toBeLessThan(0.5);
+    expect(Math.hypot(out.x - arrivalApprox.x, out.z - arrivalApprox.z)).toBeLessThan(1.5);
   });
 
   it('round-trip across each side pair returns close to the original point', () => {
@@ -267,6 +271,53 @@ describe('wrapGenus2Point recovery', () => {
     };
     const out = wrapGenus2Point(p);
     expect(pointInOctagon(out)).toBe(true);
+  });
+});
+
+describe('genus2PortalTransform', () => {
+  it('maps the mate-side vertices onto the source-side vertices with parameter flip', () => {
+    for (let k = 0; k < SIDE_COUNT; k += 1) {
+      const t = genus2PortalTransform(k);
+      const m = mateSide(k);
+      const Vm = OCTAGON_VERTICES[m]!;
+      const VmPlus1 = OCTAGON_VERTICES[(m + 1) % 8]!;
+      const Vk = OCTAGON_VERTICES[k]!;
+      const Vk1 = OCTAGON_VERTICES[(k + 1) % 8]!;
+      const positive = t.rotationRadians > 0;
+      const apply = (p: { x: number; z: number }) => {
+        const rx = positive ? -p.z : p.z;
+        const rz = positive ? p.x : -p.x;
+        return { x: rx + t.tx, z: rz + t.tz };
+      };
+      const TVm = apply(Vm);
+      const TVmPlus1 = apply(VmPlus1);
+      expect(TVm.x).toBeCloseTo(Vk1.x, 6);
+      expect(TVm.z).toBeCloseTo(Vk1.z, 6);
+      expect(TVmPlus1.x).toBeCloseTo(Vk.x, 6);
+      expect(TVmPlus1.z).toBeCloseTo(Vk.z, 6);
+    }
+  });
+
+  it('rotation magnitude is 90 deg for every side, sign alternates by mate direction', () => {
+    for (let k = 0; k < SIDE_COUNT; k += 1) {
+      const t = genus2PortalTransform(k);
+      expect(Math.abs(t.rotationRadians)).toBeCloseTo(Math.PI / 2, 6);
+      // forward mate (k+2 mod 8) is positive rotation; backward (k+6 mod 8)
+      // is negative. Mate(k) = k XOR 2 alternates between the two depending
+      // on k:  k=0,1,4,5 -> forward;  k=2,3,6,7 -> backward.
+      const expectForward = k === 0 || k === 1 || k === 4 || k === 5;
+      expect(t.rotationRadians > 0).toBe(expectForward);
+    }
+  });
+
+  it('places the portal centre well outside the polygon', () => {
+    // T_k applied to the polygon centre (0, 0) yields the translation
+    // vector itself, which should sit outside the octagon (since the
+    // portal renders the mate-side neighborhood beyond side k).
+    for (let k = 0; k < SIDE_COUNT; k += 1) {
+      const t = genus2PortalTransform(k);
+      expect(pointInOctagon({ x: t.tx, z: t.tz })).toBe(false);
+    }
   });
 });
 

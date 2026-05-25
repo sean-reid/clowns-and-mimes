@@ -19,6 +19,13 @@ extends "res://scripts/topology/topology.gd"
 const OCTAGON_CIRCUMRADIUS := 40.0
 const SIDE_COUNT := 8
 
+# Inward displacement clamped onto every wrap_step destination so the
+# player lands robustly off the receiving side (mirrors SAFE_INWARD in
+# backend/shared/src/genus2.ts). Must stay >= WALL_CLEARANCE + small
+# epsilon so float-precision wobble can't pin the player against a
+# maze wall on the next tick.
+const SAFE_INWARD := 0.65
+
 ## (col, row) doesn't apply to the octagon; the playfield is just the
 ## interior of the polygon. Extents come from the bounding box.
 
@@ -129,7 +136,8 @@ func wrap_step(prev: Vector3, next: Vector3) -> Vector3:
 	var m: int = mate_side(side_idx)
 	var arrival: Vector2 = point_on_side(m, 1.0 - t)
 	var inw: Vector2 = inward_normal(m)
-	var landed: Vector2 = arrival + overshoot * inw
+	var inward: float = maxf(overshoot, SAFE_INWARD)
+	var landed: Vector2 = arrival + inward * inw
 	return Vector3(landed.x, next.y, landed.y)
 
 func wrap(position: Vector3) -> Vector3:
@@ -147,7 +155,8 @@ func wrap(position: Vector3) -> Vector3:
 	var m: int = mate_side(side_idx)
 	var arrival: Vector2 = point_on_side(m, 1.0 - t)
 	var inw: Vector2 = inward_normal(m)
-	var landed: Vector2 = arrival + overshoot * inw
+	var inward: float = maxf(overshoot, SAFE_INWARD)
+	var landed: Vector2 = arrival + inward * inw
 	if point_in_octagon(landed):
 		return Vector3(landed.x, position.y, landed.y)
 	return Vector3(0.0, position.y, 0.0)
@@ -160,3 +169,41 @@ func distance(a: Vector3, b: Vector3) -> float:
 
 func delta(from: Vector3, to: Vector3) -> Vector3:
 	return Vector3(to.x - from.x, 0.0, to.z - from.z)
+
+# Affine transform that places the mate side's interior into the region
+# OUTSIDE source side `side_idx`. Used by labyrinth.gd to draw edge
+# portals so the player sees the destination's geometry ahead of the
+# wrap_step teleport, eliminating the jarring jump in wall positions
+# at the seam.
+#
+# Returns a Dictionary { "rotation_y": float, "tx": float, "tz": float }.
+# The renderer places a Node3D copy of the maze at world (tx, 0, tz)
+# with rotation.y = rotation_y radians.
+#
+# The mate sits either +2 sides forward or -2 sides backward around the
+# octagon. The two cases have opposite rotation signs (the round trip
+# k -> m -> k composes to the identity).
+func portal_transform(side_idx: int) -> Dictionary:
+	var m: int = mate_side(side_idx)
+	var v_m: Vector2 = _side_starts[m]
+	var v_k_plus_1: Vector2 = _side_ends[side_idx]
+	# (m - side_idx + 8) % 8 is 2 (forward) or 6 (backward).
+	var forward_mate: bool = ((m - side_idx + 8) % 8) == 2
+	var rot_vm_x: float
+	var rot_vm_z: float
+	var rotation_y: float
+	if forward_mate:
+		# +90 deg CCW around Y axis: (x, z) -> (-z, x).
+		rot_vm_x = -v_m.y
+		rot_vm_z = v_m.x
+		rotation_y = PI / 2.0
+	else:
+		# -90 deg around Y axis: (x, z) -> (z, -x).
+		rot_vm_x = v_m.y
+		rot_vm_z = -v_m.x
+		rotation_y = -PI / 2.0
+	return {
+		"rotation_y": rotation_y,
+		"tx": v_k_plus_1.x - rot_vm_x,
+		"tz": v_k_plus_1.y - rot_vm_z,
+	}

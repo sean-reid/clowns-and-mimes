@@ -215,6 +215,42 @@ func test_genus2_wrap_step_identifies_to_mate_side() -> void:
 	var out := g.wrap_step(prev, next)
 	assert_true(g.point_in_octagon(Vector2(out.x, out.z)), "wrap_step lands inside octagon")
 
+func test_genus2_portal_transform_glues_mate_vertices_to_source() -> void:
+	# For each side k, applying the portal transform to V_m (mate's start
+	# vertex) should yield V_{k+1}, and applying it to V_{m+1} should yield
+	# V_k. That's the geometric meaning of the gluing rule with parameter
+	# flip: the mate side's interior is rotated/translated so its V_m end
+	# sits on top of V_{k+1} and its V_{m+1} end on V_k.
+	var g := Genus2Topology.new()
+	for k in 8:
+		var t: Dictionary = g.portal_transform(k)
+		var m: int = g.mate_side(k)
+		var v_m: Vector2 = g._side_starts[m]
+		var v_m_plus_1: Vector2 = g._side_ends[m]
+		var v_k: Vector2 = g._side_starts[k]
+		var v_k_plus_1: Vector2 = g._side_ends[k]
+		var rotation_y: float = t["rotation_y"]
+		var positive: bool = rotation_y > 0.0
+		var apply_x: Callable = func(p: Vector2):
+			var rx: float = (-p.y if positive else p.y)
+			var rz: float = (p.x if positive else -p.x)
+			return Vector2(rx + t["tx"], rz + t["tz"])
+		var t_vm: Vector2 = apply_x.call(v_m)
+		var t_vm_plus_1: Vector2 = apply_x.call(v_m_plus_1)
+		assert_approx(t_vm.x, v_k_plus_1.x, 0.001, "side %d: T(V_m).x = V_{k+1}.x" % k)
+		assert_approx(t_vm.y, v_k_plus_1.y, 0.001, "side %d: T(V_m).y = V_{k+1}.y" % k)
+		assert_approx(t_vm_plus_1.x, v_k.x, 0.001, "side %d: T(V_{m+1}).x = V_k.x" % k)
+		assert_approx(t_vm_plus_1.y, v_k.y, 0.001, "side %d: T(V_{m+1}).y = V_k.y" % k)
+
+func test_genus2_portal_transform_rotation_sign_alternates() -> void:
+	var g := Genus2Topology.new()
+	for k in 8:
+		var t: Dictionary = g.portal_transform(k)
+		var rotation_y: float = t["rotation_y"]
+		assert_approx(absf(rotation_y), PI / 2.0, 0.001, "side %d magnitude = 90 deg" % k)
+		var expect_forward: bool = k == 0 or k == 1 or k == 4 or k == 5
+		assert_eq(rotation_y > 0.0, expect_forward, "side %d rotation sign" % k)
+
 func test_factory_returns_correct_kind() -> void:
 	assert_eq(TopologyFactory.from_string("plane").kind(), TopologyScript.Kind.PLANE)
 	assert_eq(TopologyFactory.from_string("torus").kind(), TopologyScript.Kind.TORUS)

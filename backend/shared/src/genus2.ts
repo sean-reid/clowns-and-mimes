@@ -34,6 +34,17 @@ import type { Vec2 } from './protocol.ts';
 export const OCTAGON_CIRCUMRADIUS = 40;
 
 /**
+ * Minimum inward displacement applied to a wrap_step destination off
+ * the receiving side, in world units. Mirrors WALL_CLEARANCE from
+ * labyrinth.ts (0.6) plus a small safety margin so float-precision
+ * wobble can't bring the destination back into the wall-clearance band
+ * of any maze wall near the boundary. Bigger inward gives more
+ * continuity room at the cost of the player visibly "jumping" further
+ * into the polygon when they cross.
+ */
+const SAFE_INWARD = 0.65;
+
+/**
  * 8 vertices on a circle of radius OCTAGON_CIRCUMRADIUS, in CCW order
  * starting at angle 0 (the rightmost vertex). Vertex k is at angle
  * 45 * k degrees. All 8 vertices identify to a single cone point on the
@@ -205,9 +216,14 @@ export function stepAcrossGenus2Boundary(prev: Vec2, next: Vec2): Vec2 {
   const m = mateSide(sideIdx);
   const arrival = pointOnSide(m, 1 - t);
   const inw = inwardNormal(m);
+  // Inward displacement clamped to at least SAFE_INWARD: the player needs
+  // to land far enough off the receiving side that no maze wall near the
+  // boundary catches them in its WALL_CLEARANCE band on the next tick.
+  // Same class of fix as the sphere safe-nudge in #124.
+  const inward = Math.max(overshoot, SAFE_INWARD);
   return {
-    x: arrival.x + overshoot * inw.x,
-    z: arrival.z + overshoot * inw.z,
+    x: arrival.x + inward * inw.x,
+    z: arrival.z + inward * inw.z,
   };
 }
 
@@ -228,11 +244,68 @@ export function wrapGenus2Point(p: Vec2): Vec2 {
   const m = mateSide(sideIdx);
   const arrival = pointOnSide(m, 1 - t);
   const inw = inwardNormal(m);
+  const inward = Math.max(overshoot, SAFE_INWARD);
   const wrapped = {
-    x: arrival.x + overshoot * inw.x,
-    z: arrival.z + overshoot * inw.z,
+    x: arrival.x + inward * inw.x,
+    z: arrival.z + inward * inw.z,
   };
   if (pointInOctagon(wrapped)) return wrapped;
   // Doubly-exterior point (very rare). Fall back to the centre.
   return { x: 0, z: 0 };
+}
+
+/**
+ * Affine transform that places the mate side's interior into the region
+ * outside source side `sideIdx`. Used by the client renderer to draw an
+ * edge portal showing the destination's terrain ahead of an actual
+ * wrap_step crossing, so the player sees continuous geometry across the
+ * seam instead of a jarring jump in wall positions.
+ *
+ * For each side k, the identification glues V_k to V_{m+1} and V_{k+1}
+ * to V_m (where m = mateSide(k)). The orientation-preserving isometry
+ * that satisfies this is a pure rotation around the origin by +90 deg
+ * CCW (because all 4 mate pairs are at exactly +90 deg around the
+ * regular octagon's centre) plus a translation that lines V_m up with
+ * V_{k+1}.
+ *
+ * Returns the rotation in radians and the translation in world units.
+ * The client applies these to a Node3D containing a copy of the maze
+ * geometry: `position = (tx, 0, tz)`, `rotation.y = rotationRadians`.
+ */
+export interface PortalTransform {
+  /** Rotation angle around the world Y axis in radians. */
+  rotationRadians: number;
+  /** Translation in world units, applied after the rotation. */
+  tx: number;
+  tz: number;
+}
+
+export function genus2PortalTransform(sideIdx: number): PortalTransform {
+  const m = mateSide(sideIdx);
+  const Vm = OCTAGON_VERTICES[m]!;
+  const Vk1 = OCTAGON_VERTICES[(sideIdx + 1) % 8]!;
+  // The mate is either +2 or +6 (= -2) sides away around the regular
+  // octagon. Each direction has its own rotation sign because the
+  // parameter-flip identification reverses orientation along the side,
+  // and the rotation that takes the mate side's "interior" to the
+  // source side's "exterior" depends on which direction the mate sits.
+  // forward (mate = k + 2 mod 8): rotation = +90 deg CCW
+  // backward (mate = k + 6 mod 8): rotation = -90 deg
+  const forwardMate = (m - sideIdx + 8) % 8 === 2;
+  let rotVmX: number;
+  let rotVmZ: number;
+  if (forwardMate) {
+    // (x, z) -> (-z, x): +90 deg CCW around Y axis.
+    rotVmX = -Vm.z;
+    rotVmZ = Vm.x;
+  } else {
+    // (x, z) -> (z, -x): -90 deg around Y axis.
+    rotVmX = Vm.z;
+    rotVmZ = -Vm.x;
+  }
+  return {
+    rotationRadians: forwardMate ? Math.PI / 2 : -Math.PI / 2,
+    tx: Vk1.x - rotVmX,
+    tz: Vk1.z - rotVmZ,
+  };
 }

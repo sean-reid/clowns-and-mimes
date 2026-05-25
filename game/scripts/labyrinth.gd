@@ -126,18 +126,24 @@ func _build_wrap_tiles() -> void:
 	if topology == null:
 		return
 	var topo_name: String = topology.name()
-	# Plane has a hard boundary and no wrap; everything else gets clones so
-	# the playfield does not end at a void at the seam. Sphere's 3x2 cube
-	# packing technically needs rotated-edge adjacency rather than a flat
-	# ±WIDTH lattice, but the rest of the sphere code (topologyDistance,
-	# wrapPosition, gridMaze) already uses the same torus-style modular
-	# approximation, so cloning by ±WIDTH stays consistent until a strict
-	# cube net lands.
 	if topo_name == "plane":
 		return
 	var tiles_root := Node3D.new()
 	tiles_root.name = "WrapTiles"
 	add_child(tiles_root)
+	if topo_name == "genus2":
+		# Genus-2 fundamental polygon: each of the 8 octagon sides identifies
+		# to its mate (k XOR 2) with the parameter reversed. The portal
+		# transform per side is a rigid affine isometry (90 deg rotation +
+		# translation) that places the mate side's interior just outside
+		# the source side, so the player sees the destination geometry
+		# ahead of the wrap_step teleport.
+		_build_genus2_portal_tiles(tiles_root)
+		return
+	# Torus / Klein / sphere: legacy 3x3 flat-translated wrap-tile lattice.
+	# Klein's z-mirror is baked into the maze itself; sphere's T-net edges
+	# are an approximation that stays consistent with the rest of the
+	# sphere code path.
 	var ext_x: float = topology.extent_x()
 	var ext_z: float = topology.extent_z()
 	for dx in [-1, 0, 1]:
@@ -147,21 +153,39 @@ func _build_wrap_tiles() -> void:
 			var tile := Node3D.new()
 			tile.position = Vector3(float(dx) * ext_x, 0.0, float(dz) * ext_z)
 			tiles_root.add_child(tile)
-			var floor_clone := MeshInstance3D.new()
-			floor_clone.mesh = floor_node.mesh
-			floor_clone.material_override = floor_node.material_override
-			tile.add_child(floor_clone)
-			for seg in _wall_segments:
-				var wall_mesh := MeshInstance3D.new()
-				var box := BoxMesh.new()
-				box.size = Vector3(float(seg["length"]), WALL_HEIGHT, WALL_THICKNESS)
-				wall_mesh.mesh = box
-				wall_mesh.transform = seg["transform"]
-				var mat := StandardMaterial3D.new()
-				mat.albedo_color = Color(0.18, 0.18, 0.22)
-				mat.roughness = 0.85
-				wall_mesh.material_override = mat
-				tile.add_child(wall_mesh)
+			_populate_wrap_tile(tile)
+
+func _build_genus2_portal_tiles(tiles_root: Node3D) -> void:
+	# Per-side portal: render the playfield's geometry transformed by the
+	# side's gluing isometry. The 8 tiles together surround the octagon
+	# so every seam the player can approach has a visible destination
+	# preview, eliminating the position-of-walls jump on a wrap step.
+	for k in 8:
+		var t: Dictionary = topology.portal_transform(k)
+		var tile := Node3D.new()
+		tile.transform = Transform3D(
+			Basis().rotated(Vector3.UP, t["rotation_y"]),
+			Vector3(t["tx"], 0.0, t["tz"]),
+		)
+		tiles_root.add_child(tile)
+		_populate_wrap_tile(tile)
+
+func _populate_wrap_tile(tile: Node3D) -> void:
+	var floor_clone := MeshInstance3D.new()
+	floor_clone.mesh = floor_node.mesh
+	floor_clone.material_override = floor_node.material_override
+	tile.add_child(floor_clone)
+	for seg in _wall_segments:
+		var wall_mesh := MeshInstance3D.new()
+		var box := BoxMesh.new()
+		box.size = Vector3(float(seg["length"]), WALL_HEIGHT, WALL_THICKNESS)
+		wall_mesh.mesh = box
+		wall_mesh.transform = seg["transform"]
+		var mat := StandardMaterial3D.new()
+		mat.albedo_color = Color(0.18, 0.18, 0.22)
+		mat.roughness = 0.85
+		wall_mesh.material_override = mat
+		tile.add_child(wall_mesh)
 
 func _resolve_children() -> void:
 	walls_root = get_node_or_null("Walls") as Node3D

@@ -62,19 +62,23 @@ var _last_remote_position: Vector3 = Vector3.ZERO
 var _last_remote_time_s: float = 0.0
 var _remote_planar_speed: float = 0.0
 
-# Remote-position interpolation. The server ticks at 20 Hz so snapshots
-# arrive every ~50 ms; without smoothing the body teleports between samples
-# and the screen jitters. _interp_prev is the position the body should be at
-# when a new snapshot arrives; _interp_target is the position to ride toward
-# over the next snapshot interval. _interp_dt is the measured interval (we do
-# not assume 50 ms in case the server tick rate ever changes).
-var _interp_prev_position: Vector3 = Vector3.ZERO
-var _interp_prev_yaw: float = 0.0
-var _interp_target_position: Vector3 = Vector3.ZERO
-var _interp_target_yaw: float = 0.0
-var _interp_start_time_s: float = 0.0
-var _interp_dt_s: float = 0.05
-var _interp_armed: bool = false
+# Remote-position rendering uses a fixed-delay snapshot buffer (the Quake /
+# Source / Overwatch "entity interpolation" pattern). Each apply_remote_state
+# appends (timestamp, position, yaw) to _remote_buffer. _drive_remote_interp
+# renders the body at `now - REMOTE_RENDER_DELAY_S`, interpolating between the
+# two snapshots that bracket that virtual time. Because we always have at
+# least one future snapshot relative to the rendered time, network jitter up
+# to the buffer size is invisible: late packets just shrink the buffer, they
+# do not stall or snap the body.
+const REMOTE_RENDER_DELAY_S := 0.1
+const REMOTE_BUFFER_MAX_AGE_S := 0.5
+# Threshold for detecting a topology seam crossing between two snapshots. A
+# single tick at sprint speed travels ~0.1 m, so anything past 1 m must be a
+# wrap (or a server-side teleport). Skip interpolation and snap to the newer
+# side rather than lerping through the playfield.
+const REMOTE_WRAP_THRESHOLD := 1.0
+var _remote_buffer: Array[Dictionary] = []
+var _remote_armed: bool = false
 
 func _ready() -> void:
 	if is_local and not bot:
@@ -135,10 +139,10 @@ func _physics_process(delta: float) -> void:
 		move_and_slide()
 		_update_footsteps(0.0, false)
 		return
-	# Remote bodies (online humans and online bots) follow server snapshots.
-	# Interpolate their position over the snapshot interval so they glide
-	# instead of teleporting every ~50 ms.
-	if _interp_armed and not is_local:
+	# Remote bodies (online humans and online bots) render from a fixed-delay
+	# snapshot buffer; see _drive_remote_interp for the math. Footstep audio
+	# rides the smoothed planar speed sampled in apply_remote_state.
+	if _remote_armed and not is_local:
 		_drive_remote_interp()
 		_update_footsteps(_remote_planar_speed, false)
 		return
@@ -233,28 +237,21 @@ func apply_remote_state(pos: Vector3, yaw: float, is_frozen: bool, sprint: float
 			# without lagging significantly behind real movement.
 			var sample: float = planar.length() / dt
 			_remote_planar_speed = lerpf(_remote_planar_speed, sample, 0.5)
-			# Record the actual snapshot interval; interpolation rides over
-			# this duration so it matches the server's true tick rate. Floor
-			# at 0.01 so the 60 Hz server tick (~16.7 ms) lands inside the
-			# clamp window instead of being widened.
-			_interp_dt_s = clampf(dt, 0.01, 0.2)
 	_last_remote_position = pos
 	_last_remote_time_s = now_s
-	# Hand off interpolation: the previous target becomes the new start, the
-	# new sample becomes the new target. On the very first snapshot snap the
-	# body straight to pos so we don't lerp from origin.
-	if _interp_armed:
-		_interp_prev_position = _interp_target_position
-		_interp_prev_yaw = _interp_target_yaw
-	else:
-		_interp_prev_position = pos
-		_interp_prev_yaw = yaw
+	# First snapshot snaps the body directly to pos so it doesn't lerp from
+	# the origin. Subsequent snapshots feed the interpolation buffer.
+	if not _remote_armed:
 		global_position = pos
 		rotation.y = yaw
-		_interp_armed = true
-	_interp_target_position = pos
-	_interp_target_yaw = yaw
-	_interp_start_time_s = now_s
+		_remote_armed = true
+	_remote_buffer.append({"t": now_s, "pos": pos, "yaw": yaw})
+	# Drop entries older than the buffer window. Always keep at least two so
+	# _drive_remote_interp has a bracketing pair even when the player has not
+	# moved for a while.
+	var cutoff: float = now_s - REMOTE_BUFFER_MAX_AGE_S
+	while _remote_buffer.size() > 2 and float(_remote_buffer[0]["t"]) < cutoff:
+		_remote_buffer.pop_front()
 	frozen = is_frozen
 	sprint_energy = sprint
 	# Don't call settle_into_world here anymore: the body is no longer being
@@ -272,16 +269,52 @@ func settle_into_world() -> void:
 	move_and_slide()
 	velocity = prior
 
-# Slide remote bodies from _interp_prev_position toward _interp_target_position
-# at a rate proportional to the snapshot interval. Run every physics frame for
-# any remote body; the alpha is clamped so the body sits at the latest target
-# if the next snapshot is late.
+# Render the remote body at `now - REMOTE_RENDER_DELAY_S` by interpolating
+# between the two buffered snapshots that bracket that virtual time. The
+# delay guarantees we have at least one future snapshot relative to render
+# time, so jitter inside the buffer window never produces a stall or a snap.
+# If render_t falls outside the buffer (rare: connection hiccup longer than
+# REMOTE_BUFFER_MAX_AGE_S, or the very first snapshot just arrived), hold at
+# the nearest edge instead of extrapolating into thin air.
 func _drive_remote_interp() -> void:
-	var now_s: float = Time.get_unix_time_from_system()
-	var elapsed: float = now_s - _interp_start_time_s
-	var alpha: float = 1.0 if _interp_dt_s <= 0.0 else clampf(elapsed / _interp_dt_s, 0.0, 1.0)
-	global_position = _interp_prev_position.lerp(_interp_target_position, alpha)
-	rotation.y = lerp_angle(_interp_prev_yaw, _interp_target_yaw, alpha)
+	if _remote_buffer.is_empty():
+		return
+	var render_t: float = Time.get_unix_time_from_system() - REMOTE_RENDER_DELAY_S
+	# Locate the latest snapshot with t <= render_t; the snapshot at
+	# older_index + 1 (if it exists) is the future bracket.
+	var older_index: int = -1
+	for i in range(_remote_buffer.size() - 1, -1, -1):
+		if float(_remote_buffer[i]["t"]) <= render_t:
+			older_index = i
+			break
+	if older_index < 0:
+		# render_t is before any buffered snapshot - hold at the oldest entry.
+		var oldest: Dictionary = _remote_buffer[0]
+		global_position = oldest["pos"]
+		rotation.y = float(oldest["yaw"])
+		return
+	if older_index >= _remote_buffer.size() - 1:
+		# render_t is past the latest snapshot - hold rather than extrapolating
+		# blindly. A few late ticks of network delay will resolve themselves
+		# when the next snapshot arrives.
+		var latest: Dictionary = _remote_buffer[_remote_buffer.size() - 1]
+		global_position = latest["pos"]
+		rotation.y = float(latest["yaw"])
+		return
+	var a: Dictionary = _remote_buffer[older_index]
+	var b: Dictionary = _remote_buffer[older_index + 1]
+	var a_pos: Vector3 = a["pos"]
+	var b_pos: Vector3 = b["pos"]
+	if (b_pos - a_pos).length() > REMOTE_WRAP_THRESHOLD:
+		# Topology seam crossing or server teleport - snap to the newer side
+		# instead of lerping across the playfield.
+		global_position = b_pos
+		rotation.y = float(b["yaw"])
+		return
+	var span: float = float(b["t"]) - float(a["t"])
+	var alpha: float = 0.0 if span <= 1e-6 else clampf((render_t - float(a["t"])) / span, 0.0, 1.0)
+	global_position = a_pos.lerp(b_pos, alpha)
+	rotation.y = lerp_angle(float(a["yaw"]), float(b["yaw"]), alpha)
 
 func _update_marker() -> void:
 	# Local player should not see their own marker even while frozen.

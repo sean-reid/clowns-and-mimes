@@ -49,11 +49,13 @@ func set_topology(name: String) -> void:
 	if name.is_empty():
 		topology_badge.text = ""
 		return
-	# Pretty names per topology. "klein" alone is ambiguous; the full
-	# "Klein Bottle" reads better. Everything else title-cases the wire name.
+	# Pretty names per topology. The wire string isn't always nice to display
+	# verbatim ("genus2" -> "Double Torus", "klein" -> "Klein Bottle").
 	var pretty: String
 	if name == "klein":
 		pretty = "Klein Bottle"
+	elif name == "genus2":
+		pretty = "Double Torus"
 	else:
 		pretty = name.substr(0, 1).to_upper() + name.substr(1)
 	topology_badge.text = "on the %s" % pretty

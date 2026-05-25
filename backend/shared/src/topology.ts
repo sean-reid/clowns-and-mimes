@@ -120,16 +120,12 @@ export function topologyDistance(a: Vec2, b: Vec2, topology: Topology, width: nu
       return Math.hypot(a.x - b.x, a.z - b.z);
     }
     case 'mobius': {
-      // Möbius distance: take the shorter of the direct chord and the
-      // wrap-with-z-flip chord. The wrap candidate translates the source
-      // by +/- 2*MOBIUS_HALF_X in x and flips z, then measures straight-
-      // line distance to b. This matches the actual shortest path on
-      // the flat universal cover.
+      // Möbius cylindrical double cover: x wraps modular at 2*MOBIUS_HALF_X
+      // with no flip in the wrap (the flip is baked into the maze geometry).
+      // z is plain Euclidean (no wrap; hard top/bottom bounds).
       void width;
-      const direct = Math.hypot(a.x - b.x, a.z - b.z);
-      const wrapRight = Math.hypot(a.x + 2 * MOBIUS_HALF_X - b.x, -a.z - b.z);
-      const wrapLeft = Math.hypot(a.x - 2 * MOBIUS_HALF_X - b.x, -a.z - b.z);
-      return Math.min(direct, wrapRight, wrapLeft);
+      const dx = wrappedDelta(a.x, b.x, 2 * MOBIUS_HALF_X);
+      return Math.hypot(dx, a.z - b.z);
     }
   }
 }
@@ -170,32 +166,12 @@ export function wrappedUnitDelta(from: Vec2, to: Vec2, topology: Topology, width
       break;
     }
     case 'mobius': {
-      // Pick the shorter of the direct or x-wrap-with-z-flip path so a
-      // bot near the seam heads through it instead of taking the long
-      // way around. The wrap deltas mirror the topologyDistance path.
+      // Cylindrical double cover: x is plain modular at 2*MOBIUS_HALF_X,
+      // z is plain Euclidean (no wrap). The Möbius "twist" is encoded
+      // in the maze geometry, not in the wrap direction.
       void width;
-      const direct = { dx: to.x - from.x, dz: to.z - from.z, dist: 0 };
-      direct.dist = Math.hypot(direct.dx, direct.dz);
-      const wrapR = {
-        dx: to.x - (from.x + 2 * MOBIUS_HALF_X),
-        dz: -to.z - from.z,
-        dist: 0,
-      };
-      wrapR.dist = Math.hypot(wrapR.dx, wrapR.dz);
-      const wrapL = {
-        dx: to.x - (from.x - 2 * MOBIUS_HALF_X),
-        dz: -to.z - from.z,
-        dist: 0,
-      };
-      wrapL.dist = Math.hypot(wrapL.dx, wrapL.dz);
-      const best =
-        direct.dist <= Math.min(wrapR.dist, wrapL.dist)
-          ? direct
-          : wrapR.dist <= wrapL.dist
-            ? wrapR
-            : wrapL;
-      dx = best.dx;
-      dz = best.dz;
+      dx = wrappedDelta(from.x, to.x, 2 * MOBIUS_HALF_X);
+      dz = to.z - from.z;
       break;
     }
   }

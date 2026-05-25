@@ -479,25 +479,30 @@ export function generateGenus2GridWalls(seed: number): WallSegment[] {
 }
 
 /**
- * Möbius strip grid sizing. The strip is 2:1 (long x, narrow z), so we
- * use 2N columns x N rows of cells with the same cell side on both
- * axes. Exposed for the bot pathfinder so its grid shape matches.
+ * Möbius strip grid sizing for the cylindrical double cover. The cover
+ * is 2:1 in width:height; we use 2N x N cells (matching Klein). The
+ * right half (cols >= N) is the z-mirror of the left half (cols < N)
+ * so walking across the x = 0 fold sees continuous wall positions.
  */
 export const MOBIUS_GRID_X = 2 * GRID_MAZE_N;
 export const MOBIUS_GRID_Z = GRID_MAZE_N;
 
 /**
- * Möbius strip maze. Rectangular DFS spanning tree with x wrapping on a
- * row flip (the same identification the topology adapter uses); top and
- * bottom z edges stay walled because the strip has a single boundary
- * loop. The maze cells sit on a 2N x N grid covering the full strip,
- * matching mobiusExtents() in mobius.ts.
+ * Möbius strip maze rendered as the cylindrical double cover. Generates
+ * a DFS spanning tree on the left half (cols 0..N-1) with x wrapping
+ * pure-modular to itself, then mirrors the openings across z to fill
+ * the right half (cols N..2N-1). x wraps modular at 2 * MOBIUS_HALF_X;
+ * z is hard-bounded by top/bottom walls. The Möbius "twist" lives in
+ * the z-mirror that fills the right half - walking from x = 0 into the
+ * right half is the same as walking into the z-flipped image of the
+ * left, exactly the Möbius identification (x, z) ~ (x + L, -z).
  */
 export function generateMobiusGridWalls(seed: number): WallSegment[] {
   const cols = MOBIUS_GRID_X;
   const rows = MOBIUS_GRID_Z;
+  const fundamentalCols = cols / 2; // = N, the left-half count
   const total = cols * rows;
-  const cellSize = (2 * MOBIUS_HALF_X) / cols; // = (2*MOBIUS_HALF_Z)/rows for the 2:1 strip
+  const cellSize = (2 * MOBIUS_HALF_X) / cols;
   const halfX = MOBIUS_HALF_X;
   const halfZ = MOBIUS_HALF_Z;
 
@@ -507,38 +512,35 @@ export function generateMobiusGridWalls(seed: number): WallSegment[] {
     return rng;
   };
 
-  const mobiusNeighbor = (cell: number, dir: number): { cell: number; dir: number } | null => {
-    const cc = cell % cols;
-    const cr = Math.floor(cell / cols);
+  // Build the fundamental-half maze: DFS over the left N cols, treating
+  // the left and right ends of this half as a torus seam (x wraps pure
+  // modular within the fundamental). z is hard-bounded.
+  const fundamentalNeighbor = (cell: number, dir: number): { cell: number; dir: number } | null => {
+    const cc = cell % fundamentalCols;
+    const cr = Math.floor(cell / fundamentalCols);
     let nc = cc;
     let nr = cr;
-    let flipRow = false;
     if (dir === DIR_EAST) nc = cc + 1;
     else if (dir === DIR_WEST) nc = cc - 1;
     else if (dir === DIR_NORTH) nr = cr + 1;
     else if (dir === DIR_SOUTH) nr = cr - 1;
-    if (nc < 0 || nc >= cols) {
-      nc = ((nc % cols) + cols) % cols;
-      flipRow = true;
-    }
-    if (nr < 0 || nr >= rows) return null; // hard boundary, no wrap
-    if (flipRow) nr = rows - 1 - nr;
-    return { cell: nc + nr * cols, dir };
+    if (nc < 0 || nc >= fundamentalCols)
+      nc = ((nc % fundamentalCols) + fundamentalCols) % fundamentalCols;
+    if (nr < 0 || nr >= rows) return null;
+    return { cell: nc + nr * fundamentalCols, dir };
   };
-
-  const visited = new Uint8Array(total);
-  const openings = new Uint8Array(total);
-
-  const start = nextRand() % total;
-  visited[start] = 1;
+  const fundamentalOpenings = new Uint8Array(fundamentalCols * rows);
+  const fundamentalVisited = new Uint8Array(fundamentalCols * rows);
+  const start = nextRand() % (fundamentalCols * rows);
+  fundamentalVisited[start] = 1;
   const stack: number[] = [start];
   while (stack.length > 0) {
     const cur = stack[stack.length - 1]!;
     const candidates: { cell: number; dir: number }[] = [];
     for (let dir = 0; dir < 4; dir += 1) {
-      const nb = mobiusNeighbor(cur, dir);
+      const nb = fundamentalNeighbor(cur, dir);
       if (nb === null) continue;
-      if (visited[nb.cell]) continue;
+      if (fundamentalVisited[nb.cell]) continue;
       candidates.push(nb);
     }
     if (candidates.length === 0) {
@@ -546,31 +548,42 @@ export function generateMobiusGridWalls(seed: number): WallSegment[] {
       continue;
     }
     const pick = candidates[nextRand() % candidates.length]!;
-    openings[cur] |= 1 << pick.dir;
-    openings[pick.cell] |= 1 << oppositeDir(pick.dir);
-    visited[pick.cell] = 1;
+    fundamentalOpenings[cur] |= 1 << pick.dir;
+    fundamentalOpenings[pick.cell] |= 1 << oppositeDir(pick.dir);
+    fundamentalVisited[pick.cell] = 1;
     stack.push(pick.cell);
   }
-
-  // Braid dead ends so the maze loops rather than dead-ends.
-  for (let cell = 0; cell < total; cell += 1) {
-    if (popCountNibble(openings[cell]!) >= 2) continue;
-    const closedNeighbors: { dir: number; cell: number }[] = [];
+  for (let cell = 0; cell < fundamentalCols * rows; cell += 1) {
+    if (popCountNibble(fundamentalOpenings[cell]!) >= 2) continue;
+    const closed: { dir: number; cell: number }[] = [];
     for (let dir = 0; dir < 4; dir += 1) {
-      if ((openings[cell]! & (1 << dir)) !== 0) continue;
-      const nb = mobiusNeighbor(cell, dir);
+      if ((fundamentalOpenings[cell]! & (1 << dir)) !== 0) continue;
+      const nb = fundamentalNeighbor(cell, dir);
       if (nb === null) continue;
-      closedNeighbors.push({ dir, cell: nb.cell });
+      closed.push({ dir, cell: nb.cell });
     }
-    if (closedNeighbors.length === 0) continue;
-    const pick = closedNeighbors[nextRand() % closedNeighbors.length]!;
-    openings[cell] |= 1 << pick.dir;
-    openings[pick.cell] |= 1 << oppositeDir(pick.dir);
+    if (closed.length === 0) continue;
+    const pick = closed[nextRand() % closed.length]!;
+    fundamentalOpenings[cell] |= 1 << pick.dir;
+    fundamentalOpenings[pick.cell] |= 1 << oppositeDir(pick.dir);
   }
 
-  // Emit walls. Skip the left/right boundary (identification seam, open).
-  // The top/bottom are hard boundaries so emit them as walls in addition
-  // to any interior maze walls.
+  // Expand to the double cover: left half = fundamental, right half =
+  // z-mirror of fundamental. The mirror swaps north <-> south openings.
+  const openings = new Uint8Array(total);
+  for (let r = 0; r < rows; r += 1) {
+    for (let c = 0; c < fundamentalCols; c += 1) {
+      openings[c + r * cols] = fundamentalOpenings[c + r * fundamentalCols]!;
+    }
+    for (let c = 0; c < fundamentalCols; c += 1) {
+      const mirroredR = rows - 1 - r;
+      const fundOpening = fundamentalOpenings[c + r * fundamentalCols]!;
+      openings[c + fundamentalCols + mirroredR * cols] = swapNorthSouth(fundOpening);
+    }
+  }
+
+  // Emit walls. East/north of each cell; skip the right-edge seam (last
+  // col's east is the x wrap, open). Add hard top/bottom walls explicitly.
   const out: WallSegment[] = [];
   for (let r = 0; r < rows; r += 1) {
     for (let c = 0; c < cols; c += 1) {
@@ -579,8 +592,6 @@ export function generateMobiusGridWalls(seed: number): WallSegment[] {
       const northClosed = (openings[id]! & (1 << DIR_NORTH)) === 0;
       const isLastCol = c === cols - 1;
       const isLastRow = r === rows - 1;
-      // East edge of last column is the right-side seam: skip the wall
-      // even if the DFS marked it closed, because the topology wraps.
       if (eastClosed && !isLastCol) {
         const x = (c + 1) * cellSize - halfX;
         const z0 = r * cellSize - halfZ;
@@ -595,7 +606,6 @@ export function generateMobiusGridWalls(seed: number): WallSegment[] {
       }
     }
   }
-  // Hard top and bottom boundary walls. Span the full strip width.
   for (let c = 0; c < cols; c += 1) {
     const x0 = c * cellSize - halfX;
     const x1 = (c + 1) * cellSize - halfX;

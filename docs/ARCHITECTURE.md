@@ -26,7 +26,7 @@ This document is the single source of truth for how the project is built. Other 
 
 ## Goals and constraints
 
-The game is a 3D team tag game played by 4 to 16 players (humans and bots) on a labyrinth wrapped onto a finite plane, torus, Klein bottle, or double torus. Visibility is intentionally limited. Audio is sparse.
+The game is a 3D team tag game played by 4 to 16 players (humans and bots) on a labyrinth wrapped onto a finite plane, torus, Möbius strip, Klein bottle, or double torus. Visibility is intentionally limited. Audio is sparse.
 
 Hard constraints from the project brief:
 
@@ -145,6 +145,7 @@ classDiagram
   }
   Topology <|-- PlaneTopology
   Topology <|-- TorusTopology
+  Topology <|-- MobiusTopology
   Topology <|-- KleinTopology
   Topology <|-- Genus2Topology
 ```
@@ -153,6 +154,7 @@ classDiagram
 | ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
 | Plane        | No wrap. Hard walls at edges.                                                                                                                                                   | None.                                                                                                                                      |
 | Torus        | X wraps at width, Z wraps at depth.                                                                                                                                             | Edge portals render the opposite side of the map.                                                                                          |
+| Möbius strip | X wraps with vertical flip, Z is bounded by hard walls. Single boundary loop.                                                                                                   | Two edge portals (one per x-seam) render the strip mirrored across z, giving continuous geometry past the seam.                            |
 | Klein bottle | X wraps with vertical flip, Z wraps with no flip.                                                                                                                               | Edge portals on X axis render an inverted copy.                                                                                            |
 | Double torus | Regular octagon fundamental polygon with sides identified in pairs (`aba^-1b^-1cdc^-1d^-1`). Crossing a side teleports the player to the mate side with the parameter reversed. | The 8 octagon vertices all identify to a single cone point on the closed surface, giving the characteristic two-handle (genus 2) topology. |
 

@@ -1,146 +1,88 @@
-// Möbius strip topology.
+// Möbius strip topology rendered as a CYLINDRICAL DOUBLE COVER.
 //
-// The playfield is a rectangle [-Lx, Lx] x [-Lz, Lz] with the textbook
-// one-twist identification:
+// The fundamental Möbius strip is a rectangle with the textbook identification
 //
-//      (-Lx, z)  ~  (+Lx, -z)
+//     (x, z)  ~  (x + L, -z)        on the strip of width L and height W
 //
-// Left and right edges identify with a z-flip; top and bottom (z = +/- Lz)
-// are hard walls (the strip has a single boundary loop topologically, so
-// the top and bottom in our rectangle parametrisation are the only edges
-// that aren't seams).
+// where crossing the seam comes with a z-flip. Rendering that flip live at
+// the seam (jump in wall positions, camera mirror) feels jarring. Instead
+// we render the orientation double cover: a cylinder of twice the strip's
+// length, where the second half of the cylinder is the z-mirror of the
+// first. Walking around the cylinder once visits both "sides" of the
+// underlying Möbius surface. The seam becomes a pure x translation - no
+// z-flip live at the wrap point - because the flip is baked into the
+// geometry's z-mirror at x = 0.
 //
-// Geometrically the Möbius strip's universal cover is the infinite flat
-// strip R x [-Lz, Lz] - a flat subset of the Euclidean plane. Flat
-// rendering is therefore exact, not an approximation: edge portals are
-// pure translation + reflection and tile consistently. This is the same
-// math Klein already uses on its x-seam, just without the corresponding
-// z-wrap (the Möbius strip is a single-cover; Klein is a double cover
-// that happens to have z wrap by virtue of the right half being the
-// z-mirror of the left).
+// Concretely the playfield is x in [-MOBIUS_HALF_X, MOBIUS_HALF_X],
+// z in [-MOBIUS_HALF_Z, MOBIUS_HALF_Z]. x wraps modular with period
+// 2 * MOBIUS_HALF_X. z is hard-bounded (the Möbius strip has a single
+// boundary loop; in the double-cover rendering the boundary becomes the
+// top + bottom of the cylinder). The maze generator emits the left half
+// (x < 0) as a regular DFS maze and mirrors it across z to fill the
+// right half (x > 0) - that's where the Möbius "twist" lives.
+//
+// Identical math to the existing Klein bottle implementation, just with
+// z hard-bounded instead of wrapping. Klein is the closed double cover
+// (z wraps); Möbius is the open / bounded double cover.
 
 import type { Vec2 } from './protocol.ts';
 
 /**
- * Half-extent of the Möbius strip along x. Total x range is 2 * Lx.
- * Sized to match WORLD_WIDTH so the strip's "length" matches the
- * canonical playfield x-dimension on other topologies.
+ * Half-extent along x of the rendered cylinder. Total x range is 2 * Lx;
+ * the underlying Möbius strip is half that long (the cylinder is the
+ * orientation double cover). Sized so the cylinder length matches the
+ * Klein bottle's 2W playfield, keeping the same arena scale.
  */
-export const MOBIUS_HALF_X = 40;
+export const MOBIUS_HALF_X = 80;
 
 /**
- * Half-extent along z. Total z range is 2 * Lz. The Möbius strip is
- * conventionally "long and narrow"; we use a 2:1 aspect (length:width)
- * so the twist actually shows up in gameplay rather than mapping to a
- * near-square arena.
+ * Half-extent along z. The strip's single boundary loop in the cylindrical
+ * cover becomes the top + bottom z bounds. Total z range is 2 * Lz.
  */
 export const MOBIUS_HALF_Z = 20;
-
-/**
- * Inward displacement clamped onto every wrap_step destination. Matches
- * WALL_CLEARANCE (= 0.6) plus a small epsilon so float-precision
- * rounding can't bring the destination back into the wall-clearance
- * band of any maze wall along the seam.
- */
-const SAFE_INWARD = 0.65;
 
 export function mobiusExtents(): { x: number; z: number } {
   return { x: 2 * MOBIUS_HALF_X, z: 2 * MOBIUS_HALF_Z };
 }
 
 /**
- * True when `p` lies inside the open rectangle. The Möbius identification
- * applies only to the x edges; the z edges are hard walls so points past
- * them are genuinely out-of-bounds (no wrap available).
+ * True when `p` lies inside the cylinder's rendered domain. x is modular
+ * so the check just keeps z in the strip; the x bounds are normalised
+ * by the wrap rather than rejected.
  */
 export function pointInMobius(p: Vec2): boolean {
-  return (
-    p.x >= -MOBIUS_HALF_X && p.x <= MOBIUS_HALF_X && p.z >= -MOBIUS_HALF_Z && p.z <= MOBIUS_HALF_Z
-  );
+  return p.z >= -MOBIUS_HALF_Z && p.z <= MOBIUS_HALF_Z;
 }
 
 /**
- * Step from `prev` (assumed inside the strip) to `next`. The left/right
- * seam wraps with a z-flip; the top/bottom z edges are hard walls so a
- * step past them returns `prev` (caller treats it as a blocked move).
+ * Step from `prev` to `next`. x wraps modular at 2 * MOBIUS_HALF_X; z is
+ * a hard wall (returns `prev` unchanged if the candidate is past the
+ * strip's z bounds, leaving the caller's wall-collision step to clip the
+ * motion). No z-flip at the wrap - the flip is baked into the maze
+ * geometry's z-mirror across x = 0, so the player sees continuous walls
+ * across the seam.
  */
 export function stepAcrossMobiusBoundary(prev: Vec2, next: Vec2): Vec2 {
-  // z bounds first: top/bottom are hard. The collision system clips most
-  // of these via labyrinth walls; this final guard catches anything that
-  // slipped through.
   if (next.z > MOBIUS_HALF_Z + 1e-6 || next.z < -MOBIUS_HALF_Z - 1e-6) {
     return prev;
   }
-  // x bounds: wrap with z-flip.
-  if (next.x > MOBIUS_HALF_X) {
-    const overshoot = next.x - MOBIUS_HALF_X;
-    const inward = Math.max(overshoot, SAFE_INWARD);
-    return {
-      x: -MOBIUS_HALF_X + inward,
-      z: -next.z,
-    };
-  }
-  if (next.x < -MOBIUS_HALF_X) {
-    const overshoot = -MOBIUS_HALF_X - next.x;
-    const inward = Math.max(overshoot, SAFE_INWARD);
-    return {
-      x: MOBIUS_HALF_X - inward,
-      z: -next.z,
-    };
-  }
-  return next;
+  return { x: wrapModular(next.x, 2 * MOBIUS_HALF_X), z: next.z };
 }
 
 /**
- * Recovery wrap for a single point. Interior points pass through. A
- * point past the x edges identifies via the z-flip rule. A point past
- * the z edges (shouldn't happen in normal play) clamps to the boundary.
+ * Single-point recovery wrap. Interior points pass through; x is wrapped
+ * modular; z is clamped to the strip.
  */
 export function wrapMobiusPoint(p: Vec2): Vec2 {
-  let { x, z } = p;
-  if (x > MOBIUS_HALF_X) {
-    const overshoot = x - MOBIUS_HALF_X;
-    x = -MOBIUS_HALF_X + Math.min(overshoot, 2 * MOBIUS_HALF_X);
-    z = -z;
-  } else if (x < -MOBIUS_HALF_X) {
-    const overshoot = -MOBIUS_HALF_X - x;
-    x = MOBIUS_HALF_X - Math.min(overshoot, 2 * MOBIUS_HALF_X);
-    z = -z;
-  }
+  const x = wrapModular(p.x, 2 * MOBIUS_HALF_X);
+  let z = p.z;
   if (z > MOBIUS_HALF_Z) z = MOBIUS_HALF_Z;
-  if (z < -MOBIUS_HALF_Z) z = -MOBIUS_HALF_Z;
+  else if (z < -MOBIUS_HALF_Z) z = -MOBIUS_HALF_Z;
   return { x, z };
 }
 
-/**
- * Affine transform that places the strip's interior into the region
- * outside source edge `side`. Used by the client renderer to draw an
- * edge portal showing the destination's terrain ahead of an actual
- * wrap_step crossing, so the player sees continuous geometry across
- * the seam instead of a teleport.
- *
- * `side` is 0 for the +x edge and 1 for the -x edge. The transform is
- * a pure translation along x plus a z-reflection (no rotation). Top and
- * bottom edges are hard walls so they have no portal.
- *
- * For the right edge (+x): translate the strip left by 2*MOBIUS_HALF_X
- * and mirror z. The translated copy sits at x in [Lx, 3*Lx], showing
- * the destination's geometry continuing rightward with the z-flip
- * baked in.
- */
-export interface MobiusPortalTransform {
-  /** Translation along x. */
-  tx: number;
-  /** Mirror z if true, else pass through. Always true for Möbius. */
-  flipZ: boolean;
+function wrapModular(v: number, period: number): number {
+  const half = period / 2;
+  const w = (((v + half) % period) + period) % period;
+  return w - half;
 }
-
-export const MOBIUS_PORTAL_RIGHT: MobiusPortalTransform = {
-  tx: 2 * MOBIUS_HALF_X,
-  flipZ: true,
-};
-
-export const MOBIUS_PORTAL_LEFT: MobiusPortalTransform = {
-  tx: -2 * MOBIUS_HALF_X,
-  flipZ: true,
-};

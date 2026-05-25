@@ -321,10 +321,10 @@ function gridShapeFor(topology: Topology): GridShape {
     };
   }
   if (topology === 'mobius') {
-    // Möbius strip: 2:1 rectangle (length 2*MOBIUS_HALF_X, height
-    // 2*MOBIUS_HALF_Z). x wraps with a row-flip (same identification
-    // Klein uses on its x seam); z is hard-bounded by top/bottom walls
-    // so wrapZ stays false.
+    // Möbius strip cylindrical double cover. The right half of the maze
+    // is the z-mirror of the left, so the wrap is plain modular x with
+    // NO row flip - the flip is in the geometry, not in the wrap rule
+    // (same trick Klein uses). z is hard-bounded by top/bottom walls.
     return {
       cols: MOBIUS_GRID_X,
       rows: MOBIUS_GRID_Z,
@@ -332,7 +332,7 @@ function gridShapeFor(topology: Topology): GridShape {
       cellZ: (2 * MOBIUS_HALF_Z) / MOBIUS_GRID_Z,
       wrapX: true,
       wrapZ: false,
-      flipRowOnXWrap: true,
+      flipRowOnXWrap: false,
     };
   }
   return {

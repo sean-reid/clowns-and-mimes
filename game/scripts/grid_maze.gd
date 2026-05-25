@@ -402,21 +402,23 @@ static func _genus2_neighbor(cell: int, dir: int, n: int, walkable: PackedByteAr
 		return -1
 	return idx
 
-# Möbius strip maze. 2N x N rectangular grid (default 20 x 10) covering the
-# strip's [-Lx, Lx] x [-Lz, Lz] domain. x wraps with a row flip (the same
-# identification the topology adapter uses); z is hard-bounded. Mirrors
-# backend/shared/src/gridMaze.ts::generateMobiusGridWalls.
+# Möbius strip maze rendered as the cylindrical double cover. Generates a
+# DFS spanning tree on the left half (cols 0..N-1) with x wrapping pure-
+# modular within the fundamental, then mirrors the openings across z to
+# fill the right half (cols N..2N-1). The Möbius "twist" lives in that
+# z-mirror; the wrap at the cover's x edge is plain modular so the seam
+# is butter-smooth. Mirrors backend/shared/src/gridMaze.ts.
 const MOBIUS_GRID_X := 2 * GRID_MAZE_N
 const MOBIUS_GRID_Z := GRID_MAZE_N
-const MOBIUS_HALF_X := 40.0
+const MOBIUS_HALF_X := 80.0
 const MOBIUS_HALF_Z := 20.0
 
-static func _mobius_neighbor(cell: int, dir: int, cols: int, rows: int) -> int:
-	var cc: int = cell % cols
-	var cr: int = cell / cols
+static func _mobius_fundamental_neighbor(cell: int, dir: int, fcols: int, rows: int) -> int:
+	# Pure-modular x wrap within the fundamental half; z hard-bounded.
+	var cc: int = cell % fcols
+	var cr: int = cell / fcols
 	var nc: int = cc
 	var nr: int = cr
-	var flip_row: bool = false
 	if dir == DIR_EAST:
 		nc = cc + 1
 	elif dir == DIR_WEST:
@@ -425,41 +427,40 @@ static func _mobius_neighbor(cell: int, dir: int, cols: int, rows: int) -> int:
 		nr = cr + 1
 	elif dir == DIR_SOUTH:
 		nr = cr - 1
-	if nc < 0 or nc >= cols:
-		nc = posmod(nc, cols)
-		flip_row = true
+	if nc < 0 or nc >= fcols:
+		nc = posmod(nc, fcols)
 	if nr < 0 or nr >= rows:
 		return -1
-	if flip_row:
-		nr = rows - 1 - nr
-	return nc + nr * cols
+	return nc + nr * fcols
 
 static func _generate_mobius(seed_value: int) -> Array:
 	var cols: int = MOBIUS_GRID_X
 	var rows: int = MOBIUS_GRID_Z
+	var fcols: int = cols / 2
 	var total: int = cols * rows
+	var ftotal: int = fcols * rows
 	var cell_size: float = (2.0 * MOBIUS_HALF_X) / float(cols)
 	var half_x: float = MOBIUS_HALF_X
 	var half_z: float = MOBIUS_HALF_Z
 
 	var rng_state: int = seed_value & 0xFFFFFFFF
-	var visited := PackedByteArray()
-	visited.resize(total)
-	var openings := PackedByteArray()
-	openings.resize(total)
+	var fundamental_visited := PackedByteArray()
+	fundamental_visited.resize(ftotal)
+	var fundamental_openings := PackedByteArray()
+	fundamental_openings.resize(ftotal)
 
 	rng_state = _lcg_next(rng_state)
-	var start: int = rng_state % total
-	visited[start] = 1
+	var start: int = rng_state % ftotal
+	fundamental_visited[start] = 1
 	var stack: Array[int] = [start]
 	while not stack.is_empty():
 		var cur: int = stack[stack.size() - 1]
 		var candidates: Array = []
 		for dir in 4:
-			var nb: int = _mobius_neighbor(cur, dir, cols, rows)
+			var nb: int = _mobius_fundamental_neighbor(cur, dir, fcols, rows)
 			if nb < 0:
 				continue
-			if visited[nb] != 0:
+			if fundamental_visited[nb] != 0:
 				continue
 			candidates.append([dir, nb])
 		if candidates.is_empty():
@@ -469,20 +470,20 @@ static func _generate_mobius(seed_value: int) -> Array:
 		var pick: Array = candidates[rng_state % candidates.size()]
 		var pick_dir: int = pick[0]
 		var pick_cell: int = pick[1]
-		openings[cur] = openings[cur] | (1 << pick_dir)
-		openings[pick_cell] = openings[pick_cell] | (1 << _opposite(pick_dir))
-		visited[pick_cell] = 1
+		fundamental_openings[cur] = fundamental_openings[cur] | (1 << pick_dir)
+		fundamental_openings[pick_cell] = fundamental_openings[pick_cell] | (1 << _opposite(pick_dir))
+		fundamental_visited[pick_cell] = 1
 		stack.append(pick_cell)
 
-	# Braid dead ends.
-	for cell in range(total):
-		if _popcount_nibble(openings[cell]) >= 2:
+	# Braid dead ends in the fundamental half.
+	for cell in range(ftotal):
+		if _popcount_nibble(fundamental_openings[cell]) >= 2:
 			continue
 		var closed_neighbors: Array = []
 		for dir in 4:
-			if (openings[cell] & (1 << dir)) != 0:
+			if (fundamental_openings[cell] & (1 << dir)) != 0:
 				continue
-			var nb: int = _mobius_neighbor(cell, dir, cols, rows)
+			var nb: int = _mobius_fundamental_neighbor(cell, dir, fcols, rows)
 			if nb < 0:
 				continue
 			closed_neighbors.append([dir, nb])
@@ -492,8 +493,19 @@ static func _generate_mobius(seed_value: int) -> Array:
 		var pick: Array = closed_neighbors[rng_state % closed_neighbors.size()]
 		var pick_dir: int = pick[0]
 		var pick_cell: int = pick[1]
-		openings[cell] = openings[cell] | (1 << pick_dir)
-		openings[pick_cell] = openings[pick_cell] | (1 << _opposite(pick_dir))
+		fundamental_openings[cell] = fundamental_openings[cell] | (1 << pick_dir)
+		fundamental_openings[pick_cell] = fundamental_openings[pick_cell] | (1 << _opposite(pick_dir))
+
+	# Expand to the double cover. Left half = fundamental; right half =
+	# z-mirror of fundamental (rows reversed, north/south openings swapped).
+	var openings := PackedByteArray()
+	openings.resize(total)
+	for r in range(rows):
+		for c in range(fcols):
+			openings[c + r * cols] = fundamental_openings[c + r * fcols]
+		for c in range(fcols):
+			var mirrored_r: int = rows - 1 - r
+			openings[c + fcols + mirrored_r * cols] = _swap_north_south(fundamental_openings[c + r * fcols])
 
 	# Emit walls. East seam (last col) skipped because it identifies via the
 	# wrap. North/south interior walls between cells. Hard top/bottom walls

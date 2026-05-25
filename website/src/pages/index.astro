@@ -22,7 +22,7 @@ const clownAvatar = `${base}avatars/clown.png`;
     <meta property="og:title" content={title} />
     <meta
       property="og:description"
-      content="Tag every opponent before they tag you. The arena might be a torus, a Klein bottle, or a double torus."
+      content="Tag every opponent before they tag you. The arena might be a torus, a Möbius strip, or a Klein bottle."
     />
     <link
       rel="icon"
@@ -409,6 +409,30 @@ const clownAvatar = `${base}avatars/clown.png`;
           <article class="topology">
             <svg viewBox="0 0 160 120" aria-hidden="true">
               <g fill="none" stroke="currentColor" stroke-width="2.2" stroke-linejoin="round" stroke-linecap="round">
+                <!-- Möbius strip fundamental polygon: a wide rectangle whose
+                     left and right edges glue with a z-flip; top and bottom
+                     are hard walls (the strip's single boundary loop). -->
+                <rect x="20" y="36" width="120" height="48" rx="4" />
+                <!-- Top edge: solid thick line (hard wall, no arrows) -->
+                <line x1="20" y1="36" x2="140" y2="36" stroke-width="3.6" />
+                <!-- Bottom edge: solid thick line (hard wall, no arrows) -->
+                <line x1="20" y1="84" x2="140" y2="84" stroke-width="3.6" />
+                <!-- Left edge: double chevron pointing up (identification) -->
+                <line x1="20" y1="74" x2="20" y2="46" stroke-width="2.6" />
+                <path d="M 14 54 L 20 46 L 26 54" stroke-width="2.6" />
+                <path d="M 14 62 L 20 54 L 26 62" stroke-width="2.6" />
+                <!-- Right edge: double chevron pointing DOWN (opposite = the z-flip) -->
+                <line x1="140" y1="46" x2="140" y2="74" stroke-width="2.6" />
+                <path d="M 134 66 L 140 74 L 146 66" stroke-width="2.6" />
+                <path d="M 134 58 L 140 66 L 146 58" stroke-width="2.6" />
+              </g>
+            </svg>
+            <h3>Möbius strip</h3>
+            <p>One axis wraps with a flip. The other has hard walls at top and bottom.</p>
+          </article>
+          <article class="topology">
+            <svg viewBox="0 0 160 120" aria-hidden="true">
+              <g fill="none" stroke="currentColor" stroke-width="2.2" stroke-linejoin="round" stroke-linecap="round">
                 <!-- Fundamental polygon: a square whose edges are identified -->
                 <rect x="36" y="22" width="88" height="76" rx="4" />
                 <!-- Top edge: single arrow rightward -->
@@ -428,31 +452,7 @@ const clownAvatar = `${base}avatars/clown.png`;
               </g>
             </svg>
             <h3>Klein bottle</h3>
-            <p>One axis wraps with a flip. The other wraps normally.</p>
-          </article>
-          <article class="topology">
-            <svg viewBox="0 0 160 120" aria-hidden="true">
-              <g fill="none" stroke="currentColor" stroke-width="2.2" stroke-linejoin="round" stroke-linecap="round">
-                <!-- Fundamental octagon for the genus-2 surface. 8 sides
-                     identified pairwise as a b a^-1 b^-1 c d c^-1 d^-1. -->
-                <polygon points="120,60 108.28,88.28 80,100 51.72,88.28 40,60 51.72,31.72 80,20 108.28,31.72" />
-              </g>
-              <g fill="currentColor" stroke="none" font-family="system-ui, sans-serif"
-                 font-size="9" font-style="italic" text-anchor="middle" dominant-baseline="middle">
-                <!-- Side labels at midpoints. Each letter appears twice on
-                     mate sides (forward + inverse). -->
-                <text x="118" y="74">a</text>
-                <text x="98" y="96">b</text>
-                <text x="62" y="96">a</text>
-                <text x="42" y="74">b</text>
-                <text x="42" y="46">c</text>
-                <text x="62" y="24">d</text>
-                <text x="98" y="24">c</text>
-                <text x="118" y="46">d</text>
-              </g>
-            </svg>
-            <h3>Double torus</h3>
-            <p>An octagon with all eight sides glued in pairs. Two holes' worth of paths.</p>
+            <p>Both axes wrap; the x seam flips the vertical.</p>
           </article>
         </div>
       </article>

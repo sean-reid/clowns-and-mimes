@@ -17,6 +17,7 @@ func _ready() -> void:
 	random_button.pressed.connect(_randomize_name)
 	host_button.pressed.connect(_host)
 	code_button.pressed.connect(_join_code)
+	code_input.text_changed.connect(_uppercase_code_field)
 	open_button.pressed.connect(_join_open)
 	_populate_topologies()
 	username_input.text = GameState.username
@@ -48,6 +49,17 @@ func _host() -> void:
 	var idx := topology_picker.get_selected_id()
 	GameState.set_topology(idx)
 	requested_screen.emit("lobby")
+
+func _uppercase_code_field(new_text: String) -> void:
+	# Lobby codes are uppercase server-side; mirror that in the input so the
+	# field never shows lowercase. Preserve the caret index across the rewrite
+	# so the user can keep typing in the middle of the string.
+	var upper := new_text.to_upper()
+	if upper == new_text:
+		return
+	var caret := code_input.caret_column
+	code_input.text = upper
+	code_input.caret_column = caret
 
 func _join_code() -> void:
 	var code := code_input.text.strip_edges().to_upper()

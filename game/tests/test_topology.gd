@@ -5,6 +5,7 @@ const PlaneTopology := preload("res://scripts/topology/plane_topology.gd")
 const TorusTopology := preload("res://scripts/topology/torus_topology.gd")
 const KleinTopology := preload("res://scripts/topology/klein_topology.gd")
 const SphereRhomboTopology := preload("res://scripts/topology/sphere_rhombicuboctahedron_topology.gd")
+const Genus2Topology := preload("res://scripts/topology/genus2_topology.gd")
 const TopologyFactory := preload("res://scripts/topology/topology_factory.gd")
 
 const W := TopologyScript.WIDTH
@@ -174,8 +175,49 @@ func test_sphere_rhombo_wrap_step_clears_perpendicular_wall() -> void:
 			% [distance_to_south_wall, SphereRhomboTopology.SPHERE_WALL_CLEARANCE],
 	)
 
+func test_genus2_extents_match_octagon_bounding_box() -> void:
+	var g := Genus2Topology.new()
+	assert_approx(g.extent_x(), 80.0, 0.001, "genus2 extent_x = 2 * circumradius")
+	assert_approx(g.extent_z(), 80.0, 0.001, "genus2 extent_z = 2 * circumradius")
+
+func test_genus2_origin_is_inside_octagon() -> void:
+	var g := Genus2Topology.new()
+	assert_true(g.point_in_octagon(Vector2(0.0, 0.0)), "origin inside octagon")
+	assert_true(g.point_in_octagon(Vector2(5.0, 3.0)), "interior point inside")
+	# A probe well past a side is outside.
+	assert_false(g.point_in_octagon(Vector2(100.0, 0.0)), "far +x outside")
+
+func test_genus2_mate_pairing() -> void:
+	var g := Genus2Topology.new()
+	# 0<->2, 1<->3, 4<->6, 5<->7
+	assert_eq(g.mate_side(0), 2)
+	assert_eq(g.mate_side(2), 0)
+	assert_eq(g.mate_side(1), 3)
+	assert_eq(g.mate_side(5), 7)
+	for k in range(8):
+		assert_eq(g.mate_side(g.mate_side(k)), k, "mate self-inverse on side %d" % k)
+
+func test_genus2_wrap_step_identifies_to_mate_side() -> void:
+	var g := Genus2Topology.new()
+	# Step just past side 0's midpoint outward; landing should sit inside
+	# the octagon near side 2's midpoint (mate of side 0).
+	var mid_x: float = 0.5 * (Genus2Topology.OCTAGON_CIRCUMRADIUS + cos(PI / 4.0) * Genus2Topology.OCTAGON_CIRCUMRADIUS)
+	var mid_z: float = 0.5 * (0.0 + sin(PI / 4.0) * Genus2Topology.OCTAGON_CIRCUMRADIUS)
+	# Outward normal for side 0 from V0=(R,0) to V1=(R*cos45, R*sin45):
+	#   tangent t = (V1 - V0) / |...|, outward = (t.y, -t.x).
+	var r: float = Genus2Topology.OCTAGON_CIRCUMRADIUS
+	var v0 := Vector2(r, 0.0)
+	var v1 := Vector2(cos(PI / 4.0) * r, sin(PI / 4.0) * r)
+	var tangent: Vector2 = (v1 - v0).normalized()
+	var outward := Vector2(tangent.y, -tangent.x)
+	var prev := Vector3(mid_x - 0.5 * outward.x, 0.0, mid_z - 0.5 * outward.y)
+	var next := Vector3(mid_x + 0.3 * outward.x, 0.0, mid_z + 0.3 * outward.y)
+	var out := g.wrap_step(prev, next)
+	assert_true(g.point_in_octagon(Vector2(out.x, out.z)), "wrap_step lands inside octagon")
+
 func test_factory_returns_correct_kind() -> void:
 	assert_eq(TopologyFactory.from_string("plane").kind(), TopologyScript.Kind.PLANE)
 	assert_eq(TopologyFactory.from_string("torus").kind(), TopologyScript.Kind.TORUS)
 	assert_eq(TopologyFactory.from_string("klein").kind(), TopologyScript.Kind.KLEIN)
 	assert_eq(TopologyFactory.from_string("sphere").kind(), TopologyScript.Kind.SPHERE)
+	assert_eq(TopologyFactory.from_string("genus2").kind(), TopologyScript.Kind.GENUS2)

@@ -8,7 +8,7 @@ extends RefCounted
 
 const WIDTH := 80.0
 
-enum Kind { PLANE, TORUS, KLEIN, SPHERE }
+enum Kind { PLANE, TORUS, KLEIN, SPHERE, GENUS2 }
 
 ## Playfield half-extents along each axis. Overridden by Klein (which has a
 ## 2*WIDTH x WIDTH double-cover domain). Everything else stays square.

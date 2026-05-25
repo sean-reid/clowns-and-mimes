@@ -89,6 +89,8 @@ static func generate(seed_value: int, topology_name: String, grid_n: int = GRID_
 		return _generate_sphere(seed_value)
 	if topology_name == "klein":
 		return _generate_klein(seed_value, grid_n)
+	if topology_name == "genus2":
+		return _generate_genus2(seed_value)
 	var total: int = grid_n * grid_n
 	var visited := PackedByteArray()
 	visited.resize(total)
@@ -448,3 +450,151 @@ static func _sphere_local_neighbor(local_cell: int, dir: int, n: int) -> int:
 
 # _emit_sphere_walls from the old 3 x 2 packing was inlined into
 # _generate_sphere. Keeping the function removed avoids dead-code drift.
+
+# Genus-2 (double torus) maze. A square N x N grid is inscribed in the
+# octagon's bounding box; cells whose centres fall outside the octagon
+# are masked out. DFS spanning tree + braiding runs only on the walkable
+# cells. Mirrors backend/shared/src/gridMaze.ts::generateGenus2GridWalls,
+# matching the seed -> wall list deterministically.
+const GENUS2_GRID_N := 12
+const GENUS2_OCTAGON_CIRCUMRADIUS := 40.0
+
+static func _genus2_point_in_octagon(x: float, z: float) -> bool:
+	# Point is inside the octagon iff cos(theta_k) * x + sin(theta_k) * z <
+	# R * cos(22.5 deg) for every side k (the inscribed-circle radius).
+	# Equivalent and slightly simpler: signed distance to every side is <= 0.
+	# Use a direct check against the 8 side outward normals.
+	var r: float = GENUS2_OCTAGON_CIRCUMRADIUS
+	for k in range(8):
+		var theta_v0: float = PI / 4.0 * float(k)
+		var theta_v1: float = PI / 4.0 * float(k + 1)
+		var v0x: float = cos(theta_v0) * r
+		var v0z: float = sin(theta_v0) * r
+		var v1x: float = cos(theta_v1) * r
+		var v1z: float = sin(theta_v1) * r
+		var length: float = sqrt((v1x - v0x) * (v1x - v0x) + (v1z - v0z) * (v1z - v0z))
+		var tx: float = (v1x - v0x) / length
+		var tz: float = (v1z - v0z) / length
+		# Outward normal = tangent rotated -90 deg: (tx, tz) -> (tz, -tx).
+		var nx: float = tz
+		var nz: float = -tx
+		var signed_d: float = (x - v0x) * nx + (z - v0z) * nz
+		if signed_d > 1e-9:
+			return false
+	return true
+
+static func _generate_genus2(seed_value: int) -> Array:
+	var n: int = GENUS2_GRID_N
+	var total: int = n * n
+	var cell_size: float = 2.0 * GENUS2_OCTAGON_CIRCUMRADIUS / float(n)
+	var half_ext: float = GENUS2_OCTAGON_CIRCUMRADIUS
+
+	var walkable := PackedByteArray()
+	walkable.resize(total)
+	for r in range(n):
+		for c in range(n):
+			var cx: float = (float(c) + 0.5) * cell_size - half_ext
+			var cz: float = (float(r) + 0.5) * cell_size - half_ext
+			walkable[c + r * n] = 1 if _genus2_point_in_octagon(cx, cz) else 0
+
+	var rng_state: int = seed_value & 0xFFFFFFFF
+	var visited := PackedByteArray()
+	visited.resize(total)
+	var openings := PackedByteArray()
+	openings.resize(total)
+
+	var start: int = -1
+	for i in range(total):
+		if walkable[i] != 0:
+			start = i
+			break
+	if start < 0:
+		return []
+	visited[start] = 1
+	var stack: Array[int] = [start]
+	while not stack.is_empty():
+		var cur: int = stack[stack.size() - 1]
+		var candidates: Array = []
+		for dir in 4:
+			var nb: int = _genus2_neighbor(cur, dir, n, walkable)
+			if nb < 0:
+				continue
+			if visited[nb] != 0:
+				continue
+			candidates.append(dir)
+		if candidates.is_empty():
+			stack.pop_back()
+			continue
+		rng_state = _lcg_next(rng_state)
+		var pick_dir: int = candidates[rng_state % candidates.size()]
+		var nb_idx: int = _genus2_neighbor(cur, pick_dir, n, walkable)
+		openings[cur] = openings[cur] | (1 << pick_dir)
+		openings[nb_idx] = openings[nb_idx] | (1 << _opposite(pick_dir))
+		visited[nb_idx] = 1
+		stack.append(nb_idx)
+
+	# Braid dead ends.
+	for cell in range(total):
+		if walkable[cell] == 0:
+			continue
+		if _popcount_nibble(openings[cell]) >= 2:
+			continue
+		var closed_neighbors: Array = []
+		for dir in 4:
+			if (openings[cell] & (1 << dir)) != 0:
+				continue
+			var nb_c: int = _genus2_neighbor(cell, dir, n, walkable)
+			if nb_c < 0:
+				continue
+			closed_neighbors.append([dir, nb_c])
+		if closed_neighbors.is_empty():
+			continue
+		rng_state = _lcg_next(rng_state)
+		var pick: Array = closed_neighbors[rng_state % closed_neighbors.size()]
+		var pick_dir2: int = pick[0]
+		var pick_cell: int = pick[1]
+		openings[cell] = openings[cell] | (1 << pick_dir2)
+		openings[pick_cell] = openings[pick_cell] | (1 << _opposite(pick_dir2))
+
+	# Emit walls.
+	var out: Array = []
+	for r in range(n):
+		for c in range(n):
+			var id: int = c + r * n
+			if walkable[id] == 0:
+				continue
+			var east_closed: bool = (openings[id] & (1 << DIR_EAST)) == 0
+			var north_closed: bool = (openings[id] & (1 << DIR_NORTH)) == 0
+			var east_nbr: int = _genus2_neighbor(id, DIR_EAST, n, walkable)
+			var north_nbr: int = _genus2_neighbor(id, DIR_NORTH, n, walkable)
+			if east_closed and east_nbr >= 0:
+				var x: float = float(c + 1) * cell_size - half_ext
+				var z0: float = float(r) * cell_size - half_ext
+				var z1: float = float(r + 1) * cell_size - half_ext
+				out.append({"ax": x, "az": z0, "bx": x, "bz": z1})
+			if north_closed and north_nbr >= 0:
+				var z: float = float(r + 1) * cell_size - half_ext
+				var x0: float = float(c) * cell_size - half_ext
+				var x1: float = float(c + 1) * cell_size - half_ext
+				out.append({"ax": x0, "az": z, "bx": x1, "bz": z})
+	return out
+
+static func _genus2_neighbor(cell: int, dir: int, n: int, walkable: PackedByteArray) -> int:
+	var cc: int = cell % n
+	var cr: int = cell / n
+	var nc: int = cc
+	var nr: int = cr
+	if dir == DIR_EAST:
+		nc = cc + 1
+	elif dir == DIR_WEST:
+		nc = cc - 1
+	elif dir == DIR_NORTH:
+		nr = cr + 1
+	elif dir == DIR_SOUTH:
+		nr = cr - 1
+	if nc < 0 or nc >= n or nr < 0 or nr >= n:
+		return -1
+	var idx: int = nc + nr * n
+	if walkable[idx] == 0:
+		return -1
+	return idx

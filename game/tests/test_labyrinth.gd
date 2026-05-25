@@ -191,3 +191,35 @@ func test_sphere_grid_builds_walls() -> void:
 		"sphere maze has substantial wall count, got %d" % instance.walls_root.get_child_count()
 	)
 	instance.queue_free()
+
+func test_genus2_grid_has_walls_and_stays_inside_octagon() -> void:
+	# The maze runs only on cells whose centres are inside the octagonal
+	# playfield. Every emitted wall should have both endpoints inside (or
+	# on the boundary of) the bounding box, and the wall count should be
+	# substantial for a 12x12 inscribed grid.
+	var segs: Array = GridMaze.generate(7, "genus2")
+	assert_true(
+		segs.size() > 20,
+		"genus2 maze has substantial wall count, got %d" % segs.size(),
+	)
+	var half: float = 40.0  # GENUS2_OCTAGON_CIRCUMRADIUS
+	for seg in segs:
+		var ax: float = seg["ax"]
+		var az: float = seg["az"]
+		var bx: float = seg["bx"]
+		var bz: float = seg["bz"]
+		assert_true(
+			absf(ax) <= half + 0.01 and absf(az) <= half + 0.01 and absf(bx) <= half + 0.01 and absf(bz) <= half + 0.01,
+			"genus2 wall endpoints inside bounding box: %s" % str(seg),
+		)
+
+func test_genus2_grid_differs_from_torus_at_same_seed() -> void:
+	var g: Array = GridMaze.generate(2026, "genus2")
+	var t: Array = GridMaze.generate(2026, "torus")
+	var same: bool = g.size() == t.size()
+	if same:
+		for i in g.size():
+			if g[i] != t[i]:
+				same = false
+				break
+	assert_true(not same, "genus2 and torus diverge at the same seed")

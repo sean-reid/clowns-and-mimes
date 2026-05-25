@@ -5,12 +5,13 @@ extends Node
 signal mode_changed(mode: String)
 signal topology_changed(topology: String)
 
-enum Topology { PLANE, TORUS, KLEIN, GENUS2 }
+enum Topology { PLANE, TORUS, MOBIUS, KLEIN, GENUS2 }
 enum Mode { OFFLINE, HOST, JOIN, OPEN }
 
 const TOPOLOGY_NAMES := {
 	Topology.PLANE: "plane",
 	Topology.TORUS: "torus",
+	Topology.MOBIUS: "mobius",
 	Topology.KLEIN: "klein",
 	Topology.GENUS2: "genus2",
 }

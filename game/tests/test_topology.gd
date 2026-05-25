@@ -4,6 +4,7 @@ const TopologyScript := preload("res://scripts/topology/topology.gd")
 const PlaneTopology := preload("res://scripts/topology/plane_topology.gd")
 const TorusTopology := preload("res://scripts/topology/torus_topology.gd")
 const KleinTopology := preload("res://scripts/topology/klein_topology.gd")
+const MobiusTopology := preload("res://scripts/topology/mobius_topology.gd")
 const Genus2Topology := preload("res://scripts/topology/genus2_topology.gd")
 const TopologyFactory := preload("res://scripts/topology/topology_factory.gd")
 
@@ -124,8 +125,44 @@ func test_genus2_portal_transform_rotation_sign_alternates() -> void:
 		var expect_forward: bool = k == 0 or k == 1 or k == 4 or k == 5
 		assert_eq(rotation_y > 0.0, expect_forward, "side %d rotation sign" % k)
 
+func test_mobius_extents_match_2_to_1_rectangle() -> void:
+	var m := MobiusTopology.new()
+	assert_approx(m.extent_x(), 80.0, 0.001, "mobius extent_x = 2*Lx")
+	assert_approx(m.extent_z(), 40.0, 0.001, "mobius extent_z = 2*Lz")
+
+func test_mobius_wrap_step_crosses_right_with_z_flip() -> void:
+	var m := MobiusTopology.new()
+	var prev := Vector3(MobiusTopology.MOBIUS_HALF_X - 0.5, 0.0, 5.0)
+	var next := Vector3(MobiusTopology.MOBIUS_HALF_X + 0.3, 0.0, 5.0)
+	var out := m.wrap_step(prev, next)
+	assert_true(out.x < 0.0, "wrap landed on the far left, x=%f" % out.x)
+	assert_true(out.z < 0.0, "z was negated, z=%f" % out.z)
+	assert_approx(absf(out.z), 5.0, 0.5, "|z| close to original 5")
+
+func test_mobius_wrap_step_blocks_top_hard_wall() -> void:
+	var m := MobiusTopology.new()
+	var prev := Vector3(0.0, 0.0, MobiusTopology.MOBIUS_HALF_Z - 0.1)
+	var next := Vector3(0.0, 0.0, MobiusTopology.MOBIUS_HALF_Z + 1.0)
+	var out := m.wrap_step(prev, next)
+	assert_eq(out.x, prev.x, "x stays")
+	assert_approx(out.z, prev.z, 0.001, "blocked at hard top wall")
+
+func test_mobius_portal_transforms_pair() -> void:
+	var m := MobiusTopology.new()
+	var pts: Array = m.portal_transforms()
+	assert_eq(pts.size(), 2, "two portal tiles (left + right)")
+	# Applying the right portal to the left edge should land on the
+	# right edge: (-Lx + 2*Lx, -z) = (Lx, -z). The portal renders the
+	# strip's interior continuously past the right seam.
+	var right_t: Dictionary = pts[0]
+	var left_x: float = -MobiusTopology.MOBIUS_HALF_X
+	var mapped_x: float = left_x + right_t["tx"]
+	assert_approx(mapped_x, MobiusTopology.MOBIUS_HALF_X, 0.001, "right portal maps -Lx -> +Lx")
+	assert_true(right_t["flip_z"], "right portal flips z")
+
 func test_factory_returns_correct_kind() -> void:
 	assert_eq(TopologyFactory.from_string("plane").kind(), TopologyScript.Kind.PLANE)
 	assert_eq(TopologyFactory.from_string("torus").kind(), TopologyScript.Kind.TORUS)
+	assert_eq(TopologyFactory.from_string("mobius").kind(), TopologyScript.Kind.MOBIUS)
 	assert_eq(TopologyFactory.from_string("klein").kind(), TopologyScript.Kind.KLEIN)
 	assert_eq(TopologyFactory.from_string("genus2").kind(), TopologyScript.Kind.GENUS2)

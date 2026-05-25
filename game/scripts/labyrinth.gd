@@ -140,6 +140,12 @@ func _build_wrap_tiles() -> void:
 		# ahead of the wrap_step teleport.
 		_build_genus2_portal_tiles(tiles_root)
 		return
+	if topo_name == "mobius":
+		# Möbius strip: only x wraps (with a z-flip). Two portal tiles
+		# render the strip's interior just past +/-Lx with z mirrored,
+		# giving continuous visual geometry across the seam.
+		_build_mobius_portal_tiles(tiles_root)
+		return
 	# Torus / Klein: 3x3 flat-translated wrap-tile lattice. Klein's z-mirror
 	# is baked into the maze geometry itself, so a pure translation works
 	# for the visual seam too.
@@ -153,6 +159,23 @@ func _build_wrap_tiles() -> void:
 			tile.position = Vector3(float(dx) * ext_x, 0.0, float(dz) * ext_z)
 			tiles_root.add_child(tile)
 			_populate_wrap_tile(tile)
+
+func _build_mobius_portal_tiles(tiles_root: Node3D) -> void:
+	# Two portal tiles, one per side of the x seam. The transform is a
+	# pure translation along x plus a z-reflection (a scale of (1, 1, -1)
+	# around the y-axis): rendering a copy at x +/- 2*Lx with z negated
+	# places the strip's interior just past the corresponding seam.
+	var transforms: Array = topology.portal_transforms()
+	for t in transforms:
+		var tx: float = t["tx"]
+		var flip_z: bool = t["flip_z"]
+		var tile := Node3D.new()
+		var basis := Basis()
+		if flip_z:
+			basis = basis.scaled(Vector3(1.0, 1.0, -1.0))
+		tile.transform = Transform3D(basis, Vector3(tx, 0.0, 0.0))
+		tiles_root.add_child(tile)
+		_populate_wrap_tile(tile)
 
 func _build_genus2_portal_tiles(tiles_root: Node3D) -> void:
 	# Per-side portal: render the playfield's geometry transformed by the

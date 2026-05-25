@@ -20,6 +20,8 @@ static func generate(seed_value: int, topology_name: String, grid_n: int = GRID_
 		return _generate_klein(seed_value, grid_n)
 	if topology_name == "genus2":
 		return _generate_genus2(seed_value)
+	if topology_name == "mobius":
+		return _generate_mobius(seed_value)
 	var total: int = grid_n * grid_n
 	var visited := PackedByteArray()
 	visited.resize(total)
@@ -399,3 +401,125 @@ static func _genus2_neighbor(cell: int, dir: int, n: int, walkable: PackedByteAr
 	if walkable[idx] == 0:
 		return -1
 	return idx
+
+# Möbius strip maze. 2N x N rectangular grid (default 20 x 10) covering the
+# strip's [-Lx, Lx] x [-Lz, Lz] domain. x wraps with a row flip (the same
+# identification the topology adapter uses); z is hard-bounded. Mirrors
+# backend/shared/src/gridMaze.ts::generateMobiusGridWalls.
+const MOBIUS_GRID_X := 2 * GRID_MAZE_N
+const MOBIUS_GRID_Z := GRID_MAZE_N
+const MOBIUS_HALF_X := 40.0
+const MOBIUS_HALF_Z := 20.0
+
+static func _mobius_neighbor(cell: int, dir: int, cols: int, rows: int) -> int:
+	var cc: int = cell % cols
+	var cr: int = cell / cols
+	var nc: int = cc
+	var nr: int = cr
+	var flip_row: bool = false
+	if dir == DIR_EAST:
+		nc = cc + 1
+	elif dir == DIR_WEST:
+		nc = cc - 1
+	elif dir == DIR_NORTH:
+		nr = cr + 1
+	elif dir == DIR_SOUTH:
+		nr = cr - 1
+	if nc < 0 or nc >= cols:
+		nc = posmod(nc, cols)
+		flip_row = true
+	if nr < 0 or nr >= rows:
+		return -1
+	if flip_row:
+		nr = rows - 1 - nr
+	return nc + nr * cols
+
+static func _generate_mobius(seed_value: int) -> Array:
+	var cols: int = MOBIUS_GRID_X
+	var rows: int = MOBIUS_GRID_Z
+	var total: int = cols * rows
+	var cell_size: float = (2.0 * MOBIUS_HALF_X) / float(cols)
+	var half_x: float = MOBIUS_HALF_X
+	var half_z: float = MOBIUS_HALF_Z
+
+	var rng_state: int = seed_value & 0xFFFFFFFF
+	var visited := PackedByteArray()
+	visited.resize(total)
+	var openings := PackedByteArray()
+	openings.resize(total)
+
+	rng_state = _lcg_next(rng_state)
+	var start: int = rng_state % total
+	visited[start] = 1
+	var stack: Array[int] = [start]
+	while not stack.is_empty():
+		var cur: int = stack[stack.size() - 1]
+		var candidates: Array = []
+		for dir in 4:
+			var nb: int = _mobius_neighbor(cur, dir, cols, rows)
+			if nb < 0:
+				continue
+			if visited[nb] != 0:
+				continue
+			candidates.append([dir, nb])
+		if candidates.is_empty():
+			stack.pop_back()
+			continue
+		rng_state = _lcg_next(rng_state)
+		var pick: Array = candidates[rng_state % candidates.size()]
+		var pick_dir: int = pick[0]
+		var pick_cell: int = pick[1]
+		openings[cur] = openings[cur] | (1 << pick_dir)
+		openings[pick_cell] = openings[pick_cell] | (1 << _opposite(pick_dir))
+		visited[pick_cell] = 1
+		stack.append(pick_cell)
+
+	# Braid dead ends.
+	for cell in range(total):
+		if _popcount_nibble(openings[cell]) >= 2:
+			continue
+		var closed_neighbors: Array = []
+		for dir in 4:
+			if (openings[cell] & (1 << dir)) != 0:
+				continue
+			var nb: int = _mobius_neighbor(cell, dir, cols, rows)
+			if nb < 0:
+				continue
+			closed_neighbors.append([dir, nb])
+		if closed_neighbors.is_empty():
+			continue
+		rng_state = _lcg_next(rng_state)
+		var pick: Array = closed_neighbors[rng_state % closed_neighbors.size()]
+		var pick_dir: int = pick[0]
+		var pick_cell: int = pick[1]
+		openings[cell] = openings[cell] | (1 << pick_dir)
+		openings[pick_cell] = openings[pick_cell] | (1 << _opposite(pick_dir))
+
+	# Emit walls. East seam (last col) skipped because it identifies via the
+	# wrap. North/south interior walls between cells. Hard top/bottom walls
+	# emitted at the end.
+	var out: Array = []
+	for r in range(rows):
+		for c in range(cols):
+			var id: int = c + r * cols
+			var east_closed: bool = (openings[id] & (1 << DIR_EAST)) == 0
+			var north_closed: bool = (openings[id] & (1 << DIR_NORTH)) == 0
+			var is_last_col: bool = c == cols - 1
+			var is_last_row: bool = r == rows - 1
+			if east_closed and not is_last_col:
+				var x: float = float(c + 1) * cell_size - half_x
+				var z0: float = float(r) * cell_size - half_z
+				var z1: float = float(r + 1) * cell_size - half_z
+				out.append({"ax": x, "az": z0, "bx": x, "bz": z1})
+			if north_closed and not is_last_row:
+				var z: float = float(r + 1) * cell_size - half_z
+				var x0: float = float(c) * cell_size - half_x
+				var x1: float = float(c + 1) * cell_size - half_x
+				out.append({"ax": x0, "az": z, "bx": x1, "bz": z})
+	# Hard top and bottom boundary walls.
+	for c in range(cols):
+		var x0: float = float(c) * cell_size - half_x
+		var x1: float = float(c + 1) * cell_size - half_x
+		out.append({"ax": x0, "az": half_z, "bx": x1, "bz": half_z})
+		out.append({"ax": x0, "az": -half_z, "bx": x1, "bz": -half_z})
+	return out

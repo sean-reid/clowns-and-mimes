@@ -30,6 +30,7 @@ func _populate_topologies() -> void:
 	topology_picker.clear()
 	topology_picker.add_item("Plane", GameState.Topology.PLANE)
 	topology_picker.add_item("Torus", GameState.Topology.TORUS)
+	topology_picker.add_item("Möbius strip", GameState.Topology.MOBIUS)
 	topology_picker.add_item("Klein bottle", GameState.Topology.KLEIN)
 	topology_picker.add_item("Double torus", GameState.Topology.GENUS2)
 

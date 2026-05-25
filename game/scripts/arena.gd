@@ -766,6 +766,7 @@ func _on_menu_quit() -> void:
 func _topology_kind(name: String) -> int:
 	match name:
 		"torus": return GameState.Topology.TORUS
+		"mobius": return GameState.Topology.MOBIUS
 		"klein": return GameState.Topology.KLEIN
 		"genus2": return GameState.Topology.GENUS2
 		_: return GameState.Topology.PLANE

@@ -50,12 +50,15 @@ func set_topology(name: String) -> void:
 		topology_badge.text = ""
 		return
 	# Pretty names per topology. The wire string isn't always nice to display
-	# verbatim ("genus2" -> "Double Torus", "klein" -> "Klein Bottle").
+	# verbatim ("genus2" -> "Double Torus", "klein" -> "Klein Bottle",
+	# "mobius" -> "Möbius Strip" with the umlaut).
 	var pretty: String
 	if name == "klein":
 		pretty = "Klein Bottle"
 	elif name == "genus2":
 		pretty = "Double Torus"
+	elif name == "mobius":
+		pretty = "Möbius Strip"
 	else:
 		pretty = name.substr(0, 1).to_upper() + name.substr(1)
 	topology_badge.text = "on the %s" % pretty

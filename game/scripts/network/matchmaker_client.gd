@@ -21,7 +21,7 @@ var _last_join_code: String = ""
 
 func join_code(code: String) -> void:
 	if code.length() < 4:
-		request_failed.emit("code too short")
+		request_failed.emit("Lobby code is too short.")
 		return
 	_last_join_code = code.to_upper()
 	_post("/lobby/%s/join" % _last_join_code, {}, _on_join_response, _on_join_code_failure)
@@ -44,7 +44,7 @@ func _post(
 	var payload: String = JSON.stringify(body) if body.size() > 0 else "{}"
 	var err: int = http.request(url, headers, HTTPClient.METHOD_POST, payload)
 	if err != OK:
-		request_failed.emit("could not start request: %d" % err)
+		request_failed.emit("Could not reach the lobby server.")
 		http.queue_free()
 
 func _make_handler(http: HTTPRequest, on_response: Callable, on_failure: Callable) -> Callable:
@@ -53,13 +53,41 @@ func _make_handler(http: HTTPRequest, on_response: Callable, on_failure: Callabl
 		if code < 200 or code >= 300:
 			if on_failure.is_valid() and on_failure.call(code, body):
 				return
-			request_failed.emit("matchmaker returned %d" % code)
+			request_failed.emit(_friendly_http_error(code, body))
 			return
 		var parsed: Variant = JSON.parse_string(body.get_string_from_utf8())
 		if typeof(parsed) != TYPE_DICTIONARY:
-			request_failed.emit("matchmaker response was not json")
+			request_failed.emit("Unexpected response from the server.")
 			return
 		on_response.call(parsed)
+
+# Map an HTTP status (and the optional `{ "error": "<code>" }` body the
+# matchmaker Worker sends) to a sentence the player can read. Falls through
+# to a generic message for unrecognized statuses so a new failure mode
+# never shows as a blank string.
+func _friendly_http_error(http_status: int, body: PackedByteArray) -> String:
+	var error_code := _extract_error_code(body)
+	if http_status == 400 and error_code == "invalid_topology":
+		return "That topology is not available."
+	if http_status == 400 and error_code == "invalid_json":
+		return "Bad request to the server."
+	if http_status == 400:
+		return "The server rejected the request."
+	if http_status == 404:
+		return "Lobby not found."
+	if http_status == 429:
+		return "Too many requests. Wait a moment and try again."
+	if http_status >= 500:
+		return "Server unavailable. Try again."
+	return "Could not reach the lobby server (%d)." % http_status
+
+func _extract_error_code(body: PackedByteArray) -> String:
+	if body.is_empty():
+		return ""
+	var parsed: Variant = JSON.parse_string(body.get_string_from_utf8())
+	if typeof(parsed) != TYPE_DICTIONARY:
+		return ""
+	return parsed.get("error", "")
 
 # Returns true when the failure has been handled by a specific signal,
 # suppressing the generic request_failed emission.
@@ -74,7 +102,7 @@ func _on_create_response(parsed: Dictionary) -> void:
 	var room_id: String = parsed.get("roomId", "")
 	var ws_url: String = parsed.get("wsUrl", "")
 	if code.is_empty() or room_id.is_empty() or ws_url.is_empty():
-		request_failed.emit("missing fields in create response")
+		request_failed.emit("Lobby server returned an incomplete response.")
 		return
 	lobby_created.emit(code, room_id, ws_url)
 
@@ -82,6 +110,6 @@ func _on_join_response(parsed: Dictionary) -> void:
 	var room_id: String = parsed.get("roomId", "")
 	var ws_url: String = parsed.get("wsUrl", "")
 	if room_id.is_empty() or ws_url.is_empty():
-		request_failed.emit("missing fields in join response")
+		request_failed.emit("Lobby server returned an incomplete response.")
 		return
 	lobby_joined.emit(room_id, ws_url)

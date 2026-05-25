@@ -97,15 +97,24 @@ var local_sprint_energy: float = 100.0
 # replay loop from it.
 var local_sprinting: bool = false
 
+# Tick-bound prediction with render-rate visual interpolation. The authoritative
+# predicted XZ advances once per physics tick inside _advance_predicted_tick,
+# matching what the server applies. _process interpolates the rendered body
+# transform between the previous and current tick positions so a >60 Hz monitor
+# still gets smooth motion. Reconciliation rewrites _pred_current_xz to the
+# replayed authoritative value and re-anchors _pred_prev_xz to where the body
+# is rendered right now, which spreads the correction over the next tick instead
+# of producing a visible snap.
+var _pred_prev_xz: Vector2 = Vector2.ZERO
+var _pred_current_xz: Vector2 = Vector2.ZERO
+var _pred_tick_start_t: float = 0.0
+var _pred_armed: bool = false
+
 # Shared.
 var local_player: Node = null
 var local_player_id: String = ""
 var player_nodes: Dictionary = {}
 var contact_cooldowns: Dictionary = {}
-# Temporary diagnostic: throttles per-target console prints when a contact
-# happens but no tag/unfreeze fires. Drop together with _debug_tag_result
-# once the chase-tag flow is verified.
-var _debug_no_fire_throttle: Dictionary = {}
 
 # ---------------------------------------------------------------------------
 # Lifecycle
@@ -147,12 +156,11 @@ func _unhandled_input(event: InputEvent) -> void:
 func _process(delta: float) -> void:
 	if online_mode:
 		_drive_online_hud()
-		# Run local prediction at the render rate (variable, often higher
-		# than the 60 Hz physics tick). The body is repositioned directly
-		# from the predictor each frame, so motion is as smooth as the
-		# display can present. Wall collision is enforced by the same
-		# stepMovement math the server runs - move_and_slide is only along
-		# for gravity on the predicted-externally branch.
+		# The authoritative XZ advances at 60 Hz inside _advance_predicted_tick
+		# (called from _stream_input). This per-render-frame call only
+		# interpolates the body's visual transform between consecutive ticks
+		# so the motion stays smooth on high-refresh monitors without
+		# diverging from what the server applies.
 		if (
 			snapshot_received
 			and local_player != null
@@ -275,13 +283,16 @@ func _on_snapshot(snapshot: Dictionary, you_are: String) -> void:
 	for entry in snapshot.get("players", []):
 		if entry.get("id", "") == local_player_id and local_player != null:
 			var pos: Dictionary = entry.get("position", {"x": 0.0, "z": 0.0})
+			var spawn_xz := Vector2(float(pos.get("x", 0.0)), float(pos.get("z", 0.0)))
 			local_player.global_position = Vector3(
-				float(pos.get("x", 0.0)),
-				local_player.global_position.y,
-				float(pos.get("z", 0.0)),
+				spawn_xz.x, local_player.global_position.y, spawn_xz.y
 			)
 			local_sprint_energy = float(entry.get("sprintEnergy", 100.0))
 			local_sprinting = bool(entry.get("sprinting", false))
+			_pred_prev_xz = spawn_xz
+			_pred_current_xz = spawn_xz
+			_pred_tick_start_t = Time.get_unix_time_from_system()
+			_pred_armed = true
 			break
 
 func _on_delta(delta: Dictionary) -> void:
@@ -343,12 +354,16 @@ func _reconcile_local_player(delta: Dictionary) -> void:
 		local_sprint_energy = step["sprint_energy"]
 		local_sprinting = bool(step["sprinting"])
 	# Both sides run the same stepMovement, so the replayed position is
-	# usually within a few cm of the local prediction. Snap straight to it;
-	# the next physics frame extrapolates forward from there at the screen
-	# rate.
-	local_player.global_position = Vector3(
-		replayed_pos.x, local_player.global_position.y, replayed_pos.y
-	)
+	# usually within a few cm of the local prediction. Rather than snapping
+	# straight to it, set replayed_pos as the new "end of tick" target and
+	# anchor "start of tick" to where the body is rendered right now. The
+	# next render frames lerp from current visual position to the corrected
+	# target over one tick window, turning a 5 cm correction into a smooth
+	# slide instead of a visible pop.
+	_pred_prev_xz = Vector2(local_player.global_position.x, local_player.global_position.z)
+	_pred_current_xz = replayed_pos
+	_pred_tick_start_t = Time.get_unix_time_from_system()
+	_pred_armed = true
 
 func _on_room_event(event: Dictionary) -> void:
 	match event.get("kind", event.get("t", "")):
@@ -356,20 +371,6 @@ func _on_room_event(event: Dictionary) -> void:
 		"saved": _handle_saved(event)
 		"win": _handle_win(event)
 		"phase": _handle_phase_event(event.get("phase", ""), int(event.get("cryIndex", -1)))
-		"tag_result": _debug_tag_result(event)
-		"unfreeze_result": _debug_unfreeze_result(event)
-
-# Temporary diagnostic: print server rejections to the local Godot console
-# so playtest-dev sessions can see why tags fail without flooding the HUD.
-func _debug_tag_result(event: Dictionary) -> void:
-	if bool(event.get("ok", false)):
-		return
-	print("[tag-rejected] reason=", event.get("reason", "?"), " target=", event.get("targetId", "?"))
-
-func _debug_unfreeze_result(event: Dictionary) -> void:
-	if bool(event.get("ok", false)):
-		return
-	print("[unfreeze-rejected] reason=", event.get("reason", "?"), " target=", event.get("targetId", "?"))
 
 func _handle_phase_event(phase: String, cry_index: int) -> void:
 	# Server sends 'turn_mime' / 'turn_clown' for the active-turn phases plus a
@@ -395,39 +396,56 @@ func _drive_online_hud() -> void:
 	var remaining_s: float = max(0.0, (turn_ends_at_ms - now_ms) / 1000.0)
 	hud.set_countdown_seconds(remaining_s)
 
-## Run one physics-frame step of the same movement math the server runs,
-## scaled by the actual frame delta. Updates local_player.global_position so
-## the body responds at the screen's refresh rate. The 20 Hz buffer for the
-## server is still produced in _stream_input; only the rendered position
-## comes from this loop.
-func _advance_local_prediction(delta: float) -> void:
+## Render-frame visual interpolation between consecutive tick-bound predictions.
+## The authoritative XZ advances once per physics tick inside
+## _advance_predicted_tick; this function only smooths the rendered body
+## transform between those samples so a >60 Hz monitor stays fluid without
+## diverging from what the server sees.
+func _advance_local_prediction(_delta: float) -> void:
+	if local_player == null or not _pred_armed:
+		return
+	var alpha: float = clampf(
+		(Time.get_unix_time_from_system() - _pred_tick_start_t) / INPUT_TICK_PERIOD,
+		0.0,
+		1.0,
+	)
+	# Topology wraps land prev and current on opposite ends of the playfield;
+	# lerping across them would shoot the body through the world. Detect the
+	# discontinuity by step size: a single physics tick at sprint speed travels
+	# ~0.1 m, so anything past 1 m means the step wrapped (or reconciliation
+	# placed the new authoritative position far from the rendered one).
+	var rendered_xz: Vector2
+	if (_pred_current_xz - _pred_prev_xz).length() > 1.0:
+		rendered_xz = _pred_current_xz
+	else:
+		rendered_xz = _pred_prev_xz.lerp(_pred_current_xz, alpha)
+	local_player.global_position = Vector3(
+		rendered_xz.x, local_player.global_position.y, rendered_xz.y
+	)
+
+## Advance the authoritative predicted position by one server-tick worth of
+## motion. Called once per physics tick from _stream_input, matching the
+## cadence the server uses to apply inputs. _process visually interpolates
+## between consecutive samples.
+func _advance_predicted_tick(world_move: Vector2, sprint_held: bool) -> void:
 	if local_player == null or labyrinth == null or topology == null:
 		return
-	var wasd: Vector2 = _sample_move_intent()
-	var yaw: float = local_player.rotation.y
-	var world_move: Vector2 = _rotate_wasd_to_world(wasd, yaw)
-	var sprint_held: bool = (
-		Input.is_action_pressed("sprint") and _input_active() and wasd.length() > 0.0
-	)
-	var pos2: Vector2 = Vector2(local_player.global_position.x, local_player.global_position.z)
 	var step := Movement.step(
 		{
-			"position": pos2,
+			"position": _pred_current_xz,
 			"sprint_energy": local_sprint_energy,
 			"sprinting": local_sprinting,
 		},
-		{"move": world_move, "sprint": sprint_held, "dt": delta},
+		{"move": world_move, "sprint": sprint_held, "dt": INPUT_TICK_PERIOD},
 		labyrinth.wall_endpoints(),
 		topology,
 	)
-	var new_pos: Vector2 = step["position"]
+	_pred_prev_xz = _pred_current_xz
+	_pred_current_xz = step["position"]
+	_pred_tick_start_t = Time.get_unix_time_from_system()
 	local_sprint_energy = step["sprint_energy"]
 	local_sprinting = bool(step["sprinting"])
-	local_player.global_position = Vector3(new_pos.x, local_player.global_position.y, new_pos.y)
-	var planar: float = (new_pos - pos2).length() / max(delta, 1e-4)
-	# Pass the latched sprinting state, not just the held key, so the body's
-	# footstep audio matches the resolved hysteresis (no audible flicker
-	# when energy is below the engage threshold).
+	var planar: float = (_pred_current_xz - _pred_prev_xz).length() / INPUT_TICK_PERIOD
 	local_player.set_external_motion(planar, local_sprinting and world_move.length() > 0.0)
 
 func _stream_input(delta: float) -> void:
@@ -460,6 +478,11 @@ func _stream_input(delta: float) -> void:
 		"dt": INPUT_TICK_PERIOD,
 	})
 	room_client.send_input(input_seq, INPUT_TICK_PERIOD, effective_move, yaw, sprinting)
+	# Advance the authoritative predicted XZ by exactly the same input the
+	# server will apply. The render loop interpolates between consecutive
+	# samples in _advance_local_prediction so the body still updates smoothly
+	# at >60 Hz refresh rates.
+	_advance_predicted_tick(effective_move, effective_sprint)
 
 func _rotate_wasd_to_world(wasd: Vector2, yaw: float) -> Vector2:
 	# wasd.x = right input strength, wasd.y = back-minus-forward. Map to a
@@ -612,25 +635,8 @@ func _check_contact_interactions() -> void:
 			continue
 		if now - float(contact_cooldowns.get(id, 0.0)) < CONTACT_COOLDOWN_S:
 			continue
-		var fired: bool = _attempt_interaction(id, node, active)
-		if fired:
+		if _attempt_interaction(id, node, active):
 			contact_cooldowns[id] = now
-		else:
-			# Diagnostic: contact close enough but no tag/unfreeze fired. Throttled
-			# to one log per 2 s per target so a long chase doesn't flood the
-			# console. Drop with the other _debug_* helpers once the chase-tag
-			# flow is verified.
-			var last: float = float(_debug_no_fire_throttle.get(id, 0.0))
-			if now - last > 2.0:
-				_debug_no_fire_throttle[id] = now
-				print(
-					"[contact-no-fire] phase=", phase_label,
-					" active=", active,
-					" my_team=", local_player.team,
-					" their_team=", node.team,
-					" their_frozen=", node.frozen,
-					" dist=%.2f" % dist,
-				)
 
 func _attempt_interaction(id: String, node: Node, active: String) -> bool:
 	if active == local_player.team and node.team != local_player.team and not node.frozen:

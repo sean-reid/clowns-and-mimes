@@ -13,27 +13,73 @@ const DIR_NORTH := 1
 const DIR_WEST := 2
 const DIR_SOUTH := 3
 
-# Sphere T-net cube layout. Six square faces in a 4 x 3 grid. Each face is
-# a SPHERE_FACE_CELLS x SPHERE_FACE_CELLS maze. Mirrors
-# backend/shared/src/gridMaze.ts so the TS server and the GDScript client
-# agree on every wall.
-const SPHERE_FACE_CELLS := 5
-const FACE_GRID_COLS := 4
-const FACE_GRID_ROWS := 3
-const SPHERE_GRID_X := FACE_GRID_COLS * SPHERE_FACE_CELLS  # 20
-const SPHERE_GRID_Z := FACE_GRID_ROWS * SPHERE_FACE_CELLS  # 15
+# Sphere rhombicuboctahedron layout. 18 walkable squares on an 8 x 7 net,
+# each holding a SPHERE_FACE_CELLS x SPHERE_FACE_CELLS interior maze.
+# Mirrors backend/shared/src/gridMaze.ts so the TS server and the GDScript
+# client agree on every wall. The triangle barriers in the unfold produce
+# perimeter wall segments around the walkable faces that border them.
+const SPHERE_FACE_CELLS := 3
+const NET_COLS := 8
+const NET_ROWS := 7
+const SPHERE_GRID_X := NET_COLS * SPHERE_FACE_CELLS  # 24
+const SPHERE_GRID_Z := NET_ROWS * SPHERE_FACE_CELLS  # 21
 
-# CUBE_FACES order mirrors backend/shared/src/sphereCubeMap.ts. The maze
-# generator iterates this list and consumes LCG draws in this order; any
-# divergence with the TS side would produce mismatched walls.
-const CUBE_FACES: Array[String] = ['+Y', '-X', '+Z', '+X', '-Z', '-Y']
-const FACE_SLOTS := {
-	'+Y': Vector2i(1, 0),
-	'-X': Vector2i(0, 1),
-	'+Z': Vector2i(1, 1),
-	'+X': Vector2i(2, 1),
-	'-Z': Vector2i(3, 1),
-	'-Y': Vector2i(1, 2),
+# Walkable face iteration order. Both this list and TS SPHERE_MAZE_ORDER
+# must stay in lockstep so client and server consume the same LCG draws.
+const SPHERE_MAZE_ORDER: Array[String] = [
+	'+Y',
+	'ePYn', 'ePYe', 'ePYs', 'ePYw',
+	'-X', 'eN', '+Z', 'eS', '+X', 'eR', '-Z', 'eL',
+	'eNYn', 'eNYe', 'eNYs', 'eNYw',
+	'-Y',
+]
+
+# Slot positions for every walkable face. Triangles aren't iterated; their
+# barriers are emitted as perimeter walls from the adjacent walkable cells.
+const SPHERE_FACE_SLOTS := {
+	'+Y':   Vector2i(2, 1),
+	'ePYn': Vector2i(2, 0),
+	'ePYe': Vector2i(3, 1),
+	'ePYs': Vector2i(2, 2),
+	'ePYw': Vector2i(1, 1),
+	'-X': Vector2i(0, 3),
+	'eN': Vector2i(1, 3),
+	'+Z': Vector2i(2, 3),
+	'eS': Vector2i(3, 3),
+	'+X': Vector2i(4, 3),
+	'eR': Vector2i(5, 3),
+	'-Z': Vector2i(6, 3),
+	'eL': Vector2i(7, 3),
+	'eNYn': Vector2i(2, 4),
+	'eNYe': Vector2i(3, 5),
+	'eNYs': Vector2i(2, 6),
+	'eNYw': Vector2i(1, 5),
+	'-Y':   Vector2i(2, 5),
+}
+
+# Whether each walkable face has a walkable destination through the given
+# edge. Edges absent here lead to a triangle barrier (or off-net void that
+# borders a triangle in 3D) and must be sealed with a perimeter wall.
+# Mirrors ADJACENCY in backend/shared/src/sphereRhombicuboctahedron.ts.
+const SPHERE_HAS_ADJ := {
+	'+X':   { 'east': true, 'west': true, 'north': true, 'south': true },
+	'-X':   { 'east': true, 'west': true, 'north': true, 'south': true },
+	'+Z':   { 'east': true, 'west': true, 'north': true, 'south': true },
+	'-Z':   { 'east': true, 'west': true, 'north': true, 'south': true },
+	'+Y':   { 'east': true, 'west': true, 'north': true, 'south': true },
+	'-Y':   { 'east': true, 'west': true, 'north': true, 'south': true },
+	'ePYn': { 'south': true, 'north': true },
+	'ePYe': { 'west': true, 'east': true },
+	'ePYw': { 'east': true, 'west': true },
+	'ePYs': { 'north': true, 'south': true },
+	'eNYn': { 'north': true, 'south': true },
+	'eNYe': { 'west': true, 'east': true },
+	'eNYw': { 'east': true, 'west': true },
+	'eNYs': { 'north': true, 'south': true },
+	'eN':   { 'east': true, 'west': true },
+	'eS':   { 'east': true, 'west': true },
+	'eR':   { 'east': true, 'west': true },
+	'eL':   { 'east': true, 'west': true },
 }
 
 const TopologyScript := preload("res://scripts/topology/topology.gd")
@@ -283,28 +329,22 @@ static func _emit_klein_expanded_walls(openings: PackedByteArray, grid_n: int) -
 # row 1 col 0, row 1 col 1, row 1 col 2) and share one LCG state, mirroring
 # backend/shared/src/gridMaze.ts::generateSphereGridWalls.
 #
-# Sphere T-net cube map. Six independent N x N face mazes placed in the
-# T-net slots:
-#
-#                col=0  col=1  col=2  col=3
-#        row=0          +Y
-#        row=1   -X     +Z     +X     -Z
-#        row=2          -Y
-#
-# Walls are interior to each face. Outer face edges stay open so
-# grid-adjacent face seams (like +Z east -> +X west) flow naturally and
-# void-adjacent edges (like +X north into the (2, 0) void) trigger the cube
-# identification in sphere_topology.gd::wrap_step.
+# Sphere rhombicuboctahedron. 18 walkable square faces on an 8 x 7 unfold.
+# Each face gets an N x N interior maze. Walls are emitted (a) interior to
+# each face, and (b) along face perimeter edges that border a triangle
+# barrier (or off-net void that maps to a triangle in 3D). Edges between
+# two walkable faces stay open; the runtime handles the crossing via
+# stepAcrossSphereFaces in topology.gd::wrap_step.
 static func _generate_sphere(seed_value: int) -> Array:
 	var n: int = SPHERE_FACE_CELLS
 	var face_total: int = n * n
-	var face_side: float = TopologyScript.WIDTH / float(FACE_GRID_COLS)
+	var face_side: float = TopologyScript.WIDTH / float(NET_COLS)
 	var cell_size: float = face_side / float(n)
-	var ext_x: float = float(FACE_GRID_COLS) * face_side
-	var ext_z: float = float(FACE_GRID_ROWS) * face_side
+	var ext_x: float = float(NET_COLS) * face_side
+	var ext_z: float = float(NET_ROWS) * face_side
 	var out: Array = []
 	var rng_state: int = seed_value & 0xFFFFFFFF
-	for face in CUBE_FACES:
+	for face in SPHERE_MAZE_ORDER:
 		var local_visited := PackedByteArray()
 		local_visited.resize(face_total)
 		var local_openings := PackedByteArray()
@@ -353,12 +393,13 @@ static func _generate_sphere(seed_value: int) -> Array:
 			var pick_cell: int = pick[1]
 			local_openings[cell] = local_openings[cell] | (1 << pick_dir)
 			local_openings[pick_cell] = local_openings[pick_cell] | (1 << _opposite(pick_dir))
-		# Emit walls in world coords. Drop walls on the face's outer edges
-		# so every face boundary remains open.
-		var slot: Vector2i = FACE_SLOTS[face]
+		# Emit walls in world coords.
+		var slot: Vector2i = SPHERE_FACE_SLOTS[face]
 		var x_min: float = slot.x * face_side - ext_x * 0.5
+		var x_max: float = x_min + face_side
 		var z_max: float = ext_z * 0.5 - slot.y * face_side
 		var z_min: float = z_max - face_side
+		# Interior maze walls.
 		for r in n:
 			for c in n:
 				var id: int = c + r * n
@@ -374,6 +415,16 @@ static func _generate_sphere(seed_value: int) -> Array:
 					var x0: float = x_min + float(c) * cell_size
 					var x1: float = x_min + float(c + 1) * cell_size
 					out.append({"ax": x0, "az": z, "bx": x1, "bz": z})
+		# Perimeter walls along edges that border a triangle barrier.
+		var adj: Dictionary = SPHERE_HAS_ADJ.get(face, {})
+		if not adj.get('east', false):
+			out.append({"ax": x_max, "az": z_min, "bx": x_max, "bz": z_max})
+		if not adj.get('west', false):
+			out.append({"ax": x_min, "az": z_min, "bx": x_min, "bz": z_max})
+		if not adj.get('north', false):
+			out.append({"ax": x_min, "az": z_max, "bx": x_max, "bz": z_max})
+		if not adj.get('south', false):
+			out.append({"ax": x_min, "az": z_min, "bx": x_max, "bz": z_min})
 	return out
 
 static func _sphere_local_neighbor(local_cell: int, dir: int, n: int) -> int:

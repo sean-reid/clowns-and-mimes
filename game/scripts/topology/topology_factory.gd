@@ -4,7 +4,7 @@ const TopologyScript := preload("res://scripts/topology/topology.gd")
 const PLANE_SCRIPT := preload("res://scripts/topology/plane_topology.gd")
 const TORUS_SCRIPT := preload("res://scripts/topology/torus_topology.gd")
 const KLEIN_SCRIPT := preload("res://scripts/topology/klein_topology.gd")
-const SPHERE_SCRIPT := preload("res://scripts/topology/sphere_topology.gd")
+const SPHERE_SCRIPT := preload("res://scripts/topology/sphere_rhombicuboctahedron_topology.gd")
 
 static func create(kind: int) -> TopologyScript:
 	match kind:

@@ -273,14 +273,14 @@ export class BotPathfinder {
 
 function gridShapeFor(topology: Topology): GridShape {
   if (topology === 'sphere') {
-    // T-net: 20 x 15 cells over a 4 x 3 grid of cube face slots. Six of
-    // the twelve slots are void; the pathfinder still iterates the full
-    // grid but every other player's cell mask prevents bots from routing
-    // through the voids. Cube identification across face boundaries is
-    // handled in the runtime (stepAcrossSphereFaces); the pathfinder
-    // treats the playfield as a flat 20 x 15 rectangle for now and the
-    // resulting paths are good for chase / rescue inside or between
-    // adjacent face slots.
+    // Rhombicuboctahedron unfold: SPHERE_GRID_X x SPHERE_GRID_Z cells over
+    // an 8 x 7 net of face slots. 18 of the 56 slots are walkable; the
+    // rest are triangle barriers or off-net voids. Edge identification
+    // across face boundaries is handled in the runtime
+    // (stepAcrossSphereFaces); the pathfinder treats the playfield as a
+    // flat rectangle and relies on the wall list (perimeter walls around
+    // triangles) plus the cell occupancy mask to keep routes off the
+    // non-walkable cells.
     return {
       cols: SPHERE_GRID_X,
       rows: SPHERE_GRID_Z,

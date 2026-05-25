@@ -1,7 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import { gapJitter, generateWalls, pathCrossesWall } from './labyrinth.ts';
-import { SPHERE_FACE_CELLS } from './gridMaze.ts';
-import { CUBE_FACES, faceWorldRect, FACE_GRID_COLS, FACE_GRID_ROWS } from './sphereCubeMap.ts';
+import {
+  ADJACENCY,
+  FACE_SLOTS,
+  faceWorldRect,
+  isWalkable,
+  type FaceId,
+} from './sphereRhombicuboctahedron.ts';
 import { SPHERE_FACE_SIDE } from './topology.ts';
 
 describe('gapJitter', () => {
@@ -125,42 +130,89 @@ describe('generateWalls (plane, torus, klein use grid maze)', () => {
     expect(anyOnBoundary).toBe(false);
   });
 
-  it('omits walls along sphere T-net face boundaries', () => {
-    // The T-net puts every cube face in its own grid slot; no wall should
-    // sit on a face's outer edge because grid-adjacent face seams are open
-    // for traversal and void-adjacent seams are open for the cube
-    // identification to fire on motion.
+  it('keeps shared edges between two walkable sphere faces wall-free', () => {
+    // Rhombicuboctahedron unfold: when two walkable cells sit next to
+    // each other in the unfold (e.g., +Z and ePYs, or +Z and eS), the
+    // shared edge must be open so the player can walk between them.
+    // Equivalently: no wall lies inside the shared-edge segment between
+    // any two walkable unfold-neighbour cells.
     const walls = generateWalls(7, 'sphere');
-    const faceEdges: number[] = [];
-    for (const face of CUBE_FACES) {
-      const r = faceWorldRect(face, SPHERE_FACE_SIDE);
-      faceEdges.push(r.xMin, r.xMax, r.zMin, r.zMax);
+    const neighbourAt = (col: number, row: number): FaceId | null => {
+      for (const f of Object.keys(FACE_SLOTS)) {
+        const s = FACE_SLOTS[f]!;
+        if (s.col === col && s.row === row) return f as FaceId;
+      }
+      return null;
+    };
+    type Seg = { vertical: boolean; coord: number; from: number; to: number };
+    const openSegments: Seg[] = [];
+    for (const face of Object.keys(FACE_SLOTS)) {
+      if (!isWalkable(face)) continue;
+      const r = faceWorldRect(face as FaceId, SPHERE_FACE_SIDE);
+      const slot = FACE_SLOTS[face]!;
+      const east = neighbourAt(slot.col + 1, slot.row);
+      const north = neighbourAt(slot.col, slot.row - 1);
+      // Only emit each shared edge once: take the east and north sides
+      // (avoids double-counting the same boundary from both faces).
+      if (east && isWalkable(east)) {
+        openSegments.push({ vertical: true, coord: r.xMax, from: r.zMin, to: r.zMax });
+      }
+      if (north && isWalkable(north)) {
+        openSegments.push({ vertical: false, coord: r.zMax, from: r.xMin, to: r.xMax });
+      }
     }
-    // Cell size is SPHERE_FACE_SIDE / SPHERE_FACE_CELLS.
-    const cellSize = SPHERE_FACE_SIDE / SPHERE_FACE_CELLS;
     for (const w of walls) {
-      const isVerticalSeg = w.ax === w.bx;
-      const isHorizontalSeg = w.az === w.bz;
-      if (isVerticalSeg) {
-        for (const e of faceEdges) {
-          // Only check x-aligned edges (vertical walls live on x = const lines).
-          if (Math.abs(e) < FACE_GRID_COLS * SPHERE_FACE_SIDE) {
-            // Walls land on the cell grid; a face's outer edge falls on
-            // multiples of SPHERE_FACE_SIDE relative to the playfield
-            // origin. Use a slack of cellSize/2 to allow interior walls
-            // close to but not on the face boundary.
-            expect(Math.abs(w.ax - e)).not.toBeLessThan(cellSize / 4);
-          }
-        }
-      }
-      if (isHorizontalSeg) {
-        for (const e of faceEdges) {
-          if (Math.abs(e) < FACE_GRID_ROWS * SPHERE_FACE_SIDE) {
-            expect(Math.abs(w.az - e)).not.toBeLessThan(cellSize / 4);
-          }
+      const isVertical = w.ax === w.bx;
+      for (const seg of openSegments) {
+        if (seg.vertical !== isVertical) continue;
+        if (isVertical) {
+          if (Math.abs(w.ax - seg.coord) > 1e-6) continue;
+          const wMin = Math.min(w.az, w.bz);
+          const wMax = Math.max(w.az, w.bz);
+          // Overlap test: wall's z range intersects the open segment.
+          expect(wMax <= seg.from + 1e-6 || wMin >= seg.to - 1e-6).toBe(true);
+        } else {
+          if (Math.abs(w.az - seg.coord) > 1e-6) continue;
+          const wMin = Math.min(w.ax, w.bx);
+          const wMax = Math.max(w.ax, w.bx);
+          expect(wMax <= seg.from + 1e-6 || wMin >= seg.to - 1e-6).toBe(true);
         }
       }
     }
+  });
+
+  it('emits perimeter walls between sphere walkable faces and triangle barriers', () => {
+    // Every edge of a walkable cell that has no ADJACENCY entry borders
+    // either an unfold-adjacent triangle or an off-net void that maps to
+    // a triangle in 3D. Each such edge must show up in the wall list so
+    // collision blocks the player at the barrier.
+    const walls = generateWalls(11, 'sphere');
+    let expected = 0;
+    for (const face of Object.keys(ADJACENCY)) {
+      const faceAdj = ADJACENCY[face]!;
+      for (const edge of ['east', 'west', 'north', 'south'] as const) {
+        if (faceAdj[edge] === undefined) expected += 1;
+      }
+    }
+    // Inspect each face perimeter to count walls that land on its outer
+    // boundary. We expect exactly `expected` perimeter wall segments.
+    let perimeterHits = 0;
+    for (const face of Object.keys(ADJACENCY)) {
+      const r = faceWorldRect(face as FaceId, SPHERE_FACE_SIDE);
+      const faceAdj = ADJACENCY[face]!;
+      for (const w of walls) {
+        // Vertical seg matching east/west boundary spanning the full cell?
+        if (w.ax === w.bx && Math.abs(w.az - r.zMin) < 1e-6 && Math.abs(w.bz - r.zMax) < 1e-6) {
+          if (Math.abs(w.ax - r.xMax) < 1e-6 && faceAdj.east === undefined) perimeterHits += 1;
+          if (Math.abs(w.ax - r.xMin) < 1e-6 && faceAdj.west === undefined) perimeterHits += 1;
+        }
+        if (w.az === w.bz && Math.abs(w.ax - r.xMin) < 1e-6 && Math.abs(w.bx - r.xMax) < 1e-6) {
+          if (Math.abs(w.az - r.zMax) < 1e-6 && faceAdj.north === undefined) perimeterHits += 1;
+          if (Math.abs(w.az - r.zMin) < 1e-6 && faceAdj.south === undefined) perimeterHits += 1;
+        }
+      }
+    }
+    expect(perimeterHits).toBe(expected);
   });
 
   it('produces different walls for sphere and torus at the same seed', () => {

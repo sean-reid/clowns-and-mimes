@@ -34,20 +34,22 @@ describe('wrapPosition', () => {
     expect(a.z).toBe(-40);
   });
 
-  it('passes through on the sphere when the point is on a valid face', () => {
-    // Sphere is the T-net cube map: 4*W/4 wide x 3*W/4 tall (100 x 75 here).
-    // A point inside a face slot is returned unchanged; the step-aware
-    // wrap (wrapPositionFromStep) handles cube adjacency on motion.
-    const inside = wrapPosition({ x: 10, z: 5 }, 'sphere', W);
-    expect(inside.x).toBe(10);
+  it('passes through on the sphere when the point is on a walkable face', () => {
+    // Sphere is the rhombicuboctahedron unfold: 8 * W/8 wide x 7 * W/8 tall
+    // (100 x 87.5 here). A point inside a walkable cell is returned
+    // unchanged; the step-aware wrap (wrapPositionFromStep) handles edge
+    // identification on motion. With W=100 the cell at (col=2, row=3) is
+    // +Z, centered at (-18.75, 0); (-10, 5) sits inside that cell.
+    const inside = wrapPosition({ x: -10, z: 5 }, 'sphere', W);
+    expect(inside.x).toBe(-10);
     expect(inside.z).toBe(5);
   });
 
-  it('snaps an out-of-bounds sphere point to the nearest face center', () => {
-    // (60, 0) is outside the T-net (x range [-50, 50]). Nearest face slot
-    // is the equator's +X at col=2, row=1: center (37.5, 0).
+  it('snaps an out-of-bounds sphere point to the nearest walkable face center', () => {
+    // (60, 0) is past the equator's east boundary. Nearest walkable face
+    // is eL at (col=7, row=3) with center x = 43.75.
     const out = wrapPosition({ x: 60, z: 0 }, 'sphere', W);
-    expect(out.x).toBeCloseTo(37.5, 6);
+    expect(out.x).toBeCloseTo(43.75, 6);
     expect(out.z).toBeCloseTo(0, 6);
   });
 });

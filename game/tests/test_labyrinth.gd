@@ -117,39 +117,58 @@ func test_grid_maze_builds_walls_for_klein_topology() -> void:
 	)
 	instance.queue_free()
 
-func test_sphere_grid_has_walls_and_omits_face_boundaries() -> void:
-	# Six N x N face mazes in the T-net (4 x 3 face slots). Outer face
-	# edges stay open so grid-adjacent face seams flow naturally and
-	# void-adjacent seams let the cube identification in
-	# sphere_topology.gd::wrap_step fire on motion.
+func test_sphere_grid_has_walls_and_open_walkable_seams() -> void:
+	# Rhombicuboctahedron unfold: 18 walkable faces with interior mazes
+	# plus perimeter walls along edges that border a triangle barrier.
+	# Edges shared by two walkable cells must stay open so the player can
+	# walk between them.
 	var segs: Array = GridMaze.generate(7, "sphere")
 	assert_true(segs.size() > 30, "sphere maze has substantial wall count, got %d" % segs.size())
-	var face_side: float = TopologyScript.WIDTH / float(GridMaze.FACE_GRID_COLS)
-	var ext_x: float = float(GridMaze.FACE_GRID_COLS) * face_side
-	var ext_z: float = float(GridMaze.FACE_GRID_ROWS) * face_side
-	var face_edges_x: Array[float] = []
-	for col in GridMaze.FACE_GRID_COLS + 1:
-		face_edges_x.append(float(col) * face_side - ext_x * 0.5)
-	var face_edges_z: Array[float] = []
-	for row in GridMaze.FACE_GRID_ROWS + 1:
-		face_edges_z.append(ext_z * 0.5 - float(row) * face_side)
+	var face_side: float = TopologyScript.WIDTH / float(GridMaze.NET_COLS)
+	var ext_x: float = float(GridMaze.NET_COLS) * face_side
+	var ext_z: float = float(GridMaze.NET_ROWS) * face_side
+	# Build the open-edge segments: for each walkable face, take its
+	# east-side and north-side boundary segments that face another
+	# walkable cell in the unfold.
+	var open_v: Array = []  # [x, z_min, z_max]
+	var open_h: Array = []  # [z, x_min, x_max]
+	for face in GridMaze.SPHERE_FACE_SLOTS.keys():
+		var slot: Vector2i = GridMaze.SPHERE_FACE_SLOTS[face]
+		var x_min: float = slot.x * face_side - ext_x * 0.5
+		var x_max: float = x_min + face_side
+		var z_max: float = ext_z * 0.5 - slot.y * face_side
+		var z_min: float = z_max - face_side
+		# East neighbour shares x_max boundary.
+		var east_neighbour_slot := Vector2i(slot.x + 1, slot.y)
+		for other in GridMaze.SPHERE_FACE_SLOTS.keys():
+			if GridMaze.SPHERE_FACE_SLOTS[other] == east_neighbour_slot:
+				open_v.append([x_max, z_min, z_max])
+				break
+		# North neighbour shares z_max boundary.
+		var north_neighbour_slot := Vector2i(slot.x, slot.y - 1)
+		for other in GridMaze.SPHERE_FACE_SLOTS.keys():
+			if GridMaze.SPHERE_FACE_SLOTS[other] == north_neighbour_slot:
+				open_h.append([z_max, x_min, x_max])
+				break
 	for seg in segs:
 		var axis_aligned: bool = seg["ax"] == seg["bx"] or seg["az"] == seg["bz"]
 		assert_true(axis_aligned, "sphere wall axis-aligned: %s" % str(seg))
-		# No wall sits on any face's outer edge (vertical wall on a face
-		# x-edge or horizontal wall on a face z-edge).
 		if seg["ax"] == seg["bx"]:
-			for edge in face_edges_x:
-				assert_true(
-					absf(seg["ax"] - edge) > 0.001,
-					"sphere has no wall on a face x edge: %s" % str(seg)
-				)
+			var wmin: float = minf(seg["az"], seg["bz"])
+			var wmax: float = maxf(seg["az"], seg["bz"])
+			for line in open_v:
+				if absf(seg["ax"] - line[0]) > 0.001:
+					continue
+				var disjoint: bool = wmax <= line[1] + 0.001 or wmin >= line[2] - 0.001
+				assert_true(disjoint, "vertical wall on open walkable seam: %s" % str(seg))
 		if seg["az"] == seg["bz"]:
-			for edge in face_edges_z:
-				assert_true(
-					absf(seg["az"] - edge) > 0.001,
-					"sphere has no wall on horizontal face seam: %s" % str(seg)
-				)
+			var wmin2: float = minf(seg["ax"], seg["bx"])
+			var wmax2: float = maxf(seg["ax"], seg["bx"])
+			for line in open_h:
+				if absf(seg["az"] - line[0]) > 0.001:
+					continue
+				var disjoint: bool = wmax2 <= line[1] + 0.001 or wmin2 >= line[2] - 0.001
+				assert_true(disjoint, "horizontal wall on open walkable seam: %s" % str(seg))
 
 func test_sphere_grid_differs_from_torus() -> void:
 	var s: Array = GridMaze.generate(2026, "sphere")

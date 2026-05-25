@@ -24,24 +24,52 @@ import type { Topology } from './protocol.ts';
 import { WORLD_WIDTH, SPHERE_FACE_SIDE } from './topology.ts';
 import type { WallSegment } from './labyrinth.ts';
 import {
-  CUBE_FACES,
-  FACE_GRID_COLS,
-  FACE_GRID_ROWS,
-  FACE_SLOTS,
+  ADJACENCY,
+  NET_COLS,
+  NET_ROWS,
   faceWorldRect,
-} from './sphereCubeMap.ts';
+  type FaceId,
+} from './sphereRhombicuboctahedron.ts';
 
 export const GRID_MAZE_N = 10;
 
-// Sphere T-net cube map. Six square faces in a 4 x 3 grid (with the four
-// equator faces in the middle row and the two poles above/below +Z).
-// Per-face mazes are SPHERE_FACE_CELLS on a side, so the global packing is
-// 4N wide by 3N tall in cell counts. The six T-net "void" cells (top and
-// bottom corners) have no floor and no maze; the cube identification rule
-// in topology.ts wraps motion across their boundaries.
-export const SPHERE_FACE_CELLS = 5;
-export const SPHERE_GRID_X = FACE_GRID_COLS * SPHERE_FACE_CELLS; // 20
-export const SPHERE_GRID_Z = FACE_GRID_ROWS * SPHERE_FACE_CELLS; // 15
+// Sphere rhombicuboctahedron unfold. 18 walkable squares (6 axials + 12
+// edge squares) separated by 8 triangle barriers on an 8 x 7 net. Each
+// walkable face holds an SPHERE_FACE_CELLS x SPHERE_FACE_CELLS DFS maze,
+// so the global pathfinder grid is NET_COLS * N wide by NET_ROWS * N
+// tall. Edges between walkable faces stay open (grid-adjacent crossings
+// flow naturally and off-net seams identify via stepAcrossSphereFaces).
+// Edges that border a triangle barrier get a wall segment so collision
+// blocks the player at the triangle's perimeter.
+export const SPHERE_FACE_CELLS = 3;
+export const SPHERE_GRID_X = NET_COLS * SPHERE_FACE_CELLS; // 24
+export const SPHERE_GRID_Z = NET_ROWS * SPHERE_FACE_CELLS; // 21
+
+/**
+ * Order in which walkable faces are visited by the maze generator. Both
+ * the TS and GDScript implementations iterate this list with a shared
+ * LCG state so the same seed produces the same wall list on both sides.
+ */
+const SPHERE_MAZE_ORDER: FaceId[] = [
+  '+Y',
+  'ePYn',
+  'ePYe',
+  'ePYs',
+  'ePYw',
+  '-X',
+  'eN',
+  '+Z',
+  'eS',
+  '+X',
+  'eR',
+  '-Z',
+  'eL',
+  'eNYn',
+  'eNYe',
+  'eNYs',
+  'eNYw',
+  '-Y',
+];
 
 const DIR_EAST = 0;
 const DIR_NORTH = 1;
@@ -350,18 +378,15 @@ function emitKleinExpandedWalls(openings: Uint8Array, gridN: number): WallSegmen
 }
 
 /**
- * Sphere wall list: six independent grid mazes laid out 3x2 in the playfield.
- * Each face is a 4x6 cell grid. Face boundaries carry no walls so a player
- * crossing a face edge wraps onto the adjacent face via the topology adapter.
+ * Sphere wall list: 18 independent per-face mazes plus perimeter walls
+ * where a walkable face borders a triangle barrier. Edges between two
+ * walkable faces (whether grid-adjacent in the unfold or joined through
+ * the polyhedron's edge graph) carry no walls; the runtime predictor and
+ * stepAcrossSphereFaces handle the crossing.
  *
- * The faces are visited in a fixed order (row 0 col 0, row 0 col 1, row 0
- * col 2, row 1 col 0, row 1 col 1, row 1 col 2) and share one LCG state, so
- * the generator is deterministic for a given seed and matches the GDScript
+ * Faces are visited in SPHERE_MAZE_ORDER, sharing one LCG state, so the
+ * generator is deterministic for a given seed and matches the GDScript
  * mirror in game/scripts/grid_maze.gd.
- *
- * TODO: this first cut uses torus-like wrapping between faces (modular 3x2),
- * which is not the rotated cube-net adjacency a true cube map needs. Proper
- * cube edge rotations and per-face spawn zones land in a follow-up.
  */
 export function generateSphereGridWalls(seed: number): WallSegment[] {
   const N = SPHERE_FACE_CELLS;
@@ -388,9 +413,7 @@ export function generateSphereGridWalls(seed: number): WallSegment[] {
     return { cell: nc + nr * N, dir, crossesSeam: false };
   };
 
-  // Iterate the six cube faces in CUBE_FACES order so GDScript and TS
-  // share the same LCG draw sequence for a given seed.
-  for (const face of CUBE_FACES) {
+  for (const face of SPHERE_MAZE_ORDER) {
     const localVisited = new Uint8Array(faceTotal);
     const localOpenings = new Uint8Array(faceTotal);
 
@@ -417,8 +440,6 @@ export function generateSphereGridWalls(seed: number): WallSegment[] {
       stack.push(pick.cell);
     }
 
-    // Braid this face: dead-end cells get one extra opening so the
-    // labyrinth is loopy rather than tree-shaped.
     for (let cell = 0; cell < faceTotal; cell += 1) {
       if (popCountNibble(localOpenings[cell]!) >= 2) continue;
       const closedNeighbors: { dir: number; cell: number }[] = [];
@@ -434,11 +455,8 @@ export function generateSphereGridWalls(seed: number): WallSegment[] {
       localOpenings[pick.cell] |= 1 << oppositeDir(pick.dir);
     }
 
-    // Emit walls in world coords. Drop walls on the face's outer edges so
-    // every face boundary stays open: grid-adjacent face crossings flow
-    // naturally and void-adjacent crossings trigger the cube identification
-    // in stepAcrossSphereFaces.
     const rect = faceWorldRect(face, SPHERE_FACE_SIDE);
+    // Interior maze walls.
     for (let r = 0; r < N; r += 1) {
       for (let c = 0; c < N; c += 1) {
         const id = c + r * N;
@@ -458,9 +476,22 @@ export function generateSphereGridWalls(seed: number): WallSegment[] {
         }
       }
     }
+    // Perimeter walls where the face borders a triangle barrier. An edge
+    // with no ADJACENCY entry has no walkable destination, so collision
+    // must stop the player here.
+    const faceAdj = ADJACENCY[face];
+    if (faceAdj?.east === undefined) {
+      out.push({ ax: rect.xMax, az: rect.zMin, bx: rect.xMax, bz: rect.zMax });
+    }
+    if (faceAdj?.west === undefined) {
+      out.push({ ax: rect.xMin, az: rect.zMin, bx: rect.xMin, bz: rect.zMax });
+    }
+    if (faceAdj?.north === undefined) {
+      out.push({ ax: rect.xMin, az: rect.zMax, bx: rect.xMax, bz: rect.zMax });
+    }
+    if (faceAdj?.south === undefined) {
+      out.push({ ax: rect.xMin, az: rect.zMin, bx: rect.xMax, bz: rect.zMin });
+    }
   }
-  // FACE_SLOTS is kept available for callers (used by the bot pathfinder
-  // to know which slots are face territory vs T-net void cells).
-  void FACE_SLOTS;
   return out;
 }

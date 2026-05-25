@@ -1,22 +1,23 @@
 import type { Topology, Vec2 } from './protocol.ts';
 import {
-  FACE_GRID_COLS,
+  FACE_SLOTS,
+  NET_COLS,
   faceWorldRect,
+  isWalkable,
   spherePlayfieldExtents,
   stepAcrossSphereFaces,
   worldToFace,
-  CUBE_FACES,
-  type CubeFace,
-} from './sphereCubeMap.ts';
+  type FaceId,
+} from './sphereRhombicuboctahedron.ts';
 
 export const WORLD_WIDTH = 80;
 
 /**
- * Cube face side length in world units. The T-net playfield is 4 x 3 faces,
- * so face = WORLD_WIDTH / 4 gives an x-extent of exactly WORLD_WIDTH and a
- * z-extent of 0.75 * WORLD_WIDTH.
+ * Side length of one square cell in the rhombicuboctahedron unfold. The
+ * net is 8 cols x 7 rows of cells, so face = WORLD_WIDTH / 8 keeps the
+ * x-extent at exactly WORLD_WIDTH and the z-extent at 7/8 * WORLD_WIDTH.
  */
-export const SPHERE_FACE_SIDE = WORLD_WIDTH / FACE_GRID_COLS;
+export const SPHERE_FACE_SIDE = WORLD_WIDTH / NET_COLS;
 
 /**
  * Per-topology playfield extents in world units. Klein and sphere are both
@@ -27,11 +28,17 @@ export const SPHERE_FACE_SIDE = WORLD_WIDTH / FACE_GRID_COLS;
 export function topologyExtents(topology: Topology, width: number): { x: number; z: number } {
   if (topology === 'klein') return { x: 2 * width, z: width };
   if (topology === 'sphere') {
-    const faceSide = width / FACE_GRID_COLS;
+    const faceSide = width / NET_COLS;
     return spherePlayfieldExtents(faceSide);
   }
   return { x: width, z: width };
 }
+
+/**
+ * Walkable faces of the sphere unfold, computed once. Used by the
+ * wrapPosition snap-to-face-center recovery path.
+ */
+const WALKABLE_FACES: FaceId[] = Object.keys(FACE_SLOTS).filter(isWalkable);
 
 /**
  * Wrap a position into the canonical domain for the topology.
@@ -65,19 +72,19 @@ export function wrapPosition(p: Vec2, topology: Topology, width: number): Vec2 {
     }
     case 'sphere': {
       // Single-point sphere wrap is a recovery path: a step that lands on a
-      // valid face just snaps to the nearest face center if the caller
-      // missed `wrapPositionFromStep`. For genuine motion crossings the
+      // walkable face just passes through. For genuine motion crossings the
       // caller should use `wrapPositionFromStep(prev, candidate, ...)` so
-      // cube adjacency carries the rotation. The pure-point clamp keeps
-      // the position on a valid face for spawn / initial state.
-      const faceSide = width / FACE_GRID_COLS;
+      // edge identification + rotation are applied. The pure-point clamp
+      // keeps spawn / initial state on a walkable face.
+      const faceSide = width / NET_COLS;
       const face = worldToFace(p.x, p.z, faceSide);
       if (face !== null) return p;
-      // Fell into a T-net void: snap to the nearest face's center as a
-      // best-effort recovery. This shouldn't happen during normal play.
-      let bestFace: CubeFace = CUBE_FACES[0];
+      // Fell into a triangle barrier or net void: snap to the nearest
+      // walkable face center as a best-effort recovery. Should not happen
+      // in normal play.
+      let bestFace: FaceId = WALKABLE_FACES[0]!;
       let bestDist = Infinity;
-      for (const f of CUBE_FACES) {
+      for (const f of WALKABLE_FACES) {
         const r = faceWorldRect(f, faceSide);
         const cx = (r.xMin + r.xMax) / 2;
         const cz = (r.zMin + r.zMax) / 2;
@@ -106,7 +113,7 @@ export function wrapPositionFromStep(
   width: number,
 ): Vec2 {
   if (topology !== 'sphere') return wrapPosition(candidate, topology, width);
-  const faceSide = width / FACE_GRID_COLS;
+  const faceSide = width / NET_COLS;
   return stepAcrossSphereFaces(prev, candidate, faceSide);
 }
 

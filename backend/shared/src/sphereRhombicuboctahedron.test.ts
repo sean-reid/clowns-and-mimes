@@ -24,7 +24,10 @@ describe('rhombicuboctahedron face counts', () => {
 
   it('FACE_SLOTS covers exactly the 26 polyhedron faces', () => {
     const expected =
-      AXIAL_FACES.length + CAP_EDGE_FACES.length + EQUATOR_EDGE_FACES.length + TRIANGLE_FACES.length;
+      AXIAL_FACES.length +
+      CAP_EDGE_FACES.length +
+      EQUATOR_EDGE_FACES.length +
+      TRIANGLE_FACES.length;
     expect(expected).toBe(26);
     expect(Object.keys(FACE_SLOTS).length).toBe(26);
   });

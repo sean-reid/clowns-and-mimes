@@ -22,7 +22,7 @@ const clownAvatar = `${base}avatars/clown.png`;
     <meta property="og:title" content={title} />
     <meta
       property="og:description"
-      content="Tag every opponent before they tag you. The arena might be a sphere, a torus, or a Klein bottle."
+      content="Tag every opponent before they tag you. The arena might be a torus, a Klein bottle, or a double torus."
     />
     <link
       rel="icon"
@@ -433,16 +433,26 @@ const clownAvatar = `${base}avatars/clown.png`;
           <article class="topology">
             <svg viewBox="0 0 160 120" aria-hidden="true">
               <g fill="none" stroke="currentColor" stroke-width="2.2" stroke-linejoin="round" stroke-linecap="round">
-                <circle cx="80" cy="60" r="44" />
-                <ellipse cx="80" cy="60" rx="44" ry="14" />
-                <path d="M 80 16 Q 60 60 80 104" />
-                <path d="M 80 16 Q 100 60 80 104" />
-                <path d="M 80 16 Q 50 60 80 104" stroke-dasharray="4 4" opacity="0.6" />
-                <path d="M 80 16 Q 110 60 80 104" stroke-dasharray="4 4" opacity="0.6" />
+                <!-- Fundamental octagon for the genus-2 surface. 8 sides
+                     identified pairwise as a b a^-1 b^-1 c d c^-1 d^-1. -->
+                <polygon points="120,60 108.28,88.28 80,100 51.72,88.28 40,60 51.72,31.72 80,20 108.28,31.72" />
+              </g>
+              <g fill="currentColor" stroke="none" font-family="system-ui, sans-serif"
+                 font-size="9" font-style="italic" text-anchor="middle" dominant-baseline="middle">
+                <!-- Side labels at midpoints. Each letter appears twice on
+                     mate sides (forward + inverse). -->
+                <text x="118" y="74">a</text>
+                <text x="98" y="96">b</text>
+                <text x="62" y="96">a</text>
+                <text x="42" y="74">b</text>
+                <text x="42" y="46">c</text>
+                <text x="62" y="24">d</text>
+                <text x="98" y="24">c</text>
+                <text x="118" y="46">d</text>
               </g>
             </svg>
-            <h3>Sphere</h3>
-            <p>Walk a great circle. There is no edge to fall off.</p>
+            <h3>Double torus</h3>
+            <p>An octagon with all eight sides glued in pairs. Two holes' worth of paths.</p>
           </article>
         </div>
       </article>

@@ -26,7 +26,7 @@ This document is the single source of truth for how the project is built. Other 
 
 ## Goals and constraints
 
-The game is a 3D team tag game played by 4 to 16 players (humans and bots) on a labyrinth wrapped onto a finite plane, sphere, torus, or Klein bottle. Visibility is intentionally limited. Audio is sparse.
+The game is a 3D team tag game played by 4 to 16 players (humans and bots) on a labyrinth wrapped onto a finite plane, torus, Klein bottle, or double torus. Visibility is intentionally limited. Audio is sparse.
 
 Hard constraints from the project brief:
 
@@ -146,15 +146,15 @@ classDiagram
   Topology <|-- PlaneTopology
   Topology <|-- TorusTopology
   Topology <|-- KleinTopology
-  Topology <|-- SphereTopology
+  Topology <|-- Genus2Topology
 ```
 
-| Topology     | Wrap rule                                                                                                                                                                                                  | Visual seam treatment                                                                                                                                                         |
-| ------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Plane        | No wrap. Hard walls at edges.                                                                                                                                                                              | None.                                                                                                                                                                         |
-| Torus        | X wraps at width, Z wraps at depth.                                                                                                                                                                        | Edge portals render the opposite side of the map.                                                                                                                             |
-| Klein bottle | X wraps with vertical flip, Z wraps with no flip.                                                                                                                                                          | Edge portals on X axis render an inverted copy.                                                                                                                               |
-| Sphere       | Rhombicuboctahedron unfolded into an 8 x 7 planar net (18 walkable squares + 8 triangle barriers). A step that crosses a face boundary into a void or triangle routes through the polyhedron's edge graph. | Triangles fill the cube-corner regions to eliminate the three-faces-meet-at-a-point singularity, so neighbouring cube faces always meet through one well-defined edge square. |
+| Topology     | Wrap rule                                                                                                                                                                       | Visual seam treatment                                                                                                                      |
+| ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
+| Plane        | No wrap. Hard walls at edges.                                                                                                                                                   | None.                                                                                                                                      |
+| Torus        | X wraps at width, Z wraps at depth.                                                                                                                                             | Edge portals render the opposite side of the map.                                                                                          |
+| Klein bottle | X wraps with vertical flip, Z wraps with no flip.                                                                                                                               | Edge portals on X axis render an inverted copy.                                                                                            |
+| Double torus | Regular octagon fundamental polygon with sides identified in pairs (`aba^-1b^-1cdc^-1d^-1`). Crossing a side teleports the player to the mate side with the parameter reversed. | The 8 octagon vertices all identify to a single cone point on the closed surface, giving the characteristic two-handle (genus 2) topology. |
 
 Wrapping is enforced in `Topology.wrap` after every physics step. Both the GDScript and TypeScript implementations share the same canonical math; the GDScript build uses `fposmod` where TS uses the `((v + half) % width + width) % width` idiom, which produce identical values.
 
@@ -399,5 +399,5 @@ Initial release can ship without code signing on macOS by accepting Gatekeeper w
 ## Open questions
 
 - Final username generator dictionary needs curation. The first cut is a small adjective-and-noun list expanded in a follow-up.
-- Sphere rendering: the octahedron-to-sphere projection is the planned approach; if visual quality is poor an alternative cubemap projection is available.
+- Double torus rendering: the playfield is a flat octagon with identifications; whether to add a visible "wraparound preview" along each side seam (similar to the torus / Klein edge portals) is a design question after the geometry settles.
 - Whether to support cosmetic skins beyond clown and mime in v1. Default answer: no, scope creep.

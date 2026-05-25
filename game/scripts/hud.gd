@@ -74,7 +74,13 @@ func set_sprint(value: float) -> void:
 	sprint_bar.value = value
 
 func set_countdown_seconds(seconds: float) -> void:
-	if seconds < 0.0:
+	# Negative is the explicit "no countdown" sentinel. Zero (or sub-millisecond
+	# values) lands here whenever the active phase has no turn-end time set
+	# yet - during the filling phase before the match starts, or for one frame
+	# at the boundary where a turn just expired and the next phase update is
+	# in flight. In both cases rendering "0" looks like a stuck countdown, so
+	# blank the label instead.
+	if seconds <= 0.001:
 		countdown_label.text = ""
 		return
 	if seconds >= 60.0:

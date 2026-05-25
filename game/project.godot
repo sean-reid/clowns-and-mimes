@@ -7,7 +7,7 @@ config_version=5
 
 config/name="Clowns and Mimes"
 config/description="Team tag on labyrinths that wrap in unusual ways."
-config/version="0.0.0"
+config/version="0.3.1"
 run/main_scene="res://scenes/main.tscn"
 config/features=PackedStringArray("4.3", "GL Compatibility")
 config/icon="res://icon.svg"

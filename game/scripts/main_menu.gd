@@ -3,6 +3,7 @@ extends Control
 signal requested_screen(screen: String)
 
 const AssetPaths := preload("res://scripts/asset_paths.gd")
+const VersionCheck := preload("res://scripts/network/version_check.gd")
 
 @onready var host_button: Button = $Center/Buttons/HostButton
 @onready var code_button: Button = $Center/Buttons/CodeButton
@@ -26,6 +27,31 @@ func _ready() -> void:
 	# Unduck the Music bus in case a stinger left it lowered.
 	AudioBus.set_bus_volume("Music", 0.0)
 	AudioBus.play_music_from_path(AssetPaths.THEME_AUDIO)
+	_check_for_updates()
+
+func _check_for_updates() -> void:
+	var checker := VersionCheck.new()
+	add_child(checker)
+	checker.update_available.connect(_show_update_popup)
+
+	checker.check()
+
+func _show_update_popup(local: String, latest: String) -> void:
+	# Small modal popup with a single "Get latest" action that opens the
+	# website (which already hydrates the download link from the same GitHub
+	# release API the check uses). Stays out of the way if the player ignores
+	# it - they can just press Esc / click the X and keep playing.
+	var dialog := AcceptDialog.new()
+	dialog.title = "Update available"
+	dialog.dialog_text = (
+		"A newer version is available.\n\nYou have v%s.  Latest is v%s."
+		% [local, latest]
+	)
+	dialog.ok_button_text = "Close"
+	var open_button := dialog.add_button("Get latest", true, "open_site")
+	open_button.pressed.connect(func(): OS.shell_open(VersionCheck.WEBSITE_URL))
+	add_child(dialog)
+	dialog.popup_centered()
 
 func _populate_topologies() -> void:
 	topology_picker.clear()

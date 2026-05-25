@@ -386,8 +386,30 @@ func _handle_phase_event(phase: String, cry_index: int) -> void:
 	elif phase == "free_roam":
 		hud.flash_disperse()
 
+const VersionCheck := preload("res://scripts/network/version_check.gd")
+
 func _on_room_error(code: String, message: String) -> void:
+	if code == "version_mismatch":
+		_show_version_mismatch_popup(message)
+		return
 	hud.append_log("Server error %s: %s" % [code, message])
+
+func _show_version_mismatch_popup(server_message: String) -> void:
+	# Hard variant of the main-menu update popup. The server has refused to
+	# play with this client because the protocol does not match. Tell the
+	# player and offer one button to the website where the latest build lives.
+	var dialog := AcceptDialog.new()
+	dialog.title = "Update required"
+	var local: String = VersionCheck.local_version()
+	dialog.dialog_text = (
+		"This server needs a newer client (you have v%s).\n\n%s"
+		% [local, server_message]
+	)
+	dialog.ok_button_text = "Close"
+	var open_button := dialog.add_button("Get latest", true, "open_site")
+	open_button.pressed.connect(func(): OS.shell_open(VersionCheck.WEBSITE_URL))
+	add_child(dialog)
+	dialog.popup_centered()
 
 func _drive_online_hud() -> void:
 	if not snapshot_received:

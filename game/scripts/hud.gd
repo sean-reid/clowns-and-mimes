@@ -16,6 +16,13 @@ extends CanvasLayer
 
 const MIME_COLOR := Color(0.95, 0.95, 0.95)
 const CLOWN_COLOR := Color(0.95, 0.18, 0.22)
+const MAX_LOG_LINES := 5
+
+# Pre-allocated event-log Labels. append_log shifts text up through these
+# instead of creating/destroying nodes. The old design spawned a Label per
+# event with a 2.5s expiry coroutine; a burst of tag/save events compounded
+# scene-tree mutations and redraw signal cascades that snowballed visibly.
+var _log_lines: Array[Label] = []
 
 func _ready() -> void:
 	frozen_overlay.text = ""
@@ -24,6 +31,19 @@ func _ready() -> void:
 	topology_badge.text = ""
 	battle_cry_label.text = ""
 	battle_cry_label.modulate.a = 0.0
+	_setup_log_lines()
+
+func _setup_log_lines() -> void:
+	# Remove any labels left over from the .tscn or from a previous run.
+	for child in event_log.get_children():
+		child.queue_free()
+	_log_lines.clear()
+	for i in MAX_LOG_LINES:
+		var line := Label.new()
+		line.text = ""
+		event_log.add_child(line)
+		_log_lines.append(line)
+	_refresh_log_fade()
 
 func set_topology(name: String) -> void:
 	if name.is_empty():
@@ -74,39 +94,28 @@ func render_team_status(players: Array) -> void:
 		icon.modulate.a = 0.35 if frozen else 1.0
 		team_status.add_child(icon)
 
-const MAX_LOG_LINES := 5
-
 func append_log(message: String) -> void:
-	var line := Label.new()
-	line.text = message
-	event_log.add_child(line)
-	# Cap visible lines so the column can't grow off the bottom of the
-	# screen during high-frequency events (rescues + tags overlap).
-	while event_log.get_child_count() > MAX_LOG_LINES:
-		var oldest: Node = event_log.get_child(0)
-		if is_instance_valid(oldest):
-			oldest.queue_free()
-	# Fade older lines so the eye lands on the newest entry. The bottom of
-	# the column is the newest; each line above is dimmer.
+	# Shift each text up one slot and drop the new line into the bottom
+	# (newest) slot. No node allocation or freeing per event, so a burst of
+	# tag/save events stays at constant cost regardless of frequency.
+	if _log_lines.size() < MAX_LOG_LINES:
+		_setup_log_lines()
+	for i in MAX_LOG_LINES - 1:
+		_log_lines[i].text = _log_lines[i + 1].text
+	_log_lines[MAX_LOG_LINES - 1].text = message
 	_refresh_log_fade()
-	# Don't capture the Label in a closure on the SceneTreeTimer's signal: if
-	# the HUD frees while the timer is in flight (scene swap, back-to-menu),
-	# the closure logs 'Lambda capture at index 0 was freed' every match.
-	# Pass the line as a parameter through an async helper instead.
-	_expire_log_line(line)
 
 func _refresh_log_fade() -> void:
-	var count: int = event_log.get_child_count()
-	for i in count:
-		var child: Node = event_log.get_child(i)
-		if child is Control:
-			var age_from_newest: int = count - 1 - i
-			(child as Control).modulate.a = maxf(0.15, pow(0.65, age_from_newest))
-
-func _expire_log_line(line: Label) -> void:
-	await get_tree().create_timer(2.5).timeout
-	if is_instance_valid(line):
-		line.queue_free()
+	# Fade older lines so the eye lands on the newest entry. Empty lines
+	# are fully transparent; visible lines step down by 0.65 per row from
+	# the newest at the bottom.
+	for i in _log_lines.size():
+		var age_from_newest: int = _log_lines.size() - 1 - i
+		var line := _log_lines[i]
+		if line.text.is_empty():
+			line.modulate.a = 0.0
+		else:
+			line.modulate.a = maxf(0.15, pow(0.65, age_from_newest))
 
 func flash_frozen(by_team: String, by_name: String) -> void:
 	var verb := "mimed" if by_team == "mime" else "clowned"

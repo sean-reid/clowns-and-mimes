@@ -14,6 +14,7 @@
 import type { Topology, Vec2 } from '@cm/shared';
 import { pathCrossesWall, type WallSegment } from '@cm/shared/labyrinth';
 import { GENUS2_GRID_N, GRID_MAZE_N } from '@cm/shared/gridMaze';
+import { pointInOctagon, stepAcrossGenus2Boundary } from '@cm/shared/genus2';
 import { WORLD_WIDTH } from '@cm/shared/topology';
 
 interface GridShape {
@@ -24,8 +25,13 @@ interface GridShape {
   wrapX: boolean;
   wrapZ: boolean;
   // Klein: when crossing the x seam, the row index flips. The wrap on the z
-  // axis is plain modular. Torus and genus2 do not flip.
+  // axis is plain modular. Torus does not flip.
   flipRowOnXWrap: boolean;
+  // Genus2: instead of plain modular wrap on the bounding box, a neighbor
+  // step that would leave the octagonal playfield is routed through the
+  // octagon's side identification (rotation + translation). Set true only
+  // for the double-torus topology.
+  octagonSeams: boolean;
 }
 
 export class BotPathfinder {
@@ -133,16 +139,41 @@ export class BotPathfinder {
   }
 
   private buildAdjacency(walls: readonly WallSegment[]): void {
-    const { cols, rows } = this.shape;
+    const { cols, rows, octagonSeams } = this.shape;
     for (let r = 0; r < rows; r += 1) {
       for (let c = 0; c < cols; c += 1) {
         const cell = c + r * cols;
+        // Genus-2: cells whose centres sit outside the octagon are not
+        // walkable; they get no outgoing edges (and no other cell will
+        // reach them either since the inverse step also lands outside).
+        const a = this.cellCenter(cell);
+        if (octagonSeams && !pointInOctagon(a)) {
+          this.adjacency[cell] = 0;
+          continue;
+        }
         let mask = 0;
         for (let dir = 0; dir < 4; dir += 1) {
           const nb = this.neighborCell(c, r, dir);
           if (nb < 0) continue;
-          const a = this.cellCenter(cell);
           const b = this.cellCenter(nb);
+          // On genus-2, a step that crosses an octagon side is a seam
+          // crossing: the source and destination cells are far apart in
+          // world coords, and the boundary itself is open (no walls).
+          // Detect seam crossings by distance: a regular grid step stays
+          // within one cell's worth of motion, so anything past 2 cells
+          // is a seam (or pathological).
+          if (octagonSeams) {
+            const dx = b.x - a.x;
+            const dz = b.z - a.z;
+            const maxStep = this.shape.cellX * 2;
+            if (Math.abs(dx) > maxStep || Math.abs(dz) > maxStep) {
+              // Seam crossing: skip the straight-line wall check (it
+              // would falsely find walls between the source and the
+              // wrapped destination on the far side of the polygon).
+              mask |= 1 << dir;
+              continue;
+            }
+          }
           if (!pathCrossesWall(walls, a.x, a.z, b.x, b.z)) {
             mask |= 1 << dir;
           }
@@ -221,7 +252,7 @@ export class BotPathfinder {
    * dir: 0 east (+x), 1 north (+z), 2 west (-x), 3 south (-z)
    */
   private neighborCell(col: number, row: number, dir: number): number {
-    const { cols, rows, wrapX, wrapZ, flipRowOnXWrap } = this.shape;
+    const { cols, rows, wrapX, wrapZ, flipRowOnXWrap, octagonSeams } = this.shape;
     let nc = col;
     let nr = row;
     let flipRow = false;
@@ -229,6 +260,25 @@ export class BotPathfinder {
     else if (dir === 2) nc = col - 1;
     else if (dir === 1) nr = row + 1;
     else if (dir === 3) nr = row - 1;
+    if (octagonSeams) {
+      // Genus-2: the playfield is the octagon, not the bounding box. A
+      // step whose neighbour cell centre falls outside the octagon routes
+      // through the side identification (stepAcrossGenus2Boundary).
+      const fromCenter = this.cellCenter(col + row * cols);
+      const naive = this.naiveNeighborCenter(nc, nr);
+      if (naive === null) {
+        // The naive cell is outside the bounding box too; fall through
+        // to the side identification using the step vector's direction.
+      } else if (pointInOctagon(naive)) {
+        // Plain in-polygon step.
+        return nc + nr * cols;
+      }
+      const wrapped = stepAcrossGenus2Boundary(
+        fromCenter,
+        naive ?? this.stepCenter(fromCenter, dir),
+      );
+      return this.worldPointToCell(wrapped);
+    }
     if (nc < 0 || nc >= cols) {
       if (!wrapX) return -1;
       nc = ((nc % cols) + cols) % cols;
@@ -240,6 +290,47 @@ export class BotPathfinder {
     }
     if (flipRow) nr = rows - 1 - nr;
     return nc + nr * cols;
+  }
+
+  /**
+   * World-coords centre of the (nc, nr) cell if the indices are in-range,
+   * or null otherwise. Used by the octagon-seam neighbour path so we can
+   * decide whether to apply the side identification.
+   */
+  private naiveNeighborCenter(nc: number, nr: number): Vec2 | null {
+    const { cols, rows, cellX, cellZ } = this.shape;
+    if (nc < 0 || nc >= cols || nr < 0 || nr >= rows) return null;
+    const halfX = (cols * cellX) / 2;
+    const halfZ = (rows * cellZ) / 2;
+    return {
+      x: (nc + 0.5) * cellX - halfX,
+      z: (nr + 0.5) * cellZ - halfZ,
+    };
+  }
+
+  /**
+   * Position one cell-step in the given direction from `from`. Used when
+   * the neighbour indices fell off the grid entirely (e.g., col=-1) so we
+   * still have a valid `next` to hand to stepAcrossGenus2Boundary.
+   */
+  private stepCenter(from: Vec2, dir: number): Vec2 {
+    const { cellX, cellZ } = this.shape;
+    let dx = 0;
+    let dz = 0;
+    if (dir === 0) dx = cellX;
+    else if (dir === 2) dx = -cellX;
+    else if (dir === 1) dz = cellZ;
+    else if (dir === 3) dz = -cellZ;
+    return { x: from.x + dx, z: from.z + dz };
+  }
+
+  /**
+   * Cell index containing a world-coords point. Identical to worldToCell
+   * but exposed for the seam-crossing path which feeds in a non-grid
+   * destination from stepAcrossGenus2Boundary.
+   */
+  private worldPointToCell(p: Vec2): number {
+    return this.worldToCell(p);
   }
 
   private worldToCell(p: Vec2): number {
@@ -286,24 +377,26 @@ function gridShapeFor(topology: Topology): GridShape {
       wrapX: true,
       wrapZ: true,
       flipRowOnXWrap: false,
+      octagonSeams: false,
     };
   }
   if (topology === 'genus2') {
     // Octagonal playfield bounded by [-R, R] x [-R, R] (R = WORLD_WIDTH/2).
-    // GENUS2_GRID_N x GENUS2_GRID_N cells inscribed in the bounding box;
-    // cells whose centres fall outside the octagon are non-walkable and
-    // the player_present mask keeps bots off them. Edge identifications
-    // are handled at runtime in stepAcrossGenus2Boundary; the pathfinder
-    // treats the playfield as a flat square and the wall list captures
-    // the maze plus the identification seam openings.
+    // GENUS2_GRID_N x GENUS2_GRID_N cells inscribed in the bounding box.
+    // Cells whose centres fall outside the polygon are non-walkable.
+    // octagonSeams = true tells neighborCell to route an out-of-polygon
+    // step through stepAcrossGenus2Boundary instead of plain modular
+    // wrap, so a bot's BFS legitimately crosses an octagon side and lands
+    // on the cell its mate side delivers it onto.
     return {
       cols: GENUS2_GRID_N,
       rows: GENUS2_GRID_N,
       cellX: WORLD_WIDTH / GENUS2_GRID_N,
       cellZ: WORLD_WIDTH / GENUS2_GRID_N,
-      wrapX: true,
-      wrapZ: true,
+      wrapX: false,
+      wrapZ: false,
       flipRowOnXWrap: false,
+      octagonSeams: true,
     };
   }
   return {
@@ -314,5 +407,6 @@ function gridShapeFor(topology: Topology): GridShape {
     wrapX: topology !== 'plane',
     wrapZ: topology !== 'plane',
     flipRowOnXWrap: false,
+    octagonSeams: false,
   };
 }

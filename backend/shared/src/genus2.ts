@@ -182,3 +182,57 @@ export function inwardNormal(sideIdx: number): Vec2 {
 export function genus2Extents(): { x: number; z: number } {
   return { x: 2 * OCTAGON_CIRCUMRADIUS, z: 2 * OCTAGON_CIRCUMRADIUS };
 }
+
+/**
+ * Wrap a step from `prev` (assumed inside the octagon) to `next`. If
+ * `next` is inside, returns `next` unchanged. Otherwise routes through
+ * the identification: parametrize `next` along the crossed side, emerge
+ * from the mate side at the inverted parameter, displaced inward by the
+ * overshoot magnitude.
+ *
+ * When `next` crosses two sides at once (corner of the polygon), the
+ * side with the largest outward distance wins. This is rare in normal
+ * play because the polygon vertices all identify to a single cone point
+ * the player would have to walk straight at.
+ */
+export function stepAcrossGenus2Boundary(prev: Vec2, next: Vec2): Vec2 {
+  void prev;
+  if (pointInOctagon(next)) return next;
+  const sideIdx = sideOfBoundary(next);
+  if (sideIdx === null) return next;
+  const t = parametrizeAlongSide(next, sideIdx);
+  const overshoot = signedDistanceToSide(next, sideIdx);
+  const m = mateSide(sideIdx);
+  const arrival = pointOnSide(m, 1 - t);
+  const inw = inwardNormal(m);
+  return {
+    x: arrival.x + overshoot * inw.x,
+    z: arrival.z + overshoot * inw.z,
+  };
+}
+
+/**
+ * Recovery wrap for a single point. If `p` is inside the octagon,
+ * returns it unchanged. If outside (shouldn't happen in normal play
+ * because every motion step routes through stepAcrossGenus2Boundary),
+ * applies the identification once to bring it onto the mate side, then
+ * clamps to the polygon interior in case the identified point also
+ * lands outside. Final fallback is the centre.
+ */
+export function wrapGenus2Point(p: Vec2): Vec2 {
+  if (pointInOctagon(p)) return p;
+  const sideIdx = sideOfBoundary(p);
+  if (sideIdx === null) return p;
+  const t = parametrizeAlongSide(p, sideIdx);
+  const overshoot = signedDistanceToSide(p, sideIdx);
+  const m = mateSide(sideIdx);
+  const arrival = pointOnSide(m, 1 - t);
+  const inw = inwardNormal(m);
+  const wrapped = {
+    x: arrival.x + overshoot * inw.x,
+    z: arrival.z + overshoot * inw.z,
+  };
+  if (pointInOctagon(wrapped)) return wrapped;
+  // Doubly-exterior point (very rare). Fall back to the centre.
+  return { x: 0, z: 0 };
+}

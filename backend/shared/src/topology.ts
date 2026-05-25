@@ -9,6 +9,7 @@ import {
   worldToFace,
   type FaceId,
 } from './sphereRhombicuboctahedron.ts';
+import { genus2Extents, stepAcrossGenus2Boundary, wrapGenus2Point } from './genus2.ts';
 
 export const WORLD_WIDTH = 80;
 
@@ -30,6 +31,10 @@ export function topologyExtents(topology: Topology, width: number): { x: number;
   if (topology === 'sphere') {
     const faceSide = width / NET_COLS;
     return spherePlayfieldExtents(faceSide);
+  }
+  if (topology === 'genus2') {
+    void width;
+    return genus2Extents();
   }
   return { x: width, z: width };
 }
@@ -97,6 +102,13 @@ export function wrapPosition(p: Vec2, topology: Topology, width: number): Vec2 {
       const r = faceWorldRect(bestFace, faceSide);
       return { x: (r.xMin + r.xMax) / 2, z: (r.zMin + r.zMax) / 2 };
     }
+    case 'genus2': {
+      // Recovery wrap: a point inside the octagon passes through. A point
+      // outside (shouldn't happen in normal play, but spawn / reconcile
+      // can land off-polygon) gets identified through its crossing side.
+      void width;
+      return wrapGenus2Point(p);
+    }
   }
 }
 
@@ -112,9 +124,14 @@ export function wrapPositionFromStep(
   topology: Topology,
   width: number,
 ): Vec2 {
-  if (topology !== 'sphere') return wrapPosition(candidate, topology, width);
-  const faceSide = width / NET_COLS;
-  return stepAcrossSphereFaces(prev, candidate, faceSide);
+  if (topology === 'sphere') {
+    const faceSide = width / NET_COLS;
+    return stepAcrossSphereFaces(prev, candidate, faceSide);
+  }
+  if (topology === 'genus2') {
+    return stepAcrossGenus2Boundary(prev, candidate);
+  }
+  return wrapPosition(candidate, topology, width);
 }
 
 export function topologyDistance(a: Vec2, b: Vec2, topology: Topology, width: number): number {
@@ -141,6 +158,13 @@ export function topologyDistance(a: Vec2, b: Vec2, topology: Topology, width: nu
       // approximation is fine for bot vision and tag radius, which only
       // ever look at sub-face distances.
       // TODO: cube-geodesic distance for long-range queries.
+      return Math.hypot(a.x - b.x, a.z - b.z);
+    }
+    case 'genus2': {
+      // Octagon distance is Euclidean inside the polygon. Cross-boundary
+      // shortest paths are not yet implemented; sub-octagon queries are
+      // exact and bot vision / tag radius only ever look at small ranges.
+      void width;
       return Math.hypot(a.x - b.x, a.z - b.z);
     }
   }
@@ -177,6 +201,15 @@ export function wrappedUnitDelta(from: Vec2, to: Vec2, topology: Topology, width
     case 'klein': {
       dx = wrappedDelta(from.x, to.x, 2 * width);
       dz = wrappedDelta(from.z, to.z, width);
+      break;
+    }
+    case 'genus2': {
+      // Octagon: short-range directions use plain Euclidean. Identification
+      // crossings would need shortest-path solving across mate sides; the
+      // gameplay loop only queries this for chase / flee headings within a
+      // small radius, so the approximation is fine.
+      dx = to.x - from.x;
+      dz = to.z - from.z;
       break;
     }
   }

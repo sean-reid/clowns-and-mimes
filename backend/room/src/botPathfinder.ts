@@ -13,7 +13,7 @@
 
 import type { Topology, Vec2 } from '@cm/shared';
 import { pathCrossesWall, type WallSegment } from '@cm/shared/labyrinth';
-import { GRID_MAZE_N, SPHERE_GRID_X, SPHERE_GRID_Z } from '@cm/shared/gridMaze';
+import { GENUS2_GRID_N, GRID_MAZE_N, SPHERE_GRID_X, SPHERE_GRID_Z } from '@cm/shared/gridMaze';
 import { WORLD_WIDTH } from '@cm/shared/topology';
 
 interface GridShape {
@@ -302,6 +302,24 @@ function gridShapeFor(topology: Topology): GridShape {
       rows: GRID_MAZE_N,
       cellX: WORLD_WIDTH / GRID_MAZE_N,
       cellZ: WORLD_WIDTH / GRID_MAZE_N,
+      wrapX: true,
+      wrapZ: true,
+      flipRowOnXWrap: false,
+    };
+  }
+  if (topology === 'genus2') {
+    // Octagonal playfield bounded by [-R, R] x [-R, R] (R = WORLD_WIDTH/2).
+    // GENUS2_GRID_N x GENUS2_GRID_N cells inscribed in the bounding box;
+    // cells whose centres fall outside the octagon are non-walkable and
+    // the player_present mask keeps bots off them. Edge identifications
+    // are handled at runtime in stepAcrossGenus2Boundary; the pathfinder
+    // treats the playfield as a flat square and the wall list captures
+    // the maze plus the identification seam openings.
+    return {
+      cols: GENUS2_GRID_N,
+      rows: GENUS2_GRID_N,
+      cellX: WORLD_WIDTH / GENUS2_GRID_N,
+      cellZ: WORLD_WIDTH / GENUS2_GRID_N,
       wrapX: true,
       wrapZ: true,
       flipRowOnXWrap: false,

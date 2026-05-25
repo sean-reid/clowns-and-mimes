@@ -116,7 +116,7 @@ describe('matchmaker', () => {
   });
 
   it('rejects invalid topology', async () => {
-    const res = await call(env, 'POST', '/lobby', { topology: 'mobius' });
+    const res = await call(env, 'POST', '/lobby', { topology: 'hyperboloid' });
     expect(res.status).toBe(400);
   });
 
@@ -145,7 +145,7 @@ describe('matchmaker', () => {
   it('open join returns a topology field sourced from the DO', async () => {
     const res = await call(env, 'POST', '/open/join');
     const body = (await res.json()) as { topology: string };
-    expect(['plane', 'torus', 'klein', 'genus2']).toContain(body.topology);
+    expect(['plane', 'torus', 'mobius', 'klein', 'genus2']).toContain(body.topology);
   });
 
   it('room-state forwards to the DO and is reflected in routing', async () => {

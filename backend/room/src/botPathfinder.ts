@@ -13,7 +13,8 @@
 
 import type { Topology, Vec2 } from '@cm/shared';
 import { pathCrossesWall, type WallSegment } from '@cm/shared/labyrinth';
-import { GENUS2_GRID_N, GRID_MAZE_N } from '@cm/shared/gridMaze';
+import { GENUS2_GRID_N, GRID_MAZE_N, MOBIUS_GRID_X, MOBIUS_GRID_Z } from '@cm/shared/gridMaze';
+import { MOBIUS_HALF_X, MOBIUS_HALF_Z } from '@cm/shared/mobius';
 import { WORLD_WIDTH } from '@cm/shared/topology';
 
 interface GridShape {
@@ -138,11 +139,24 @@ export class BotPathfinder {
       for (let c = 0; c < cols; c += 1) {
         const cell = c + r * cols;
         let mask = 0;
+        const { cellX, cellZ } = this.shape;
+        const seamThreshold = 2 * Math.max(cellX, cellZ);
         for (let dir = 0; dir < 4; dir += 1) {
           const nb = this.neighborCell(c, r, dir);
           if (nb < 0) continue;
           const a = this.cellCenter(cell);
           const b = this.cellCenter(nb);
+          // Seam-crossing neighbours have their wall check skipped: the
+          // straight world line from a to b crosses the playfield
+          // interior (the long way around the wrap) and would falsely
+          // pick up walls between source and destination. Wrap seams
+          // are open by definition.
+          const dx = b.x - a.x;
+          const dz = b.z - a.z;
+          if (Math.abs(dx) > seamThreshold || Math.abs(dz) > seamThreshold) {
+            mask |= 1 << dir;
+            continue;
+          }
           if (!pathCrossesWall(walls, a.x, a.z, b.x, b.z)) {
             mask |= 1 << dir;
           }
@@ -304,6 +318,21 @@ function gridShapeFor(topology: Topology): GridShape {
       wrapX: true,
       wrapZ: true,
       flipRowOnXWrap: false,
+    };
+  }
+  if (topology === 'mobius') {
+    // Möbius strip: 2:1 rectangle (length 2*MOBIUS_HALF_X, height
+    // 2*MOBIUS_HALF_Z). x wraps with a row-flip (same identification
+    // Klein uses on its x seam); z is hard-bounded by top/bottom walls
+    // so wrapZ stays false.
+    return {
+      cols: MOBIUS_GRID_X,
+      rows: MOBIUS_GRID_Z,
+      cellX: (2 * MOBIUS_HALF_X) / MOBIUS_GRID_X,
+      cellZ: (2 * MOBIUS_HALF_Z) / MOBIUS_GRID_Z,
+      wrapX: true,
+      wrapZ: false,
+      flipRowOnXWrap: true,
     };
   }
   return {

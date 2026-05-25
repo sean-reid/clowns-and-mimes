@@ -26,6 +26,7 @@ import type { Topology } from './protocol.ts';
 import { WORLD_WIDTH } from './topology.ts';
 import type { WallSegment } from './labyrinth.ts';
 import { OCTAGON_CIRCUMRADIUS, pointInOctagon } from './genus2.ts';
+import { MOBIUS_HALF_X, MOBIUS_HALF_Z } from './mobius.ts';
 
 export const GRID_MAZE_N = 10;
 
@@ -50,6 +51,9 @@ export function generateGridMazeWalls(
   }
   if (topology === 'genus2') {
     return generateGenus2GridWalls(seed);
+  }
+  if (topology === 'mobius') {
+    return generateMobiusGridWalls(seed);
   }
   // Plane and torus share the rectangular grid path below.
   const total = gridN * gridN;
@@ -470,6 +474,133 @@ export function generateGenus2GridWalls(seed: number): WallSegment[] {
         out.push({ ax: x0, az: z, bx: x1, bz: z });
       }
     }
+  }
+  return out;
+}
+
+/**
+ * Möbius strip grid sizing. The strip is 2:1 (long x, narrow z), so we
+ * use 2N columns x N rows of cells with the same cell side on both
+ * axes. Exposed for the bot pathfinder so its grid shape matches.
+ */
+export const MOBIUS_GRID_X = 2 * GRID_MAZE_N;
+export const MOBIUS_GRID_Z = GRID_MAZE_N;
+
+/**
+ * Möbius strip maze. Rectangular DFS spanning tree with x wrapping on a
+ * row flip (the same identification the topology adapter uses); top and
+ * bottom z edges stay walled because the strip has a single boundary
+ * loop. The maze cells sit on a 2N x N grid covering the full strip,
+ * matching mobiusExtents() in mobius.ts.
+ */
+export function generateMobiusGridWalls(seed: number): WallSegment[] {
+  const cols = MOBIUS_GRID_X;
+  const rows = MOBIUS_GRID_Z;
+  const total = cols * rows;
+  const cellSize = (2 * MOBIUS_HALF_X) / cols; // = (2*MOBIUS_HALF_Z)/rows for the 2:1 strip
+  const halfX = MOBIUS_HALF_X;
+  const halfZ = MOBIUS_HALF_Z;
+
+  let rng = (seed | 0) >>> 0;
+  const nextRand = (): number => {
+    rng = ((Math.imul(rng, 1664525) >>> 0) + 1013904223) >>> 0;
+    return rng;
+  };
+
+  const mobiusNeighbor = (cell: number, dir: number): { cell: number; dir: number } | null => {
+    const cc = cell % cols;
+    const cr = Math.floor(cell / cols);
+    let nc = cc;
+    let nr = cr;
+    let flipRow = false;
+    if (dir === DIR_EAST) nc = cc + 1;
+    else if (dir === DIR_WEST) nc = cc - 1;
+    else if (dir === DIR_NORTH) nr = cr + 1;
+    else if (dir === DIR_SOUTH) nr = cr - 1;
+    if (nc < 0 || nc >= cols) {
+      nc = ((nc % cols) + cols) % cols;
+      flipRow = true;
+    }
+    if (nr < 0 || nr >= rows) return null; // hard boundary, no wrap
+    if (flipRow) nr = rows - 1 - nr;
+    return { cell: nc + nr * cols, dir };
+  };
+
+  const visited = new Uint8Array(total);
+  const openings = new Uint8Array(total);
+
+  const start = nextRand() % total;
+  visited[start] = 1;
+  const stack: number[] = [start];
+  while (stack.length > 0) {
+    const cur = stack[stack.length - 1]!;
+    const candidates: { cell: number; dir: number }[] = [];
+    for (let dir = 0; dir < 4; dir += 1) {
+      const nb = mobiusNeighbor(cur, dir);
+      if (nb === null) continue;
+      if (visited[nb.cell]) continue;
+      candidates.push(nb);
+    }
+    if (candidates.length === 0) {
+      stack.pop();
+      continue;
+    }
+    const pick = candidates[nextRand() % candidates.length]!;
+    openings[cur] |= 1 << pick.dir;
+    openings[pick.cell] |= 1 << oppositeDir(pick.dir);
+    visited[pick.cell] = 1;
+    stack.push(pick.cell);
+  }
+
+  // Braid dead ends so the maze loops rather than dead-ends.
+  for (let cell = 0; cell < total; cell += 1) {
+    if (popCountNibble(openings[cell]!) >= 2) continue;
+    const closedNeighbors: { dir: number; cell: number }[] = [];
+    for (let dir = 0; dir < 4; dir += 1) {
+      if ((openings[cell]! & (1 << dir)) !== 0) continue;
+      const nb = mobiusNeighbor(cell, dir);
+      if (nb === null) continue;
+      closedNeighbors.push({ dir, cell: nb.cell });
+    }
+    if (closedNeighbors.length === 0) continue;
+    const pick = closedNeighbors[nextRand() % closedNeighbors.length]!;
+    openings[cell] |= 1 << pick.dir;
+    openings[pick.cell] |= 1 << oppositeDir(pick.dir);
+  }
+
+  // Emit walls. Skip the left/right boundary (identification seam, open).
+  // The top/bottom are hard boundaries so emit them as walls in addition
+  // to any interior maze walls.
+  const out: WallSegment[] = [];
+  for (let r = 0; r < rows; r += 1) {
+    for (let c = 0; c < cols; c += 1) {
+      const id = c + r * cols;
+      const eastClosed = (openings[id]! & (1 << DIR_EAST)) === 0;
+      const northClosed = (openings[id]! & (1 << DIR_NORTH)) === 0;
+      const isLastCol = c === cols - 1;
+      const isLastRow = r === rows - 1;
+      // East edge of last column is the right-side seam: skip the wall
+      // even if the DFS marked it closed, because the topology wraps.
+      if (eastClosed && !isLastCol) {
+        const x = (c + 1) * cellSize - halfX;
+        const z0 = r * cellSize - halfZ;
+        const z1 = (r + 1) * cellSize - halfZ;
+        out.push({ ax: x, az: z0, bx: x, bz: z1 });
+      }
+      if (northClosed && !isLastRow) {
+        const z = (r + 1) * cellSize - halfZ;
+        const x0 = c * cellSize - halfX;
+        const x1 = (c + 1) * cellSize - halfX;
+        out.push({ ax: x0, az: z, bx: x1, bz: z });
+      }
+    }
+  }
+  // Hard top and bottom boundary walls. Span the full strip width.
+  for (let c = 0; c < cols; c += 1) {
+    const x0 = c * cellSize - halfX;
+    const x1 = (c + 1) * cellSize - halfX;
+    out.push({ ax: x0, az: halfZ, bx: x1, bz: halfZ });
+    out.push({ ax: x0, az: -halfZ, bx: x1, bz: -halfZ });
   }
   return out;
 }

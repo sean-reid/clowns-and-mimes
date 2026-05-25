@@ -1,5 +1,11 @@
 import type { Topology, Vec2 } from './protocol.ts';
 import { genus2Extents, stepAcrossGenus2Boundary, wrapGenus2Point } from './genus2.ts';
+import {
+  MOBIUS_HALF_X,
+  mobiusExtents,
+  stepAcrossMobiusBoundary,
+  wrapMobiusPoint,
+} from './mobius.ts';
 
 export const WORLD_WIDTH = 80;
 
@@ -14,6 +20,10 @@ export function topologyExtents(topology: Topology, width: number): { x: number;
   if (topology === 'genus2') {
     void width;
     return genus2Extents();
+  }
+  if (topology === 'mobius') {
+    void width;
+    return mobiusExtents();
   }
   return { x: width, z: width };
 }
@@ -55,6 +65,13 @@ export function wrapPosition(p: Vec2, topology: Topology, width: number): Vec2 {
       void width;
       return wrapGenus2Point(p);
     }
+    case 'mobius': {
+      // Möbius strip: x past +/-MOBIUS_HALF_X identifies to the opposite
+      // edge with z negated; z stays clamped because top and bottom are
+      // hard walls.
+      void width;
+      return wrapMobiusPoint(p);
+    }
   }
 }
 
@@ -72,6 +89,9 @@ export function wrapPositionFromStep(
 ): Vec2 {
   if (topology === 'genus2') {
     return stepAcrossGenus2Boundary(prev, candidate);
+  }
+  if (topology === 'mobius') {
+    return stepAcrossMobiusBoundary(prev, candidate);
   }
   return wrapPosition(candidate, topology, width);
 }
@@ -98,6 +118,18 @@ export function topologyDistance(a: Vec2, b: Vec2, topology: Topology, width: nu
       // exact and bot vision / tag radius only ever look at small ranges.
       void width;
       return Math.hypot(a.x - b.x, a.z - b.z);
+    }
+    case 'mobius': {
+      // Möbius distance: take the shorter of the direct chord and the
+      // wrap-with-z-flip chord. The wrap candidate translates the source
+      // by +/- 2*MOBIUS_HALF_X in x and flips z, then measures straight-
+      // line distance to b. This matches the actual shortest path on
+      // the flat universal cover.
+      void width;
+      const direct = Math.hypot(a.x - b.x, a.z - b.z);
+      const wrapRight = Math.hypot(a.x + 2 * MOBIUS_HALF_X - b.x, -a.z - b.z);
+      const wrapLeft = Math.hypot(a.x - 2 * MOBIUS_HALF_X - b.x, -a.z - b.z);
+      return Math.min(direct, wrapRight, wrapLeft);
     }
   }
 }
@@ -135,6 +167,35 @@ export function wrappedUnitDelta(from: Vec2, to: Vec2, topology: Topology, width
       // small radius, so the approximation is fine.
       dx = to.x - from.x;
       dz = to.z - from.z;
+      break;
+    }
+    case 'mobius': {
+      // Pick the shorter of the direct or x-wrap-with-z-flip path so a
+      // bot near the seam heads through it instead of taking the long
+      // way around. The wrap deltas mirror the topologyDistance path.
+      void width;
+      const direct = { dx: to.x - from.x, dz: to.z - from.z, dist: 0 };
+      direct.dist = Math.hypot(direct.dx, direct.dz);
+      const wrapR = {
+        dx: to.x - (from.x + 2 * MOBIUS_HALF_X),
+        dz: -to.z - from.z,
+        dist: 0,
+      };
+      wrapR.dist = Math.hypot(wrapR.dx, wrapR.dz);
+      const wrapL = {
+        dx: to.x - (from.x - 2 * MOBIUS_HALF_X),
+        dz: -to.z - from.z,
+        dist: 0,
+      };
+      wrapL.dist = Math.hypot(wrapL.dx, wrapL.dz);
+      const best =
+        direct.dist <= Math.min(wrapR.dist, wrapL.dist)
+          ? direct
+          : wrapR.dist <= wrapL.dist
+            ? wrapR
+            : wrapL;
+      dx = best.dx;
+      dz = best.dz;
       break;
     }
   }

@@ -18,5 +18,5 @@ test('all four topology cards render', async ({ page }) => {
   await expect(page.getByRole('heading', { name: /^Plane/, level: 3 })).toBeVisible();
   await expect(page.getByRole('heading', { name: /^Torus/, level: 3 })).toBeVisible();
   await expect(page.getByRole('heading', { name: /^Klein bottle/, level: 3 })).toBeVisible();
-  await expect(page.getByRole('heading', { name: /^Sphere/, level: 3 })).toBeVisible();
+  await expect(page.getByRole('heading', { name: /^Double torus/, level: 3 })).toBeVisible();
 });

@@ -187,18 +187,18 @@ jobs:
 
           # 5. Notarize and staple the .dmg. Capture the submission as JSON
           # so we can pull Apple's verdict via `notarytool log` whenever the
-          # call fails. --wait blocks until Apple finishes scanning and
-          # --timeout 30m fails fast if their queue is genuinely stuck (the
-          # default is 2 hours, which burns macOS runner minutes for no
-          # signal). On failure we still surface the log before exiting so
-          # the next person sees Apple's rejection reasons inline.
+          # call fails. --wait blocks until Apple finishes scanning. We
+          # intentionally do NOT pass --timeout because the v0.2.0 ship
+          # observed a healthy 3.5-hour wait that would have been killed by
+          # an explicit short cap. The GitHub job's 6-hour default is the
+          # outer bound; if Apple is still polling past that, manual
+          # intervention is the right answer rather than another retry.
           SUBMIT_OUT="$RUNNER_TEMP/notarize-submit.json"
           if ! xcrun notarytool submit "$DMG_PATH" \
               --apple-id "$APPLE_NOTARIZATION_APPLE_ID" \
               --password "$APPLE_NOTARIZATION_APP_PASSWORD" \
               --team-id "$APPLE_TEAM_ID" \
               --wait \
-              --timeout 30m \
               --output-format json \
               > "$SUBMIT_OUT"; then
             echo "notarytool submit failed; dumping result and log"

@@ -849,15 +849,17 @@ export class Room implements DurableObject {
   private simulateBots(dt: number): void {
     const active = this.activeTurnTeam();
     const now = Date.now();
-    // Heavier direction smoothing than before: bots used to flip heading the
-    // moment a new candidate target appeared, which read as twitching at
-    // tile-corners and around seams. 0.7 keeps most of the previous heading
-    // and folds the new direction in over a few ticks instead of one.
-    const DIR_SMOOTHING = 0.7;
-    // Cap on body rotation per tick. At TICK_HZ=20 this is ~5 rad/s, fast
-    // enough to chase a juking human but slow enough that slide-fallback
-    // axis flips don't snap the avatar 90 degrees in one frame.
-    const MAX_YAW_RATE = 5.0;
+    // Direction smoothing: 0.5 of the previous heading carries forward each
+    // tick. A new heading is fully reached in ~3 ticks (50 ms at 60 Hz),
+    // which reads as alert rather than the previous ~10-tick laggy turn.
+    // Genuine indecision (e.g., two equidistant targets) is still caught by
+    // the no-progress detector forcing a retarget within 800 ms.
+    const DIR_SMOOTHING = 0.5;
+    // Cap on body rotation per second. 9 rad/s clears a 90 deg turn in
+    // ~175 ms - agile enough to read as reactive without being twitchy.
+    // Slide-fallback axis flips are still smoothed by DIR_SMOOTHING above
+    // so the body never snaps a full quarter-turn in a single tick.
+    const MAX_YAW_RATE = 9.0;
     const RETARGET_HYSTERESIS = 0.75; // new target must be this fraction of current distance to swap
     for (const bot of this.botPlayers()) {
       if (bot.frozen) continue;

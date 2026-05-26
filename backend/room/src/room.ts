@@ -98,6 +98,22 @@ const LAG_COMP_MS = 0;
 // Cap of how far back we keep positions. Larger means more memory but
 // covers higher-latency clients; 500 ms is plenty for any reasonable RTT.
 const POSITION_HISTORY_KEEP_MS = 500;
+// Bot "no-progress" detector. simulateBots reports moved=true whenever any
+// axis-slide candidate succeeds, but a bot grinding x-only against a
+// horizontal wall will pass the check every tick while making no headway
+// toward its target. If the world-space distance covered in
+// BOT_NO_PROGRESS_WINDOW_MS stays below BOT_NO_PROGRESS_MIN_DIST, force a
+// retarget: pick a new patrol point, drop the engaged enemy target so the
+// chase BFS re-runs, and zero the direction-smoothing carry-over so the
+// new heading takes effect immediately.
+const BOT_NO_PROGRESS_WINDOW_MS = 800;
+const BOT_NO_PROGRESS_MIN_DIST = 0.5;
+// World units to project ahead of the bot when fleeing. The unit-delta
+// "away" vector is fed into the BFS pathfinder against this projected
+// target so the route bends around walls instead of crashing straight back
+// into a corner. 12 units is enough to cross one or two grid cells in any
+// topology.
+const BOT_FLEE_PROJECTION = 12;
 
 interface BotMind {
   patrolTarget: { x: number; z: number };
@@ -117,6 +133,14 @@ interface BotMind {
   // movement direction with a cap on radians-per-tick so cardinal slide
   // fallbacks don't snap the avatar 90 degrees in one frame.
   lastYaw: number;
+  // Progress tracking for "is this bot pinned against geometry?" detection.
+  // The slide-fallback in simulateBots happily reports moved=true when only
+  // an x-only or z-only candidate succeeded, even when the bot is grinding
+  // straight into a wall every tick. Sample position every
+  // BOT_NO_PROGRESS_WINDOW_MS and force a retarget if the distance covered
+  // in that window stays below BOT_NO_PROGRESS_MIN_DIST.
+  progressSampleAt: number;
+  progressSamplePos: { x: number; z: number };
 }
 
 interface Connection {
@@ -340,12 +364,13 @@ export class Room implements DurableObject {
     for (const team of ['mime', 'clown'] as const) {
       while (this.tally(team) < TEAM_TARGET) {
         const id = crypto.randomUUID();
+        const spawn = this.pickSpawnPosition(team);
         this.players.set(id, {
           id,
           name: generateBotName(),
           team,
           bot: true,
-          position: this.pickSpawnPosition(team),
+          position: spawn,
           yaw: 0,
           frozen: false,
           sprintEnergy: MAX_SPRINT,
@@ -357,6 +382,8 @@ export class Room implements DurableObject {
           engagedTargetId: null,
           lastDir: { x: 0, z: 0 },
           lastYaw: 0,
+          progressSampleAt: Date.now(),
+          progressSamplePos: { x: spawn.x, z: spawn.z },
         });
       }
     }
@@ -820,6 +847,8 @@ export class Room implements DurableObject {
         engagedTargetId: null,
         lastDir: { x: 0, z: 0 },
         lastYaw: bot.yaw,
+        progressSampleAt: now,
+        progressSamplePos: { x: bot.position.x, z: bot.position.z },
       };
       this.botMinds.set(bot.id, mind);
 
@@ -878,9 +907,27 @@ export class Room implements DurableObject {
       let dir = { x: 0, z: 0 };
       if (fleeing && target) {
         // Survival first. A bot chased by an active-turn enemy runs even if
-        // a teammate is frozen nearby.
+        // a teammate is frozen nearby. Route the flee through the BFS
+        // pathfinder: project a synthetic flee target BOT_FLEE_PROJECTION
+        // units along the unit-away vector and ask the pathfinder for the
+        // next waypoint to it. Without this the raw away-vector bee-lines
+        // the bot into the closest corner because no wall lookahead is in
+        // the loop. The avoid set keeps the bot off frozen-teammate cells
+        // for the same reason chase does.
         const away = wrappedUnitDelta(target.position, bot.position, this.topology, WORLD_WIDTH);
-        dir = away;
+        const fleeTarget = wrapPosition(
+          {
+            x: bot.position.x + away.x * BOT_FLEE_PROJECTION,
+            z: bot.position.z + away.z * BOT_FLEE_PROJECTION,
+          },
+          this.topology,
+          WORLD_WIDTH,
+        );
+        const avoid = this.avoidCellsForBot(bot, null);
+        const waypoint = this.pathfinder
+          ? this.pathfinder.nextWaypointAvoiding(bot.position, fleeTarget, avoid)
+          : fleeTarget;
+        dir = wrappedUnitDelta(bot.position, waypoint, this.topology, WORLD_WIDTH);
       } else if (rescuing && rescueTarget) {
         // BFS-route around walls toward the frozen teammate. The pathfinder
         // returns the world-space center of the next cell along the shortest
@@ -1010,6 +1057,31 @@ export class Room implements DurableObject {
         }
         mind.patrolTarget = this.randomPatrolPoint();
         mind.patrolUntil = now + BOT_PATROL_RETARGET_MS;
+      }
+
+      // No-progress detector. moved=true is satisfied as long as ANY axis
+      // candidate succeeds, so a bot grinding x-only into a horizontal wall
+      // passes the check every tick while making no headway. Sample the
+      // bot's position every BOT_NO_PROGRESS_WINDOW_MS and force a retarget
+      // when the distance covered in that window stays below
+      // BOT_NO_PROGRESS_MIN_DIST: pick a fresh patrol point, drop the
+      // engaged enemy so the chase BFS re-runs, and zero the smoothing
+      // carry-over so the new heading takes effect on the next tick.
+      if (now - mind.progressSampleAt >= BOT_NO_PROGRESS_WINDOW_MS) {
+        const covered = topologyDistance(
+          mind.progressSamplePos,
+          bot.position,
+          this.topology,
+          WORLD_WIDTH,
+        );
+        if (covered < BOT_NO_PROGRESS_MIN_DIST) {
+          mind.patrolTarget = this.randomPatrolPoint();
+          mind.patrolUntil = now + BOT_PATROL_RETARGET_MS;
+          mind.engagedTargetId = null;
+          mind.lastDir = { x: 0, z: 0 };
+        }
+        mind.progressSampleAt = now;
+        mind.progressSamplePos = { x: bot.position.x, z: bot.position.z };
       }
 
       // Bot tag: strict radius, no lag to compensate for. canTag also blocks

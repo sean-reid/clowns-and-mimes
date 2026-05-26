@@ -34,6 +34,12 @@ import { BotPathfinder } from './botPathfinder.ts';
 // roster sizes.
 const TICK_HZ = 60;
 const TICK_MS = 1000 / TICK_HZ;
+// Per-player input-queue cap. The client streams inputs at TICK_HZ so the
+// steady-state queue size is 0 or 1. Allow a few ticks of headroom so a
+// network jitter burst is absorbed instead of dropping inputs at the door;
+// past this limit the OLDEST is dropped so the simulation does not lag
+// further behind live time.
+const MAX_INPUT_QUEUE = 4;
 const FREE_ROAM_MS = 30_000;
 // Two-radius tag/unfreeze model.
 //
@@ -131,11 +137,15 @@ export interface RoomEnv {
 export class Room implements DurableObject {
   private readonly connections = new Map<WebSocket, Connection>();
   private readonly players = new Map<string, PlayerState>();
-  private readonly lastInputs = new Map<string, PlayerInput>();
+  // One queue per player. Inputs arrive at 60 Hz from the client and are
+  // drained one-per-tick by simulateHumans (matching the canonical Quake /
+  // Source / Overwatch model). The cap (MAX_INPUT_QUEUE) bounds memory if a
+  // bursting client outpaces the tick; an overflow drops the OLDEST so the
+  // simulation stays close to live time rather than running on stale inputs.
+  private readonly inputQueues = new Map<string, PlayerInput[]>();
   // Last input seq the server actually fed into stepMovement, per player.
-  // Distinct from lastInputs.seq, which is the most recently received: an
-  // input arriving between two ticks gets stored but only applied on the next
-  // simulate call, so ackSeq must reflect what the simulation consumed.
+  // This is what gets reported back to the client as ackSeq so reconciliation
+  // replays only the inputs the simulation has not yet consumed.
   private readonly lastAppliedSeq = new Map<string, number>();
   private phase: RoomPhase = 'filling';
   private turnEndsAt = 0;
@@ -463,7 +473,7 @@ export class Room implements DurableObject {
     if (!conn) return;
     this.connections.delete(ws);
     this.players.delete(conn.playerId);
-    this.lastInputs.delete(conn.playerId);
+    this.inputQueues.delete(conn.playerId);
     this.lastAppliedSeq.delete(conn.playerId);
     this.lastSavedAt.delete(conn.playerId);
     this.positionHistory.delete(conn.playerId);
@@ -495,7 +505,17 @@ export class Room implements DurableObject {
   private onInput(ws: WebSocket, input: PlayerInput): void {
     const conn = this.connections.get(ws);
     if (!conn) return;
-    this.lastInputs.set(conn.playerId, input);
+    let q = this.inputQueues.get(conn.playerId);
+    if (!q) {
+      q = [];
+      this.inputQueues.set(conn.playerId, q);
+    }
+    q.push(input);
+    // Overflow drops the OLDEST. Keeping recent inputs matters more than
+    // keeping every input: a stale move from 80 ms ago that the client
+    // already corrected away from is worse than letting the simulation
+    // skip it. Same trade-off Overwatch describes for its command buffer.
+    while (q.length > MAX_INPUT_QUEUE) q.shift();
   }
 
   private onTag(ws: WebSocket, targetId: string): void {
@@ -740,14 +760,23 @@ export class Room implements DurableObject {
   }
 
   private simulateHumans(_dt: number): void {
-    for (const [id, input] of this.lastInputs) {
+    for (const [id, q] of this.inputQueues) {
+      if (q.length === 0) continue;
       const p = this.players.get(id);
-      if (!p || p.bot || p.frozen) continue;
-      // Skip inputs we already consumed on a previous tick. Without this the
-      // server re-runs stepMovement against the same input every tick the
-      // client falls behind on sending, advancing the server-authoritative
-      // position past where the client-side buffer ends. The next delta then
-      // snaps the client backward and the user feels constant micro-jitter.
+      if (!p || p.bot || p.frozen) {
+        // Ineligible player: drain the queue so reconnects or thaws start
+        // from a clean slate instead of replaying stale inputs.
+        q.length = 0;
+        continue;
+      }
+      // Consume exactly ONE input per tick (oldest first). The client streams
+      // at TICK_HZ, so steady state is one in / one out. Network jitter that
+      // bunches two inputs into the same socket-read window now lands in the
+      // queue and is processed on consecutive ticks rather than overwritten;
+      // the client predicted both, the server applies both, and reconciliation
+      // never sees the "server is one tick behind" snap that caused the
+      // visible step-back stutter while moving.
+      const input = q.shift()!;
       const lastSeq = this.lastAppliedSeq.get(id) ?? -1;
       if (input.seq <= lastSeq) continue;
       const next = stepMovement(

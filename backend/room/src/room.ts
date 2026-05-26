@@ -124,6 +124,15 @@ const BOT_FLEE_PROJECTION = 12;
 // use to keep "lost the player around a corner" play readable rather
 // than instantly omniscient.
 const BOT_INVESTIGATE_MS = 3_000;
+// Each bot remembers the last BOT_RECENT_TARGETS_KEEP patrol points it
+// committed to. A new patrol candidate within BOT_RECENT_TARGET_RADIUS of
+// any of them is rejected, so the bot doesn't pace back and forth between
+// the same two or three spots. After BOT_PATROL_CANDIDATE_ATTEMPTS tries
+// we accept whatever the next random draw gives - on a dense maze with
+// many bots the entire reachable space may be in the memory window.
+const BOT_RECENT_TARGETS_KEEP = 6;
+const BOT_RECENT_TARGET_RADIUS = 10;
+const BOT_PATROL_CANDIDATE_ATTEMPTS = 8;
 
 interface BotMind {
   patrolTarget: { x: number; z: number };
@@ -159,6 +168,11 @@ interface BotMind {
   // actively investigating.
   lastKnownPos: { x: number; z: number } | null;
   investigateUntil: number;
+  // Recent patrol targets the bot has committed to. randomPatrolPoint
+  // rejects candidates near any of these so a wandering bot explores
+  // different parts of the map instead of pacing between the same spots.
+  // Newest at the end; capped at BOT_RECENT_TARGETS_KEEP.
+  recentTargets: Array<{ x: number; z: number }>;
 }
 
 interface Connection {
@@ -404,6 +418,7 @@ export class Room implements DurableObject {
           progressSamplePos: { x: spawn.x, z: spawn.z },
           lastKnownPos: null,
           investigateUntil: 0,
+          recentTargets: [],
         });
       }
     }
@@ -416,6 +431,51 @@ export class Room implements DurableObject {
       x: (Math.random() - 0.5) * 2 * (half - 4),
       z: (Math.random() - 0.5) * 2 * (half - 4),
     };
+  }
+
+  // Pick a patrol point that (a) is not inside a wall's clearance band and
+  // (b) is at least BOT_RECENT_TARGET_RADIUS from every point on the bot's
+  // recent-targets ring. Rejecting wall-clipped candidates keeps the bot
+  // exploring open corridors instead of pathfinding toward a coordinate
+  // inside a wall; rejecting near-recent candidates stops the pacing /
+  // backtracking pattern that pure random sampling produces. After
+  // BOT_PATROL_CANDIDATE_ATTEMPTS rejections we accept whatever the next
+  // draw returns - a maze packed full of bots may eventually fill the
+  // memory window with the entire reachable space.
+  private pickExplorationPatrolPoint(recentTargets: ReadonlyArray<{ x: number; z: number }>): {
+    x: number;
+    z: number;
+  } {
+    let last = this.randomPatrolPoint();
+    for (let attempt = 0; attempt < BOT_PATROL_CANDIDATE_ATTEMPTS; attempt += 1) {
+      const candidate = this.randomPatrolPoint();
+      last = candidate;
+      if (this.walls.length > 0 && pointBlockedByWall(this.walls, candidate.x, candidate.z)) {
+        continue;
+      }
+      let tooClose = false;
+      for (const recent of recentTargets) {
+        const dx = candidate.x - recent.x;
+        const dz = candidate.z - recent.z;
+        if (dx * dx + dz * dz < BOT_RECENT_TARGET_RADIUS * BOT_RECENT_TARGET_RADIUS) {
+          tooClose = true;
+          break;
+        }
+      }
+      if (tooClose) continue;
+      return candidate;
+    }
+    return last;
+  }
+
+  // Commit a fresh patrol point to the bot's mind, updating the
+  // recent-targets ring buffer so future picks can avoid the area.
+  private commitPatrolTarget(mind: BotMind): void {
+    mind.patrolTarget = this.pickExplorationPatrolPoint(mind.recentTargets);
+    mind.recentTargets.push({ x: mind.patrolTarget.x, z: mind.patrolTarget.z });
+    while (mind.recentTargets.length > BOT_RECENT_TARGETS_KEEP) {
+      mind.recentTargets.shift();
+    }
   }
 
   /**
@@ -873,6 +933,7 @@ export class Room implements DurableObject {
         progressSamplePos: { x: bot.position.x, z: bot.position.z },
         lastKnownPos: null,
         investigateUntil: 0,
+        recentTargets: [],
       };
       this.botMinds.set(bot.id, mind);
 
@@ -1029,10 +1090,21 @@ export class Room implements DurableObject {
         dir = wrappedUnitDelta(bot.position, waypoint, this.topology, WORLD_WIDTH);
       } else {
         if (now >= mind.patrolUntil || nearTarget(bot.position, mind.patrolTarget)) {
-          mind.patrolTarget = this.randomPatrolPoint();
+          this.commitPatrolTarget(mind);
           mind.patrolUntil = now + BOT_PATROL_RETARGET_MS;
         }
-        dir = wrappedUnitDelta(bot.position, mind.patrolTarget, this.topology, WORLD_WIDTH);
+        // Route patrol through the BFS pathfinder the same way chase /
+        // rescue / flee / investigate do. Without this, a patrol target on
+        // the far side of a wall has the bot bee-lining straight at the
+        // geometry, relying on the per-tick axis-slide + no-progress
+        // retarget to bounce off. With BFS routing the bot follows
+        // corridors and reads as deliberately exploring rather than
+        // ricocheting off walls.
+        const avoid = this.avoidCellsForBot(bot, null);
+        const waypoint = this.pathfinder
+          ? this.pathfinder.nextWaypointAvoiding(bot.position, mind.patrolTarget, avoid)
+          : mind.patrolTarget;
+        dir = wrappedUnitDelta(bot.position, waypoint, this.topology, WORLD_WIDTH);
       }
       // Smooth direction toward the freshly-computed dir. Stops the bot from
       // snapping to a new heading every tick when the AI is indecisive.
@@ -1129,7 +1201,7 @@ export class Room implements DurableObject {
         ) {
           bot.position = this.pickSpawnPosition(bot.team);
         }
-        mind.patrolTarget = this.randomPatrolPoint();
+        this.commitPatrolTarget(mind);
         mind.patrolUntil = now + BOT_PATROL_RETARGET_MS;
       }
 
@@ -1149,7 +1221,7 @@ export class Room implements DurableObject {
           WORLD_WIDTH,
         );
         if (covered < BOT_NO_PROGRESS_MIN_DIST) {
-          mind.patrolTarget = this.randomPatrolPoint();
+          this.commitPatrolTarget(mind);
           mind.patrolUntil = now + BOT_PATROL_RETARGET_MS;
           mind.engagedTargetId = null;
           mind.lastDir = { x: 0, z: 0 };

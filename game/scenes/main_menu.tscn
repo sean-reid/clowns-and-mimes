@@ -47,9 +47,6 @@ size_flags_horizontal = 3
 [node name="HostButton" type="Button" parent="Center/Buttons"]
 text = "Host a game"
 
-[node name="CodeButton" type="Button" parent="Center/Buttons"]
-text = "Enter a code"
-
 [node name="OpenButton" type="Button" parent="Center/Buttons"]
 text = "Play against internet strangers"
 
@@ -61,3 +58,6 @@ text = "Code:"
 [node name="CodeEntry" type="LineEdit" parent="Center/CodeRow"]
 size_flags_horizontal = 3
 placeholder_text = "ABCDEF"
+
+[node name="JoinButton" type="Button" parent="Center/CodeRow"]
+text = "Join"

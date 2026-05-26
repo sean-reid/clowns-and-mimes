@@ -6,19 +6,23 @@ const AssetPaths := preload("res://scripts/asset_paths.gd")
 const VersionCheck := preload("res://scripts/network/version_check.gd")
 
 @onready var host_button: Button = $Center/Buttons/HostButton
-@onready var code_button: Button = $Center/Buttons/CodeButton
 @onready var open_button: Button = $Center/Buttons/OpenButton
 @onready var username_input: LineEdit = $Center/UsernameRow/Username
 @onready var random_button: Button = $Center/UsernameRow/Random
 @onready var topology_picker: OptionButton = $Center/TopologyRow/Topology
 @onready var code_input: LineEdit = $Center/CodeRow/CodeEntry
+@onready var join_button: Button = $Center/CodeRow/JoinButton
 
 func _ready() -> void:
 	username_input.placeholder_text = "Optional username"
 	random_button.pressed.connect(_randomize_name)
 	host_button.pressed.connect(_host)
-	code_button.pressed.connect(_join_code)
+	join_button.pressed.connect(_join_code)
 	code_input.text_changed.connect(_uppercase_code_field)
+	# Enter/Return inside the code field submits, same as clicking Join.
+	# Godot's LineEdit fires text_submitted when the user presses Enter while
+	# the field has focus.
+	code_input.text_submitted.connect(_on_code_submitted)
 	open_button.pressed.connect(_join_open)
 	_populate_topologies()
 	username_input.text = GameState.username
@@ -97,6 +101,12 @@ func _join_code() -> void:
 	GameState.set_mode(GameState.Mode.JOIN)
 	GameState.lobby_code = code
 	requested_screen.emit("lobby")
+
+func _on_code_submitted(_text: String) -> void:
+	# LineEdit.text_submitted hands us the field's text, but _join_code reads
+	# the input directly so the source of truth stays the same as clicking
+	# Join. The arg is intentionally unused.
+	_join_code()
 
 func _join_open() -> void:
 	_commit_username()

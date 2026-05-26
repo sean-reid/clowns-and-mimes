@@ -51,6 +51,18 @@ const CONTACT_COOLDOWN_S := 0.15
 const INPUT_TICK_HZ := 60.0
 const INPUT_TICK_PERIOD := 1.0 / INPUT_TICK_HZ
 
+# Send a ping every PING_INTERVAL_S so the WebSocket has accidental-keepalive
+# traffic even when the player is idle. Cloudflare Durable Object sockets get
+# torn down with a TLS fatal alert (mbedtls -0x7780) when they sit idle long
+# enough; periodic pings keep the connection warm.
+const PING_INTERVAL_S := 5.0
+
+# When the server-side WS dies, try to reconnect with a short cumulative
+# backoff before showing the player a hard "Reconnect / Quit" choice. Most
+# transient drops (DO migration, brief ISP wobble) resolve inside ~5 s, so
+# the player never sees the menu bounce for those.
+const RECONNECT_BACKOFF_S: Array[float] = [0.5, 1.5, 3.0]
+
 const MIME_BATTLE_CRIES := [
 	"MIMES- ATTACK!", "MIMES- STRIKE!", "MIMES- POUNCE!", "MIMES- ENTRAP!",
 	"MIMES- BAFFLE!", "MIMES- SHUSH!", "MIMES- GLARE!", "MIMES- LUNGE!",
@@ -115,6 +127,12 @@ var local_player: Node = null
 var local_player_id: String = ""
 var player_nodes: Dictionary = {}
 var contact_cooldowns: Dictionary = {}
+
+# WS keepalive + reconnect state.
+var _ping_accumulator: float = 0.0
+var _reconnect_attempt: int = 0
+var _reconnect_active: bool = false
+var _reconnect_label: Label = null
 
 # ---------------------------------------------------------------------------
 # Lifecycle
@@ -186,6 +204,21 @@ func _physics_process(delta: float) -> void:
 		# Network send still goes through _physics_process at 60 Hz; the
 		# 20 Hz tick accumulator inside _stream_input owns when to flush.
 		_stream_input(delta)
+		_drive_keepalive(delta)
+
+# Periodic ping while the WS is open. The 60 Hz input stream is implicit
+# keepalive while the player is moving, but an idle player would otherwise
+# leave the socket silent long enough for Cloudflare to retire the Durable
+# Object connection.
+func _drive_keepalive(delta: float) -> void:
+	if room_client == null or not room_client.is_connected_to_server():
+		_ping_accumulator = 0.0
+		return
+	_ping_accumulator += delta
+	if _ping_accumulator < PING_INTERVAL_S:
+		return
+	_ping_accumulator = 0.0
+	room_client.send_ping()
 
 # ---------------------------------------------------------------------------
 # Offline path
@@ -255,10 +288,88 @@ func _start_online() -> void:
 func _on_room_connected() -> void:
 	GameState.ensure_username()
 	room_client.send_join(GameState.username)
+	# Reset the reconnect ladder so the next disconnect starts fresh from the
+	# shortest backoff window.
+	_reconnect_attempt = 0
+	_reconnect_active = false
+	_hide_reconnect_banner()
 
 func _on_room_disconnected(reason: String) -> void:
+	# Most disconnects in the wild are transient: Cloudflare Durable Object
+	# migration, brief ISP wobble, or a TLS fatal alert from CF retiring the
+	# socket. Try a short ladder of reconnect attempts before showing the
+	# player a hard choice, instead of force-bouncing back to the menu.
+	if _reconnect_active:
+		return
+	_reconnect_active = true
+	_reconnect_attempt = 0
+	_show_reconnect_banner("Reconnecting...")
 	hud.append_log("Disconnected: %s" % reason)
-	await get_tree().create_timer(1.5).timeout
+	_schedule_next_reconnect()
+
+func _schedule_next_reconnect() -> void:
+	if _reconnect_attempt >= RECONNECT_BACKOFF_S.size():
+		_show_reconnect_failed_popup()
+		return
+	var wait_s: float = RECONNECT_BACKOFF_S[_reconnect_attempt]
+	_reconnect_attempt += 1
+	await get_tree().create_timer(wait_s).timeout
+	if not _reconnect_active or room_client == null:
+		return
+	# Clear stale per-session state so reconciliation does not replay inputs
+	# from before the drop. The fresh snapshot from the server's onJoin will
+	# repopulate everything.
+	pending_inputs.clear()
+	snapshot_received = false
+	room_client.connect_to(GameState.server_url)
+	# If the connect call dispatches another `disconnected` immediately
+	# (handshake failure), _on_room_disconnected re-enters; otherwise wait
+	# for `connected` to flip us out of the reconnect state. As a backstop
+	# in case neither fires (socket stuck pending), schedule the next ladder
+	# step after the same backoff window.
+	await get_tree().create_timer(wait_s + 1.0).timeout
+	if _reconnect_active and not room_client.is_connected_to_server():
+		_schedule_next_reconnect()
+
+func _show_reconnect_banner(text: String) -> void:
+	if _reconnect_label == null:
+		_reconnect_label = Label.new()
+		_reconnect_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		_reconnect_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+		_reconnect_label.anchor_left = 0.0
+		_reconnect_label.anchor_right = 1.0
+		_reconnect_label.anchor_top = 0.45
+		_reconnect_label.anchor_bottom = 0.55
+		_reconnect_label.add_theme_font_size_override("font_size", 48)
+		hud.add_child(_reconnect_label)
+	_reconnect_label.text = text
+	_reconnect_label.visible = true
+
+func _hide_reconnect_banner() -> void:
+	if _reconnect_label != null:
+		_reconnect_label.visible = false
+
+func _show_reconnect_failed_popup() -> void:
+	_hide_reconnect_banner()
+	var dialog := AcceptDialog.new()
+	dialog.title = "Connection lost"
+	dialog.dialog_text = "Could not reach the server. Try again or back out to the main menu."
+	dialog.ok_button_text = "Back to menu"
+	dialog.unresizable = true
+	var retry_button := dialog.add_button("Reconnect", true, "retry")
+	retry_button.pressed.connect(_on_reconnect_retry_pressed.bind(dialog))
+	dialog.confirmed.connect(_on_reconnect_give_up)
+	add_child(dialog)
+	dialog.popup_centered()
+
+func _on_reconnect_retry_pressed(dialog: AcceptDialog) -> void:
+	dialog.queue_free()
+	_reconnect_attempt = 0
+	_show_reconnect_banner("Reconnecting...")
+	_schedule_next_reconnect()
+
+func _on_reconnect_give_up() -> void:
+	_reconnect_active = false
 	_on_back_to_menu()
 
 func _on_snapshot(snapshot: Dictionary, you_are: String) -> void:

@@ -17,6 +17,11 @@ var _connected: bool = false
 var _send_queue: Array[String] = []
 
 func connect_to(ws_url: String) -> void:
+	# Drop any stale enqueued messages from a previous session before
+	# starting a new one. Reconnecting after a disconnect would otherwise
+	# replay old inputs with stale seq numbers as soon as the new socket
+	# opens.
+	_send_queue.clear()
 	_socket = WebSocketPeer.new()
 	_socket.handshake_headers = PackedStringArray()
 	var err: int = _socket.connect_to_url(ws_url)
@@ -29,6 +34,7 @@ func disconnect_from() -> void:
 		_socket.close()
 	_socket = null
 	_connected = false
+	_send_queue.clear()
 
 func send_join(name: String, prefer_team: String = "") -> void:
 	var payload := {"t": "join", "v": ServerConfig.protocol_version(), "name": name}

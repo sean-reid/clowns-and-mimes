@@ -141,14 +141,16 @@ export function pathCrossesWall(
     if (segmentsIntersect(ax, az, bx, bz, w.ax, w.az, w.bx, w.bz)) {
       return true;
     }
-    // Treat a wall as blocked if the move starts or ends within the body
-    // radius plus the wall's own half-thickness. Without the body radius the
-    // wall check would only stop a bot whose center was inside the wall mesh
-    // - by then the visual capsule already overlaps the wall on screen.
-    if (
-      pointToSegmentDistance(ax, az, w) < WALL_CLEARANCE ||
-      pointToSegmentDistance(bx, bz, w) < WALL_CLEARANCE
-    ) {
+    // Block moves that take the body closer to a wall than WALL_CLEARANCE
+    // allows. The end-only check accepts a move when the body is already
+    // inside the clearance band and either stays at the same depth (parallel
+    // slide) or moves further out - escape paths a "start-or-end" check
+    // would have pinned. The segment-intersection test above still stops a
+    // move from tunneling through the wall, so this is safe.
+    const endDist = pointToSegmentDistance(bx, bz, w);
+    if (endDist >= WALL_CLEARANCE) continue;
+    const startDist = pointToSegmentDistance(ax, az, w);
+    if (endDist < startDist - 1e-6) {
       return true;
     }
   }

@@ -98,6 +98,13 @@ static func step(
 	}
 
 static func path_crosses_wall(walls: Array, ax: float, az: float, bx: float, bz: float) -> bool:
+	# Block moves that take the body closer to a wall than WALL_CLEARANCE
+	# allows. The end-only "is it deeper than the start?" check accepts a
+	# move when the body is already inside the clearance band and either
+	# stays at the same depth (parallel slide) or moves further out - escape
+	# paths a "start-or-end" check would have pinned. The segment-
+	# intersection test still stops a move from tunneling through the wall,
+	# so this is safe. Mirrors backend/shared/src/labyrinth.ts::pathCrossesWall.
 	for w in walls:
 		var wax: float = w["ax"]
 		var waz: float = w["az"]
@@ -105,9 +112,11 @@ static func path_crosses_wall(walls: Array, ax: float, az: float, bx: float, bz:
 		var wbz: float = w["bz"]
 		if _segments_intersect(ax, az, bx, bz, wax, waz, wbx, wbz):
 			return true
-		if _point_to_segment_dist(ax, az, wax, waz, wbx, wbz) < WALL_CLEARANCE:
-			return true
-		if _point_to_segment_dist(bx, bz, wax, waz, wbx, wbz) < WALL_CLEARANCE:
+		var end_dist: float = _point_to_segment_dist(bx, bz, wax, waz, wbx, wbz)
+		if end_dist >= WALL_CLEARANCE:
+			continue
+		var start_dist: float = _point_to_segment_dist(ax, az, wax, waz, wbx, wbz)
+		if end_dist < start_dist - 1e-6:
 			return true
 	return false
 

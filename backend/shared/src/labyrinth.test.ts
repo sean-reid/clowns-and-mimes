@@ -83,6 +83,30 @@ describe('pathCrossesWall', () => {
     expect(pathCrossesWall(walls, 0, 0, 50, 0)).toBe(true);
     expect(pathCrossesWall(walls, 0, 0, 0, -50)).toBe(true);
   });
+
+  it('allows escape from inside the wall-clearance band', () => {
+    // Stuck-detector telemetry showed bodies ending up ~0.55 m from a wall
+    // (just inside WALL_CLEARANCE = 0.6 m) after rounding on a fast tick or
+    // a topology wrap teleport, then refusing every candidate move because
+    // the old start-position check rejected the entire path. With the start
+    // check removed, the body must be able to:
+    //   - move PARALLEL to the wall while still inside the clearance band
+    //   - move AWAY from the wall (the only way to recover)
+    // The end-position check still blocks moving further INTO the wall, and
+    // the segment-intersection test still blocks tunneling through it.
+    const wall: WallSegment = { ax: -10, az: 0, bx: 10, bz: 0 };
+    // Body sitting at z = 0.55 m, just inside clearance of the wall at z = 0.
+    const inside = (bx: number, bz: number) => pathCrossesWall([wall], 0, 0.55, bx, bz);
+    // Parallel along x, same depth: allowed.
+    expect(inside(1, 0.55)).toBe(false);
+    // Away from the wall (z increasing): allowed once end clears the band.
+    expect(inside(0, 1.0)).toBe(false);
+    // Toward the wall (z decreasing): blocked - end is even deeper.
+    expect(inside(0, 0.3)).toBe(true);
+    // Tunneling straight through to the other side: blocked by segment
+    // intersection, not by start-position.
+    expect(inside(0, -1.0)).toBe(true);
+  });
 });
 
 describe('generateWalls (plane, torus, klein use grid maze)', () => {

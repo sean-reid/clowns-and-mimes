@@ -406,6 +406,7 @@ func _show_version_mismatch_popup(server_message: String) -> void:
 		% [local, server_message]
 	)
 	dialog.ok_button_text = "Close"
+	dialog.unresizable = true
 	var open_button := dialog.add_button("Get latest", true, "open_site")
 	open_button.pressed.connect(func(): OS.shell_open(VersionCheck.WEBSITE_URL))
 	add_child(dialog)

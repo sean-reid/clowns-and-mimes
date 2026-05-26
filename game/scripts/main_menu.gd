@@ -48,6 +48,7 @@ func _show_update_popup(local: String, latest: String) -> void:
 		% [local, latest]
 	)
 	dialog.ok_button_text = "Close"
+	dialog.unresizable = true
 	var open_button := dialog.add_button("Get latest", true, "open_site")
 	open_button.pressed.connect(func(): OS.shell_open(VersionCheck.WEBSITE_URL))
 	add_child(dialog)

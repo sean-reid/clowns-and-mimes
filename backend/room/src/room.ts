@@ -7,6 +7,7 @@ import type {
   ServerToClient,
   Team,
   Topology,
+  Vec2,
 } from '@cm/shared';
 import { BATTLE_CRY_COUNT, PROTOCOL_VERSION } from '@cm/shared';
 import { topologyDistance, wrapPosition, wrappedUnitDelta } from '@cm/shared/topology';
@@ -114,6 +115,15 @@ const BOT_NO_PROGRESS_MIN_DIST = 0.5;
 // into a corner. 12 units is enough to cross one or two grid cells in any
 // topology.
 const BOT_FLEE_PROJECTION = 12;
+// "Last-known position" investigation window. When a target the bot had
+// engaged with becomes occluded behind a wall, the bot doesn't drop them
+// instantly - it routes toward the last position it could see them and
+// holds the chase for BOT_INVESTIGATE_MS. If the target reappears in that
+// window the chase resumes; if not, engagedTargetId clears and the bot
+// returns to patrol. Same pattern Half-Life HECU grunts and Halo grunts
+// use to keep "lost the player around a corner" play readable rather
+// than instantly omniscient.
+const BOT_INVESTIGATE_MS = 3_000;
 
 interface BotMind {
   patrolTarget: { x: number; z: number };
@@ -141,6 +151,14 @@ interface BotMind {
   // in that window stays below BOT_NO_PROGRESS_MIN_DIST.
   progressSampleAt: number;
   progressSamplePos: { x: number; z: number };
+  // Last position the bot could actually see the engaged target at, and the
+  // deadline by which the bot must reacquire line-of-sight before giving up.
+  // Set when nearestVisibleEnemy returns null but the previously-engaged
+  // target still exists (occluded). While investigating, the bot routes to
+  // lastKnownPos via BFS as if it were a patrol point. Both null when not
+  // actively investigating.
+  lastKnownPos: { x: number; z: number } | null;
+  investigateUntil: number;
 }
 
 interface Connection {
@@ -384,6 +402,8 @@ export class Room implements DurableObject {
           lastYaw: 0,
           progressSampleAt: Date.now(),
           progressSamplePos: { x: spawn.x, z: spawn.z },
+          lastKnownPos: null,
+          investigateUntil: 0,
         });
       }
     }
@@ -849,12 +869,18 @@ export class Room implements DurableObject {
         lastYaw: bot.yaw,
         progressSampleAt: now,
         progressSamplePos: { x: bot.position.x, z: bot.position.z },
+        lastKnownPos: null,
+        investigateUntil: 0,
       };
       this.botMinds.set(bot.id, mind);
 
-      // Sticky target: stay engaged with whoever we picked last tick unless
-      // they vanish or a new candidate is significantly closer. Without this
-      // the bot would flip every tick between two near-equidistant enemies.
+      // Sticky target with line-of-sight gating. nearestVisibleEnemy already
+      // filters by pathCrossesWall, so candidate is null when no enemy is
+      // both within range AND has clear sight. Keep the previously-engaged
+      // target only if they are still visible. When LOS to the engaged
+      // target is lost, hold onto engagedTargetId and stamp lastKnownPos /
+      // investigateUntil so the bot routes toward where the target was last
+      // seen for BOT_INVESTIGATE_MS before giving up.
       const candidate = this.nearestVisibleEnemy(bot);
       const candidateDist = candidate
         ? topologyDistance(bot.position, candidate.position, this.topology, WORLD_WIDTH)
@@ -864,24 +890,58 @@ export class Room implements DurableObject {
       if (mind.engagedTargetId) {
         const existing = this.players.get(mind.engagedTargetId);
         if (existing && !existing.frozen && existing.team !== bot.team) {
+          const existingVisible = this.botCanSee(bot.position, existing.position);
           const existingDist = topologyDistance(
             bot.position,
             existing.position,
             this.topology,
             WORLD_WIDTH,
           );
-          // Keep existing unless the new candidate is at least
-          // RETARGET_HYSTERESIS x closer.
           if (
+            existingVisible &&
             existingDist < BOT_VISION_RADIUS &&
             candidateDist >= existingDist * RETARGET_HYSTERESIS
           ) {
             target = existing;
             enemyDist = existingDist;
+          } else if (!existingVisible && existingDist < BOT_VISION_RADIUS) {
+            // Target ducked behind cover. Investigate the last-seen
+            // position only when the bot is the active hunter; if our turn
+            // is the defender we'd just be walking back into the threat,
+            // so clear and let the flee branch (which gates on target
+            // visibility) decide what to do once they reappear.
+            if (active === bot.team) {
+              if (!mind.lastKnownPos) {
+                mind.lastKnownPos = { x: existing.position.x, z: existing.position.z };
+                mind.investigateUntil = now + BOT_INVESTIGATE_MS;
+              }
+            } else {
+              mind.engagedTargetId = null;
+              mind.lastKnownPos = null;
+              mind.investigateUntil = 0;
+            }
           }
+        } else {
+          // Engaged target left the room or joined our team; abandon them.
+          mind.engagedTargetId = null;
+          mind.lastKnownPos = null;
+          mind.investigateUntil = 0;
         }
       }
-      mind.engagedTargetId = target ? target.id : null;
+      if (target) {
+        // Fresh sighting (or re-sighting) clears any in-flight investigation.
+        mind.engagedTargetId = target.id;
+        mind.lastKnownPos = { x: target.position.x, z: target.position.z };
+        mind.investigateUntil = 0;
+      } else if (mind.investigateUntil > 0 && now >= mind.investigateUntil) {
+        // Investigation window expired without re-acquiring sight. Drop the
+        // engaged target and fall back to patrol.
+        mind.engagedTargetId = null;
+        mind.lastKnownPos = null;
+        mind.investigateUntil = 0;
+      }
+      const investigating =
+        target === null && mind.lastKnownPos !== null && now < mind.investigateUntil;
 
       // Scan for a frozen teammate to rescue. Rescue is allowed in any phase
       // (unlike tagging) so we always consider it. Priority later: flee >
@@ -952,6 +1012,18 @@ export class Room implements DurableObject {
         const waypoint = this.pathfinder
           ? this.pathfinder.nextWaypointAvoiding(bot.position, target.position, avoid)
           : target.position;
+        dir = wrappedUnitDelta(bot.position, waypoint, this.topology, WORLD_WIDTH);
+      } else if (investigating && mind.lastKnownPos) {
+        // Target ducked behind cover within the last BOT_INVESTIGATE_MS.
+        // Route to where they were last seen via BFS. If they reappear at
+        // any point during the window, the target acquisition block above
+        // will pick them up again and the investigation flag clears on the
+        // next tick. If we reach lastKnownPos without re-acquiring sight,
+        // hold position there until investigateUntil expires.
+        const avoid = this.avoidCellsForBot(bot, null);
+        const waypoint = this.pathfinder
+          ? this.pathfinder.nextWaypointAvoiding(bot.position, mind.lastKnownPos, avoid)
+          : mind.lastKnownPos;
         dir = wrappedUnitDelta(bot.position, waypoint, this.topology, WORLD_WIDTH);
       } else {
         if (now >= mind.patrolUntil || nearTarget(bot.position, mind.patrolTarget)) {
@@ -1143,6 +1215,7 @@ export class Room implements DurableObject {
       if (other.id === bot.id) continue;
       if (other.team === bot.team) continue;
       if (other.frozen) continue;
+      if (!this.botCanSee(bot.position, other.position)) continue;
       const d = topologyDistance(bot.position, other.position, this.topology, WORLD_WIDTH);
       if (d < bestDist) {
         bestDist = d;
@@ -1150,6 +1223,17 @@ export class Room implements DurableObject {
       }
     }
     return best;
+  }
+
+  // Line-of-sight test between two world-space points. A wall in the way
+  // means the bot cannot see the target, which gates the entry into chase
+  // (and flee) and triggers the last-known-position investigation when an
+  // engaged target ducks behind cover. Uses the same pathCrossesWall the
+  // movement system uses so "can the bot see them" and "could the bot move
+  // there" stay in lockstep.
+  private botCanSee(from: Vec2, to: Vec2): boolean {
+    if (this.walls.length === 0) return true;
+    return !pathCrossesWall(this.walls, from.x, from.z, to.x, to.z);
   }
 
   private activeTurnTeam(): Team | null {

@@ -1,6 +1,6 @@
 # Clowns and Mimes, on Miscellaneous Topological Spaces... IN THE DARK
 
-A team tag game played on a dimly lit labyrinth that wraps in unusual ways. You are either a mime or a clown. Tag every opponent before they tag you. The catch is that the playing field might be a sphere, a torus, or a Klein bottle, and you can barely see.
+A team tag game played on a dimly lit labyrinth that wraps in unusual ways. You are either a mime or a clown. Tag every opponent before they tag you. The catch is that the playing field might be a torus, a Möbius strip, or a Klein bottle, and you can barely see.
 
 ## Status
 

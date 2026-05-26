@@ -35,7 +35,6 @@ Hard constraints from the project brief:
 - Backend hosted on Cloudflare. Static site on GitHub Pages.
 - Total infrastructure cost under USD 500 per year.
 - Open source, MIT license, monorepo on GitHub, conventional commits, atomic commits, PR workflow.
-- Zero AI fingerprints anywhere in the project.
 
 Performance budget per platform:
 

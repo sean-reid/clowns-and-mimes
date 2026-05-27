@@ -621,6 +621,15 @@ func _show_version_mismatch_popup(server_message: String) -> void:
 func _drive_online_hud() -> void:
 	if not snapshot_received:
 		return
+	if _reconnect_active:
+		# While the reconnect ladder is running, the server-side tick is
+		# paused (no active humans) so turnEndsAt is held in place, but
+		# the local clock keeps advancing. Without this gate the visible
+		# countdown would race toward zero during the disconnect and
+		# snap back up when the next delta arrives. Holding the last
+		# rendered value matches what the server is doing - the turn
+		# clock pauses with the world.
+		return
 	var now_ms: float = Time.get_unix_time_from_system() * 1000.0
 	var remaining_s: float = max(0.0, (turn_ends_at_ms - now_ms) / 1000.0)
 	hud.set_countdown_seconds(remaining_s)

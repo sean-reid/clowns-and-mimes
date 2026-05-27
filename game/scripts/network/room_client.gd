@@ -15,6 +15,14 @@ signal error_received(code: String, message: String)
 var _socket: WebSocketPeer = null
 var _connected: bool = false
 var _send_queue: Array[String] = []
+# Bound on the outbound queue. The arena enqueues inputs at 60 Hz and a
+# ping every 5 s; if the underlying socket cannot drain (wifi dropped,
+# tunnel wedged), the queue would otherwise grow unboundedly until the
+# OS / TCP keepalive eventually marks the socket closed (~30 s+). Cap
+# at one second of input cadence so memory stays bounded and the buffer
+# never gets into a state where it cannot be sent in one tick after a
+# reconnect.
+const SEND_QUEUE_MAX := 64
 # Per-connection resumption secret handed back by the server in the
 # snapshot envelope. Sent on every subsequent send_join so a transient
 # WS drop is treated as a reconnect (existing PlayerState resumed) rather
@@ -87,6 +95,15 @@ func send_ping() -> void:
 	_enqueue({"t": "ping", "clientTime": _now_ms()})
 
 func _enqueue(payload: Dictionary) -> void:
+	# Drop the oldest entry when the queue is at capacity. Inputs are
+	# tick-bound and the server's seq-based ack lets reconciliation
+	# recover from skipped packets, so the oldest queued frame is
+	# always the least useful one to keep. Without this guard a wifi
+	# drop would let the queue grow until process memory got tight,
+	# and once the link came back the client would replay seconds of
+	# stale input.
+	if _send_queue.size() >= SEND_QUEUE_MAX:
+		_send_queue.pop_front()
 	_send_queue.append(JSON.stringify(payload))
 
 func _process(_delta: float) -> void:
@@ -103,11 +120,31 @@ func _process(_delta: float) -> void:
 		while not _send_queue.is_empty():
 			var text: String = _send_queue.pop_front()
 			var err: int = _socket.send_text(text)
-			if err != OK:
-				_send_queue.push_front(text)
-				break
+			if err == OK:
+				continue
+			if err == ERR_OUT_OF_MEMORY:
+				# wslay's outbound buffer is full. This happens when the
+				# underlying transport cannot drain - typical of a yanked
+				# wifi connection where the socket state still reports
+				# OPEN but TCP retries are piling up. Without bailing
+				# here the error would spam every process tick and the
+				# reconnect ladder would not fire until the OS finally
+				# closed the socket ~30 s later, by which time the
+				# server's session-token grace window has expired and
+				# the resume becomes a fresh join (= round restart).
+				# Force the socket closed and emit disconnected so the
+				# arena's ladder kicks in immediately.
+				_socket.close()
+				_connected = false
+				_send_queue.clear()
+				disconnected.emit("send buffer full (network gone?)")
+				_socket = null
+				return
+			_send_queue.push_front(text)
+			break
 	elif state == WebSocketPeer.STATE_CLOSED and _connected:
 		_connected = false
+		_send_queue.clear()
 		disconnected.emit("closed by peer: %d" % _socket.get_close_code())
 		_socket = null
 

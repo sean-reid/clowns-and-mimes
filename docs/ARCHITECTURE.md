@@ -39,8 +39,8 @@ Hard constraints from the project brief:
 Performance budget per platform:
 
 - Steady 60 FPS on a 2020-class laptop GPU at 1080p.
-- Network tick rate of 20 Hz for gameplay messages.
-- Round-trip latency tolerated up to 200 ms with client prediction.
+- Server tick rate of 60 Hz. Client inputs and server deltas both ride that cadence so each server tick drains exactly one client input on average.
+- Round-trip latency tolerated up to 200 ms with client prediction + full-replay reconciliation.
 
 ## Technology choices
 
@@ -103,30 +103,40 @@ flowchart TB
   Lobby -->|host clicks Start / open auto-fills| Freeroam[30s free roam]
   Freeroam --> TurnLoop
   TurnLoop -->|all of one team frozen| EndScreen
-  EndScreen -->|Play again| Lobby
-  EndScreen -->|Return to lobby| MainMenu
+  EndScreen -->|Quit| MainMenu
 ```
 
 The game client is structured around scene composition in Godot:
 
-- `Main.tscn` is the root that swaps the active screen.
-- `TitleScreen.tscn` plays the three-phase title animation and a short oompa loop.
-- `MainMenu.tscn` shows host, code, and strangers options plus username entry.
-- `Lobby.tscn` is the pre-arena screen that surfaces the lobby code (host) or join status (joiner), the player roster, and the host's Start button.
-- `Arena.tscn` instantiates a topology scene and the labyrinth.
-- `HUD.tscn` overlays sprint bar, countdown, team status, side log, and frozen overlay.
+- `main.tscn` is the root that swaps the active screen.
+- `title_screen.tscn` plays the title animation and the menu theme.
+- `main_menu.tscn` shows host, code, and strangers options plus username entry and a gear icon for settings.
+- `lobby.tscn` is the pre-arena screen that surfaces the lobby code (host) or join status (joiner), the live player roster, and the host's Start button.
+- `arena.tscn` instantiates a topology, the labyrinth, the HUD, and the in-game menu overlay.
+- `hud.tscn` overlays sprint bar, countdown, team status, side log, and frozen overlay.
+- `in_game_menu.tscn` is the Esc overlay (Resume / Settings / Quit to main menu).
+- `settings_panel.tscn` is the modal opened from the gear icon or the in-game menu: mute music, mute SFX, light-mode arena palette. Persisted to `user://settings.cfg` via the `Settings` autoload.
 
-Player movement is handled by `PlayerController.gd`, a `CharacterBody3D` with:
+Autoloads:
+
+- `GameState` holds cross-scene state (mode, username, topology, lobby_code, server_url, host_token).
+- `AudioBus` configures the Music / SFX / UI buses at boot and owns the long-lived music player so a track started on the title screen survives scene swaps.
+- `Settings` is the player-preferences singleton (audio mutes + light mode) backed by `user://settings.cfg`.
+- `UsernameGenerator` produces the adjective-and-noun random names.
+- `NetClient` owns the `RoomClient` across scene transitions: the lobby opens the WebSocket and the arena re-uses the same connection, so reconciliation state and the initial snapshot survive the lobby → arena swap.
+
+Player movement is handled by `player.gd`, a `CharacterBody3D` with:
 
 - WASD for translational movement
 - Mouse look with capture
 - Shift to sprint while sprint energy is above zero
-- Footstep sound emitter modulated by current speed
-- Tag and unfreeze fire on contact: when the active turn's team brushes within 1.2 m of an eligible opponent or teammate, the interaction is sent to the rules engine. A 0.6 s cooldown per target prevents a single brush from double-triggering.
+- Footstep sound emitter modulated by current planar speed
+- Tag and unfreeze fire on contact: when the active turn's team brushes within `CONTACT_RADIUS` (1.4 m) of an eligible opponent or teammate, `tag_attempt` / `unfreeze_attempt` is sent to the server. A 0.15 s per-target cooldown keeps one physics frame from firing the same tag repeatedly; the server's own cooldown is the long gate.
 
 Sprint energy:
 
 - 100 unit pool, 25 units per second drain while sprinting, 15 units per second regen otherwise.
+- Sprint hysteresis: once energy depletes to 0 mid-sprint the player drops to walk and stays there until energy regens past an engage threshold, preventing 60 Hz jitter at the 0-energy line.
 - Sprint is unavailable while frozen.
 
 ## Topology system
@@ -147,37 +157,39 @@ classDiagram
   Topology <|-- KleinTopology
 ```
 
-| Topology     | Wrap rule                                                                     | Visual seam treatment                                                                                           |
-| ------------ | ----------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------- |
-| Plane        | No wrap. Hard walls at edges.                                                 | None.                                                                                                           |
-| Torus        | X wraps at width, Z wraps at depth.                                           | Edge portals render the opposite side of the map.                                                               |
-| Möbius strip | X wraps with vertical flip, Z is bounded by hard walls. Single boundary loop. | Two edge portals (one per x-seam) render the strip mirrored across z, giving continuous geometry past the seam. |
-| Klein bottle | X wraps with vertical flip, Z wraps with no flip.                             | Edge portals on X axis render an inverted copy.                                                                 |
+| Topology     | Wrap rule                                                                          | Rendering treatment                                                                                                                                                                                                                             |
+| ------------ | ---------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Plane        | No wrap on either axis. Boundary walls in the labyrinth seal the edges.            | None needed.                                                                                                                                                                                                                                    |
+| Torus        | X wraps modulo WIDTH, Z wraps modulo WIDTH. Both axes plain modular.               | Remote bodies render at the wrap-equivalent position nearest the local camera via `topology.delta`, so a bot crossing the +Z seam appears at the opposite-side continuation rather than teleporting one world-width away from view.             |
+| Möbius strip | X wraps modulo 2 × WIDTH on the cylindrical double cover. Z hard-bounded.          | The fundamental Möbius strip identifies (x, z) ~ (x + L, -z); rendering that flip live looks jarring, so the playfield is the cylindrical double cover and the z-flip becomes traversable space. The x-seam is then plain modular and seamless. |
+| Klein bottle | X wraps modulo 2 × WIDTH on the double cover, Z wraps modulo WIDTH. Plain modular. | Same double-cover trick as Möbius along x: the right half of the cover is the z-mirror of the left, so the bottle's orientation flip is realised as traversable space rather than an instantaneous flip on each x-seam crossing.                |
 
 Wrapping is enforced in `Topology.wrap` after every physics step. Both the GDScript and TypeScript implementations share the same canonical math; the GDScript build uses `fposmod` where TS uses the `((v + half) % width + width) % width` idiom, which produce identical values.
 
+Remote-body wrap-nearest rendering lives in `player.gd::_to_camera_nearest_copy`. The local player's body itself does not get the same treatment yet, so a local player who crosses a seam still teleports their camera one world-width to the wrap-equivalent side (tracked as a follow-up). The labyrinth wall meshes also do not yet render neighbor copies past the seam.
+
 ## Labyrinth generator
 
-The labyrinth is symmetric to keep the topology fair. It uses concentric ring regions with alternating connector orientations.
+The labyrinth is a topology-aware grid maze. The same generator (mirrored bit-for-bit in `grid_maze.gd` and `backend/shared/src/gridMaze.ts`) runs on client and server from the room's seed, so both sides agree on geometry without ever sending mesh data.
 
 ```mermaid
 flowchart LR
-  Center[Center start square] --> Ring1[Ring 1 walls]
-  Ring1 -->|radial connectors| Ring2[Ring 2 walls]
-  Ring2 -->|tangential connectors| Ring3[Ring 3 walls]
-  Ring3 -->|radial connectors| Outer[Outer ring or seam]
+  Seed[Room seed] --> Carve[Iterative DFS carve\nseeded LCG]
+  Carve --> Walls[Wall segment list]
+  Walls --> Render[Client: bake static meshes]
+  Walls --> Server[Server: walls list for collision + pathfinding]
 ```
 
 Generation steps:
 
-1. Pick a deterministic seed from the room id.
-2. Place the center start square.
-3. For each ring, place wall segments at fixed radii with rotational symmetry of order N.
-4. Cut radial connectors in odd rings and tangential connectors in even rings, alternating.
-5. Apply topology-specific projection.
-6. Bake static meshes for the labyrinth at room start. Walls go up high enough that players cannot see past them. Floor and walls are dark gray.
+1. Derive a deterministic seed from the room id.
+2. Walk an iterative depth-first carver on a `GRID_RES × GRID_RES` (80×80) grid. The LCG state and neighbor-traversal order are pinned so client and server produce the same carve.
+3. The neighbor function is topology-aware: torus and Klein wrap, plane treats out-of-bounds as solid, Möbius is rendered as the cylindrical double cover (wider in x, hard-bounded in z). Klein has its own helper that walks the double-cover seam math directly so the right half of the maze mirrors the left.
+4. Emit the residual closed-cell-boundary edges as a `WallSegment[]`. Edges at wrap seams are dropped so the topology folds correctly.
+5. Client: bake static mesh segments at `WALL_HEIGHT = 6.0` so the camera can't see over them. Floor and walls are dark gray. The wall list also feeds a topology-aware `AStar2D` graph for offline bot pathfinding.
+6. Server: keeps the same `WallSegment[]` for `pointBlockedByWall` (spawn validity) and `pathCrossesWall` (bot LOS + flee planning). The matching `botPathfinder.ts` runs a BFS over a coarser grid for routed flee paths.
 
-The labyrinth is deterministic given the seed so server and clients agree on geometry without sending mesh data.
+A legacy ring-based layout (`_build_ring` / `_add_arc_wall` in `labyrinth.gd`) is retained as dead code for a possible experimental mode but no current topology dispatches to it.
 
 ## Audio system
 
@@ -193,8 +205,8 @@ Three audio buses configured at runtime: Music, SFX, UI.
 
 Two implementations, one shape:
 
-- **Client-side BotAI (offline play).** Attached to each bot Player as a `BotAI` node. State machine runs at 5 Hz. Path is recomputed each decision tick via `Labyrinth.find_path` (AStarGrid2D on the labyrinth's 80x80 grid). The bot aims at the next waypoint instead of straight at the target, falling back to direct steering when no path is found. The 4 states are Patrol, Chase, Flee, Rescue.
-- **Server-side bot AI (stranger rooms).** Lives in the room Durable Object's `simulate` loop. When the first human joins a fresh room, a 3 second bot-fill timer schedules `fillBots` plus `startCountdown`. The tick then drives chase/flee/patrol decisions using the same shared rules state, calls `canTag` on contact, and broadcasts `tagged` events identical to the human path.
+- **Client-side BotAI (offline play).** Attached to each bot Player as a `BotAI` node. State machine runs at 5 Hz (`TICK_HZ = 5.0`). Paths are recomputed each decision tick via `Labyrinth.find_path`, which runs an `AStar2D` over the topology-aware grid built in `_connect_neighbors`. The bot aims at the next waypoint instead of straight at the target, falling back to direct steering when no path is found. The 4 states are Patrol, Chase, Flee, Rescue.
+- **Server-side bot AI (all rooms, hosted and open).** Lives in the room Durable Object's `simulate` loop alongside `simulateHumans`. The same enum (Patrol / Chase / Flee / Rescue) drives decisions; chase paths are direct + wall-aware, flee paths route via the BFS in `botPathfinder.ts`. The room also tracks investigation memory: when a chase target ducks behind cover, the bot routes to the last seen position for up to 3 s before giving up. `canTag` (line-of-sight + radius) gates every tag attempt, and tagged events are broadcast identically to the human path.
 
 ```mermaid
 stateDiagram-v2
@@ -202,50 +214,68 @@ stateDiagram-v2
   Patrol --> Chase: enemy visible AND own team turn
   Patrol --> Flee: enemy visible AND opponent turn
   Patrol --> Rescue: frozen teammate within radius
-  Chase --> Patrol: lost sight
+  Chase --> Patrol: lost sight (after investigation window)
   Flee --> Patrol: lost sight
   Rescue --> Patrol: teammate unfrozen or unreachable
 ```
 
-- Visibility: scalar distance threshold against the topology-aware `distance` function. No raycast cone yet.
-- Topology-aware A\* across the torus and Klein seam is tracked as a follow-up: currently the grid is flat and the bot walks the long way around when it should cross a seam.
-- Server-side bots ignore wall geometry (the labyrinth is generated client-side from a seed). Porting the wall generator to TS so the room can run authoritative collision is tracked as a follow-up.
+- Visibility is gated by both a topology-aware `distance` threshold and `pathCrossesWall` (line-of-sight), so a bot cannot "see" an enemy through a wall.
+- Pathfinding is topology-aware: the offline `AStar2D` graph connects across seams via `_wrap_cell`, and the server-side BFS in `botPathfinder.ts` works on the same coarse grid. The follow-up here is mainly performance / quality of the routed paths, not whether seams are traversed.
+- Server-side bots use the same wall-segment list the client renders from (generated from the room seed), so wall collisions and LOS are authoritative.
+- Patrol exploration memory: each bot remembers its last 6 patrol targets and rejects new candidates within 10 m of any of them, so wandering bots no longer pace between two adjacent cells.
 
 ## Networking
 
-Server-authoritative on the freeze state. Movement is client-predicted with server reconciliation.
+Server-authoritative on movement, freeze state, and turn phase. Movement is client-predicted with full-replay reconciliation.
 
 ```mermaid
 sequenceDiagram
   participant C as Client
   participant DO as Room (Durable Object)
-  C->>DO: WS join {roomId, name, version}
-  DO-->>C: state_snapshot {seed, topology, players, turn, clock}
-  loop 20 Hz tick
-    C->>DO: input {seq, dt, move, look, sprint, action}
-    DO-->>C: state_delta {players, events}
+  C->>DO: WS join {v, name, hostToken?, sessionToken?}
+  DO-->>C: snapshot {snapshot, youAre, sessionToken}
+  loop 60 Hz server tick
+    C->>DO: input {seq, dt, move, lookYaw, sprint}
+    DO-->>C: delta {players, phase, turnEndsAt, ackSeq}
   end
-  C->>DO: tag_attempt {targetId, t}
-  DO-->>C: tag_result {ok, reason}
+  C->>DO: tag_attempt {targetId, clientTime}
+  DO-->>C: tag_result {ok, targetId?, reason?}
+  C->>DO: start_match  (host only, transitions out of `filling`)
 ```
 
-Wire protocol is JSON over WebSocket with a `t` discriminator field on every message, and `PROTOCOL_VERSION = 1` (defined in `@cm/shared/protocol`). The room rejects mismatched versions with a `version_mismatch` error and closes the socket.
+Wire protocol is JSON over WebSocket with a `t` discriminator on every message and `PROTOCOL_VERSION = 1` (defined in `@cm/shared/protocol`). The room rejects mismatched versions with a `version_mismatch` error and closes the socket with close code 4001.
 
-Message types: `join`, `leave`, `input`, `snapshot`, `delta`, `event`, `tag_attempt`, `tag_result`, `unfreeze_attempt`, `unfreeze_result`, `ping`, `pong`, `error`.
+Message types: `join`, `leave`, `input`, `start_match`, `tag_attempt`, `tag_result`, `unfreeze_attempt`, `unfreeze_result`, `ping`, `pong`, `snapshot`, `delta`, `event`, `error`.
+
+Per-tick cadence:
+
+- Client streams one input per physics frame (`INPUT_TICK_HZ = 60`) with a monotonically increasing seq, queued in `RoomClient._send_queue`. The queue is bounded at 64 entries with FIFO drop so a wedged transport can never let it grow unboundedly.
+- Server queues each player's incoming inputs in a small ring (cap 4) and drains exactly one per server tick via `simulateHumans`. Overflow drops the oldest; the queue cap keeps simulation close to live time when a client briefly outpaces the tick.
+- Server's `delta` returns `ackSeq` (the last seq actually fed into `stepMovement`) plus authoritative player states and `phase` / `turnEndsAt`.
 
 Reconciliation:
 
-- Client streams inputs at 20 Hz with a monotonically increasing seq.
-- Server's `delta` returns an `ackSeq` plus authoritative player states.
-- Today the client snaps remote player positions and keeps the local player's predicted position; full re-simulation from the last acked input is a follow-up.
+- Client keeps every unacked input in `pending_inputs`. On each delta, it drops inputs whose seq is at or below `ackSeq`, then replays the rest from the server's authoritative position via the shared `Movement.step`. The result becomes the new `_pred_current_xz` end-of-tick target.
+- Steady-state, `replayed_pos` matches `_pred_current_xz` exactly (both sides run the same deterministic step). Reconcile only re-anchors the lerp start point when the divergence exceeds a 5 cm threshold; below that, the natural 60 Hz predict-tick cycle absorbs the correction without disturbing the render.
+- Remote bodies render at `now − REMOTE_RENDER_DELAY_S` (100 ms) from a per-body snapshot buffer, in `_drive_remote_interp`. The interp runs in `_process` (render rate) so it stays smooth on high-refresh-rate monitors.
+
+Reconnect / session resume:
+
+- Each fresh `join` is answered with a `sessionToken` (UUIDv4) in the snapshot envelope, server-only stored in the room's `sessionTokens` map.
+- On a transient WS drop, the arena's reconnect ladder (`RECONNECT_BACKOFF_S = [0.5, 1.5, 3.0]`) reconnects the same `RoomClient` and re-sends `join` with the stashed `sessionToken`. The server matches the token to the existing `PlayerState`, rebinds the new WS to that playerId, and replies with a fresh snapshot. The player resumes mid-match instead of being treated as a fresh join (and the freeze-circumvention guard still rejects token-less mid-match joins).
+- The server holds the slot open for `RECONNECT_GRACE_MS = 15 s`. Past that, `finalizeDisconnect` tears the player down and the next ladder attempt receives `match_in_progress`.
+- A wedged transport (typical of yanked wifi) is detected by `ERR_OUT_OF_MEMORY` from `send_text`: `RoomClient` closes the socket, clears the queue, and emits `disconnected` so the ladder fires within ~1 s rather than waiting for OS-level TCP keepalive to elapse (~30 s).
+- While every human is in grace, the server's per-tick `simulate` body is a no-op and `turnEndsAt` is shifted forward by the pause duration on the first resumed tick. Bots, frozen flags, and the turn clock all preserve where the offline player left them. Multi-human matches keep ticking normally because `activeHumans` is non-zero.
 
 Interest management is light. Rooms cap at 16 players, the full state fits in a small packet.
 
 Client modules:
 
 - `ServerConfig` reads `CLOWNS_MM_URL` from the OS environment first, then a project setting, then falls back to the production matchmaker.
-- `MatchmakerClient` issues the three HTTP calls (create private, join code, open join) and emits signals with the parsed responses.
-- `RoomClient` owns the WebSocket lifecycle, sends `join`/`input`/`tag_attempt`/`unfreeze_attempt`/`ping`, and emits parsed `snapshot`/`delta`/`event`/`error` signals. Arena consumes those when `GameState.server_url` is set; otherwise the offline rules engine drives the match.
+- `MatchmakerClient` issues the three HTTP calls (`POST /lobby`, `POST /lobby/:code/join`, `POST /open/join`) and emits signals with the parsed responses.
+- `RoomClient` owns the WebSocket lifecycle, sends `join` / `input` / `tag_attempt` / `unfreeze_attempt` / `ping` / `start_match`, stashes the `sessionToken` from each snapshot, and emits parsed `snapshot` / `delta` / `event` / `error` signals.
+- `NetClient` (autoload) wraps `RoomClient` so the same connection survives the lobby → arena scene swap. Lobby opens, arena re-uses; `close()` is called when the player returns to the menu or abandons the lobby.
+- Arena consumes those when `GameState.server_url` is set; otherwise the offline rules engine drives the match.
 
 ## Backend services
 
@@ -290,7 +320,7 @@ flowchart TD
   Ready -->|host clicks Start / open auto-fills| Free[30s free roam]
 ```
 
-Open rooms target a soft capacity of 12 humans before opening a fresh room. Once a human joins, the room schedules a 3 second bot-fill timer; when it fires the room fills empty seats up to 4 bots per team and transitions straight into free roam, so a solo player never sits in an empty lobby. Private (hosted) rooms skip the auto-fill timer: the room stays in `filling` until the host's `start_match` message arrives, then bots fill the remaining slots and the match begins.
+Open rooms target a soft capacity of 12 humans before opening a fresh room. Once a human joins, the room schedules a 3 second bot-fill timer (`BOT_FILL_DELAY_MS`); when it fires the room fills empty seats up to `TEAM_TARGET = 4` bots per team and transitions straight into free roam, so a solo player never sits in an empty lobby. Private (hosted) rooms skip the auto-fill timer: the room stays in `filling` until the host's `start_match` message arrives, then bots fill the remaining slots and the match begins. At match start, `balanceTeamAssignments` rebalances the human roster across teams (sort by id, alternate) so all five humans never land on the same side.
 
 ## Room lifecycle
 
@@ -300,14 +330,15 @@ stateDiagram-v2
   Empty --> Filling: first join
   Filling --> FreeRoam30: host start_match (private) / auto-fill timer (open)
   FreeRoam30 --> TurnLoop
-  TurnLoop --> EndScreen: a team is fully frozen
-  EndScreen --> Filling: rematch in private host mode
-  EndScreen --> [*]: open mode rematch returns to MM
+  TurnLoop --> Ended: a team is fully frozen
+  Ended --> [*]: all humans quit; room torn down on next disconnect
 ```
 
-Joins arriving after `Filling` are rejected with `match_in_progress`, both to prevent freeze-circumvention via leave + rejoin and to keep new players from disrupting an in-flight turn.
+There is no in-room rematch flow yet. Players Quit out of the end screen and matchmake again from the menu.
 
-Turn duration progression: round 1 is 30 seconds per team, round 2 is 60 seconds, round 3 is 90 seconds, then +30 each round, capped at 5 minutes.
+Joins arriving after `Filling` are rejected with `match_in_progress` **unless** the client presents a valid `sessionToken` whose matching `PlayerState` is still within the `RECONNECT_GRACE_MS` window, in which case the WS is rebound to the original player and the match resumes. The reject path remains the freeze-circumvention guard against leave-and-rejoin attempts (no token means no resume).
+
+Turn duration progression: round 1 is 30 seconds per team, round 2 is 60 seconds, round 3 is 90 seconds, then +30 each round, capped at 5 minutes (`TURN_FIRST_MS`, `TURN_STEP_MS`, `TURN_CAP_MS` in `room.ts`).
 
 ## Anti-cheat
 

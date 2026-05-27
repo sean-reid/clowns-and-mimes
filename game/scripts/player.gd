@@ -133,17 +133,29 @@ func _input(event: InputEvent) -> void:
 		camera.rotate_x(-event.relative.y * LOOK_SENSITIVITY)
 		camera.rotation.x = clampf(camera.rotation.x, -1.2, 1.2)
 
+func _process(_delta: float) -> void:
+	# Remote-body position update at render rate. Previously this lived in
+	# _physics_process at 60 Hz, but the lerp is purely visual (no
+	# collision interaction, no move_and_slide), and on a high-refresh-rate
+	# monitor (144 Hz+) the body's rendered position would only refresh
+	# every second or third frame, producing a sawtooth stutter that read
+	# as "bots are jittery." Running it from _process closes the gap to
+	# the monitor's actual refresh rate. The local player has always had
+	# this treatment via arena.gd's _advance_local_prediction, which is
+	# why local motion is smooth and remote bodies stuttered.
+	if _remote_armed and not is_local and not frozen:
+		_drive_remote_interp()
+
 func _physics_process(delta: float) -> void:
 	if frozen:
 		velocity = Vector3.ZERO
 		move_and_slide()
 		_update_footsteps(0.0, false)
 		return
-	# Remote bodies (online humans and online bots) render from a fixed-delay
-	# snapshot buffer; see _drive_remote_interp for the math. Footstep audio
-	# rides the smoothed planar speed sampled in apply_remote_state.
+	# Remote bodies (online humans and online bots): position is owned by
+	# _process now (see comment there). This branch only drives the
+	# footstep audio at the physics rate.
 	if _remote_armed and not is_local:
-		_drive_remote_interp()
 		_update_footsteps(_remote_planar_speed, false)
 		return
 	if bot:

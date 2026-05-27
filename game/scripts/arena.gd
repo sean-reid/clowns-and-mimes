@@ -812,6 +812,11 @@ func _spawn_player(id: String, p_name: String, team: String, is_bot: bool, is_lo
 	p.bot = is_bot
 	p.is_local = is_local
 	p.display_name = p_name
+	# Used by remote bodies' _to_camera_nearest_copy to render at the
+	# wrap-equivalent position nearest the local camera. Local body
+	# doesn't need it (its position is owned by the predictor) but
+	# setting it unconditionally keeps spawn symmetric.
+	p.arena = self
 	world.add_child(p)
 	# The grid maze places walls on cell boundaries every 8 units, including
 	# a wall right through the origin. Spawning at origin would drop players

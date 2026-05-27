@@ -3,12 +3,23 @@
  * Bump PROTOCOL_VERSION on every breaking change. The room rejects mismatches.
  */
 
-export const PROTOCOL_VERSION = 1 as const;
+export const PROTOCOL_VERSION = 2 as const;
 
 export type Team = 'mime' | 'clown';
 
+// XZ planar vector. Inputs and topology helpers stay 2D because all
+// horizontal motion is planar; Y is handled separately by physics.ts.
 export interface Vec2 {
   x: number;
+  z: number;
+}
+
+// Full 3D position used for player state on the wire. Y is the vertical
+// axis; players hover at HOVER_HEIGHT and rise during a jump per the
+// arc in physics.ts.
+export interface Vec3 {
+  x: number;
+  y: number;
   z: number;
 }
 
@@ -27,7 +38,7 @@ export interface PlayerState {
   name: string;
   team: Team;
   bot: boolean;
-  position: Vec2;
+  position: Vec3;
   yaw: number;
   frozen: boolean;
   sprintEnergy: number;
@@ -37,6 +48,13 @@ export interface PlayerState {
   // flip-flop between WALK_SPEED and SPRINT_SPEED tick-to-tick at the
   // 0-energy line, producing visible 20 Hz jitter.
   sprinting: boolean;
+  // Millisecond timestamp of the current jump's takeoff, or null if the
+  // player is not currently jumping. The server clears this back to null
+  // once the arc window expires. Y is a deterministic function of this
+  // field (see physics.ts::jumpArcY), so the wire carries the timestamp
+  // rather than the height itself; client and server both compute Y from
+  // the same source.
+  jumpStartedAt: number | null;
 }
 
 export type RoomPhase = 'filling' | 'locked' | 'free_roam' | 'turn_mime' | 'turn_clown' | 'ended';

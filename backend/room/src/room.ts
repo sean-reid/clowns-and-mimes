@@ -8,8 +8,10 @@ import type {
   Team,
   Topology,
   Vec2,
+  Vec3,
 } from '@cm/shared';
 import { BATTLE_CRY_COUNT, PROTOCOL_VERSION } from '@cm/shared';
+import { HOVER_HEIGHT } from '@cm/shared/physics';
 import { topologyDistance, wrapPosition, wrappedUnitDelta } from '@cm/shared/topology';
 import {
   generateWalls,
@@ -473,6 +475,7 @@ export class Room implements DurableObject {
       frozen: false,
       sprintEnergy: MAX_SPRINT,
       sprinting: false,
+      jumpStartedAt: null,
     };
     this.players.set(id, player);
     this.connections.set(ws, { ws, playerId: id });
@@ -570,6 +573,7 @@ export class Room implements DurableObject {
           frozen: false,
           sprintEnergy: MAX_SPRINT,
           sprinting: false,
+          jumpStartedAt: null,
         });
         this.botMinds.set(id, {
           patrolTarget: this.randomPatrolPoint(),
@@ -689,10 +693,11 @@ export class Room implements DurableObject {
    * resolution will nudge the player out of any remaining overlap on the
    * next tick.
    */
-  private pickSpawnPosition(team: Team): { x: number; z: number } {
+  private pickSpawnPosition(team: Team): Vec3 {
     const minPlayerSep = 2 * PLAYER_RADIUS + 0.2;
     const minPlayerSepSq = minPlayerSep * minPlayerSep;
     const center = teamSpawnCenter(team);
+    const at = (x: number, z: number): Vec3 => ({ x, y: HOVER_HEIGHT, z });
     const isValid = (x: number, z: number): boolean => {
       if (this.walls.length > 0 && pointBlockedByWall(this.walls, x, z)) return false;
       for (const other of this.players.values()) {
@@ -704,7 +709,7 @@ export class Room implements DurableObject {
     };
     for (let attempt = 0; attempt < 24; attempt += 1) {
       const candidate = jitteredSpawn(team);
-      if (isValid(candidate.x, candidate.z)) return candidate;
+      if (isValid(candidate.x, candidate.z)) return at(candidate.x, candidate.z);
     }
     // Deterministic outward sweep: rings of 6, 12, 18 candidates at
     // increasing radius around the team center. Catches the case where
@@ -717,10 +722,10 @@ export class Room implements DurableObject {
         const angle = (k / count) * Math.PI * 2;
         const x = center.x + Math.cos(angle) * radius;
         const z = center.z + Math.sin(angle) * radius;
-        if (isValid(x, z)) return { x, z };
+        if (isValid(x, z)) return at(x, z);
       }
     }
-    return center;
+    return at(center.x, center.z);
   }
 
   setTopology(t: Topology): void {
@@ -1466,7 +1471,14 @@ export class Room implements DurableObject {
           pathCrossesWall(this.walls, bot.position.x, bot.position.z, candidate.x, candidate.z);
         if (wallBlocked) continue;
         if (this.collidesWithOtherPlayer(bot, candidate.x, candidate.z)) continue;
-        bot.position = wrapPosition({ x: candidate.x, z: candidate.z }, this.topology, WORLD_WIDTH);
+        const wrapped = wrapPosition(
+          { x: candidate.x, z: candidate.z },
+          this.topology,
+          WORLD_WIDTH,
+        );
+        // Preserve Y across the wrap. Topology wrapping is XZ-only;
+        // jump-arc Y will be driven separately once PR 2 lands.
+        bot.position = { x: wrapped.x, y: bot.position.y, z: wrapped.z };
         moved = true;
         break;
       }

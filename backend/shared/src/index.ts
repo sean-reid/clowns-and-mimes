@@ -3,3 +3,4 @@ export * from './topology.ts';
 export * from './labyrinth.ts';
 export * from './gridMaze.ts';
 export * from './movement.ts';
+export * from './physics.ts';

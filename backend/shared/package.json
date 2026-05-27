@@ -12,7 +12,8 @@
     "./labyrinth": "./src/labyrinth.ts",
     "./gridMaze": "./src/gridMaze.ts",
     "./movement": "./src/movement.ts",
-    "./mobius": "./src/mobius.ts"
+    "./mobius": "./src/mobius.ts",
+    "./physics": "./src/physics.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit",

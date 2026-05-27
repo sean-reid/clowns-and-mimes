@@ -3,7 +3,7 @@
 // Both sides must call this with the same dt, inputs, and walls or
 // reconciliation replay drifts from the server.
 
-import type { Topology, Vec2 } from './protocol.ts';
+import type { Topology, Vec2, Vec3 } from './protocol.ts';
 import { pathCrossesWall, type WallSegment } from './labyrinth.ts';
 import { wrapPositionFromStep } from './topology.ts';
 
@@ -29,7 +29,11 @@ export interface MoveStepInput {
 }
 
 export interface MoveStepState {
-  position: Vec2;
+  // Vec3 so the caller's Y (jump arc or HOVER_HEIGHT) survives the
+  // stepMovement call. The XZ planar step is computed internally; Y is
+  // copied through to the return value unchanged. Jump arc Y is driven
+  // separately by physics.ts::jumpArcY at the simulate-loop level.
+  position: Vec3;
   sprintEnergy: number;
   // Whether the player is currently considered to be sprinting. Set when
   // sprint engages, cleared when energy hits 0. While false, energy must
@@ -82,7 +86,10 @@ export function stepMovement(
     { x: state.position.x + Math.sign(dx) * speed * input.dt, z: state.position.z },
     { x: state.position.x, z: state.position.z + Math.sign(dz) * speed * input.dt },
   ];
-  let nextPos = state.position;
+  // Project to XZ for the planar collision pipeline; Y is preserved on
+  // the return value below regardless of which candidate wins.
+  const startXZ: Vec2 = { x: state.position.x, z: state.position.z };
+  let nextXZ: Vec2 = startXZ;
   for (const candidate of candidates) {
     if (candidate.x === state.position.x && candidate.z === state.position.z) continue;
     if (
@@ -94,9 +101,10 @@ export function stepMovement(
     if (collidesWithOther(candidate)) continue;
     // Möbius uses prev->candidate so the step can be rejected at the hard
     // z-bounds. Other topologies ignore prev.
-    nextPos = wrapPositionFromStep(state.position, candidate, topology, worldWidth);
+    nextXZ = wrapPositionFromStep(startXZ, candidate, topology, worldWidth);
     break;
   }
+  const nextPos: Vec3 = { x: nextXZ.x, y: state.position.y, z: nextXZ.z };
   const drained = wantSprint && moveLen > 0;
   const nextSprint = clamp(
     state.sprintEnergy + (drained ? -SPRINT_DRAIN_PER_S : SPRINT_REGEN_PER_S) * input.dt,

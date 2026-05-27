@@ -75,6 +75,13 @@ const TURN_FIRST_MS = 30_000;
 const TURN_STEP_MS = 30_000;
 const TURN_CAP_MS = 5 * 60_000;
 const BOT_FILL_DELAY_MS = 3_000;
+// Window during which a player whose WS has closed can reconnect with
+// their sessionToken and resume the same PlayerState. Bots keep playing
+// against them in absentia; their input queue stays empty so their body
+// stands still (and is vulnerable to tags) until the WS is back. After
+// the window expires their PlayerState is torn down for real and the
+// usual humans-zero match-state cleanup runs.
+const RECONNECT_GRACE_MS = 15_000;
 // Wider vision so bots commit to a chase / flee instead of dithering on
 // patrol when an opponent is across a corridor. World half-diagonal is ~56,
 // so 22 covers most short corridors without making bots omniscient.
@@ -206,6 +213,17 @@ export class Room implements DurableObject {
   // Player id of the host once they have completed the `join` handshake.
   // Used to gate `start_match` to that one player.
   private hostPlayerId: string | null = null;
+  // Per-player resumption secrets. Handed to the client in their snapshot
+  // and presented back on the next `join` so a transient WS drop is
+  // resumed against the same PlayerState (team, position, frozen) rather
+  // than treated as a fresh join. Map is human-only; bots never reconnect.
+  private readonly sessionTokens = new Map<string, string>();
+  // Player ids whose WS has dropped but who are still inside the
+  // RECONNECT_GRACE_MS window. Their PlayerState stays in `players` so
+  // the match can keep ticking; if they reconnect with the right
+  // sessionToken we rebind their WS and resume. After the window expires
+  // we run the real teardown via finalizeDisconnect.
+  private readonly disconnectTimers = new Map<string, ReturnType<typeof setTimeout>>();
   // One queue per player. Inputs arrive at 60 Hz from the client and are
   // drained one-per-tick by simulateHumans (matching the canonical Quake /
   // Source / Overwatch model). The cap (MAX_INPUT_QUEUE) bounds memory if a
@@ -343,7 +361,7 @@ export class Room implements DurableObject {
   private handleMessage(ws: WebSocket, msg: ClientToServer): void {
     switch (msg.t) {
       case 'join':
-        this.onJoin(ws, msg.name, msg.v, msg.preferTeam, msg.hostToken);
+        this.onJoin(ws, msg.name, msg.v, msg.preferTeam, msg.hostToken, msg.sessionToken);
         return;
       case 'leave':
         this.detach(ws);
@@ -372,18 +390,34 @@ export class Room implements DurableObject {
     version: number,
     prefer?: Team,
     payloadHostToken?: string,
+    sessionToken?: string,
   ): void {
     if (version !== PROTOCOL_VERSION) {
       this.send(ws, { t: 'error', code: 'version_mismatch', message: 'update your client' });
       ws.close(4001, 'version');
       return;
     }
+    // Resumption path: if the client presents a sessionToken matching a
+    // PlayerState still in the players map (because their WS dropped less
+    // than RECONNECT_GRACE_MS ago and we held the slot open), rebind the
+    // new WS to that existing player and replay the snapshot. No new
+    // PlayerState is created; team, position, frozen, sprintEnergy all
+    // carry over so the player resumes mid-match rather than starting
+    // fresh in `filling`. This is what closes the "round resets back to
+    // disperse after a transient WS drop" bug.
+    if (sessionToken) {
+      const existingId = this.resumePlayerId(sessionToken);
+      if (existingId !== null) {
+        this.resumeSession(ws, existingId);
+        return;
+      }
+    }
     if (this.phase !== 'filling') {
-      // Match already running. Rejecting here is the second half of the
-      // "leave + rejoin to circumvent freeze" fix - the matchmaker code
-      // ideally never resolves for an in-progress room, but if the WS URL
-      // is somehow reused (manual reconnect, stale URL on disk) the room
-      // refuses the join cleanly so the client renders a popup.
+      // Match already running and the client did not present a valid
+      // sessionToken. This is the freeze-circumvention guard: a player
+      // who left mid-match can't come back as a fresh PlayerState. They
+      // can only resume the slot they already held (via sessionToken)
+      // for the grace window.
       this.send(ws, {
         t: 'error',
         code: 'match_in_progress',
@@ -420,6 +454,11 @@ export class Room implements DurableObject {
     };
     this.players.set(id, player);
     this.connections.set(ws, { ws, playerId: id });
+    // Mint the resumption secret now so the snapshot below can carry it
+    // back to the client. Kept server-side in sessionTokens; never sent
+    // to other clients.
+    const newSessionToken = crypto.randomUUID();
+    this.sessionTokens.set(id, newSessionToken);
     // Host detection: the matchmaker stamped the room's expectedHostToken
     // on the host's WS URL. Compare both the per-WS token (from the URL
     // we saw on upgrade) and the optional payload token (belt and braces
@@ -435,7 +474,12 @@ export class Room implements DurableObject {
         this.hostPlayerId = id;
       }
     }
-    this.send(ws, { t: 'snapshot', snapshot: this.snapshot(), youAre: id });
+    this.send(ws, {
+      t: 'snapshot',
+      snapshot: this.snapshot(),
+      youAre: id,
+      sessionToken: newSessionToken,
+    });
     this.broadcast({ t: 'event', kind: { kind: 'phase', phase: this.phase } });
     // Auto-start fallback only applies when the room has NO host. Private
     // lobbies (matchmaker minted a hostToken) wait for an explicit
@@ -684,11 +728,41 @@ export class Room implements DurableObject {
     if (this.hostPlayerId === conn.playerId) {
       this.hostPlayerId = null;
     }
-    this.players.delete(conn.playerId);
+    // Hold the slot open for RECONNECT_GRACE_MS so a transient drop can
+    // resume via sessionToken instead of tearing the match down. The
+    // PlayerState stays in `players`, the tick keeps running, and bots
+    // keep playing against the (now-stationary) body. If no reconnect
+    // arrives in time, finalizeDisconnect runs the real teardown.
+    //
+    // Skip the grace window while the room is still in `filling` - there
+    // is no match to preserve, the player was just sitting in the lobby
+    // and the host-token / roster bookkeeping should not linger.
+    if (this.phase === 'filling') {
+      this.finalizeDisconnect(conn.playerId);
+      return;
+    }
+    // Drop any queued inputs so the still-present body does not keep
+    // moving by replaying stale inputs while the player is gone.
     this.inputQueues.delete(conn.playerId);
-    this.lastAppliedSeq.delete(conn.playerId);
-    this.lastSavedAt.delete(conn.playerId);
-    this.positionHistory.delete(conn.playerId);
+    const existing = this.disconnectTimers.get(conn.playerId);
+    if (existing !== undefined) clearTimeout(existing);
+    this.disconnectTimers.set(
+      conn.playerId,
+      setTimeout(() => {
+        this.disconnectTimers.delete(conn.playerId);
+        this.finalizeDisconnect(conn.playerId);
+      }, RECONNECT_GRACE_MS),
+    );
+    this.notifyMatchmaker(this.humanPlayers().length, this.botPlayers().length);
+  }
+
+  private finalizeDisconnect(playerId: string): void {
+    this.players.delete(playerId);
+    this.sessionTokens.delete(playerId);
+    this.inputQueues.delete(playerId);
+    this.lastAppliedSeq.delete(playerId);
+    this.lastSavedAt.delete(playerId);
+    this.positionHistory.delete(playerId);
     if (this.humanPlayers().length === 0) {
       this.stopTick();
       this.cancelBotFill();
@@ -698,6 +772,46 @@ export class Room implements DurableObject {
     } else {
       this.notifyMatchmaker(this.humanPlayers().length, this.botPlayers().length);
     }
+  }
+
+  private resumePlayerId(sessionToken: string): string | null {
+    for (const [id, token] of this.sessionTokens) {
+      if (token === sessionToken && this.players.has(id)) return id;
+    }
+    return null;
+  }
+
+  private resumeSession(ws: WebSocket, playerId: string): void {
+    const pending = this.disconnectTimers.get(playerId);
+    if (pending !== undefined) {
+      clearTimeout(pending);
+      this.disconnectTimers.delete(playerId);
+    }
+    // Replace any stale connection record bound to this playerId. The
+    // old WS object is dead at this point (close fired), but the entry
+    // would otherwise sit in this.connections forever.
+    for (const [oldWs, conn] of this.connections) {
+      if (conn.playerId === playerId) this.connections.delete(oldWs);
+    }
+    this.connections.set(ws, { ws, playerId });
+    // Re-evaluate host status for the resumed connection. A new WS upgrade
+    // may have stamped a fresh host token on the URL even if the player's
+    // first connection didn't.
+    if (this.hostPlayerId === playerId || this.hostPlayerId === null) {
+      const urlToken = this.hostTokenByWs.get(ws);
+      if (urlToken && this.expectedHostToken !== null && urlToken === this.expectedHostToken) {
+        this.hostPlayerId = playerId;
+      }
+    }
+    const token = this.sessionTokens.get(playerId) ?? '';
+    this.send(ws, {
+      t: 'snapshot',
+      snapshot: this.snapshot(),
+      youAre: playerId,
+      sessionToken: token,
+    });
+    this.broadcast({ t: 'event', kind: { kind: 'phase', phase: this.phase } });
+    this.notifyMatchmaker(this.humanPlayers().length, this.botPlayers().length);
   }
 
   private cancelBotFill(): void {

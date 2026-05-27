@@ -58,7 +58,20 @@ export type ClientToServer =
   // hostToken is the random secret the matchmaker hands the host on lobby
   // create. The server uses it to identify which connected player is the
   // host so the start_match message below can be gated to that one player.
-  | { t: 'join'; v: number; name: string; preferTeam?: Team; hostToken?: string }
+  // sessionToken is the per-player secret the server hands back in the
+  // snapshot. The client stashes it and sends it on subsequent joins so
+  // that a transient WS drop is resumed against the same PlayerState
+  // (including team, position, frozen status) instead of being treated
+  // as a fresh join (which would be rejected mid-match or, worse, race
+  // ahead of a stale match-state teardown).
+  | {
+      t: 'join';
+      v: number;
+      name: string;
+      preferTeam?: Team;
+      hostToken?: string;
+      sessionToken?: string;
+    }
   | { t: 'leave' }
   | { t: 'input'; input: PlayerInput }
   | { t: 'tag_attempt'; targetId: string; clientTime: number }
@@ -71,7 +84,11 @@ export type ClientToServer =
   | { t: 'start_match' };
 
 export type ServerToClient =
-  | { t: 'snapshot'; snapshot: RoomSnapshot; youAre: string }
+  // sessionToken is the resumption secret for the recipient of this
+  // snapshot only. Other clients never see this client's token. Stash
+  // and send it on the next join after a WS drop to resume the same
+  // PlayerState rather than spawning fresh.
+  | { t: 'snapshot'; snapshot: RoomSnapshot; youAre: string; sessionToken: string }
   | { t: 'delta'; players: PlayerState[]; phase: RoomPhase; turnEndsAt: number; ackSeq: number }
   | { t: 'event'; kind: GameEvent }
   | { t: 'tag_result'; ok: boolean; targetId?: string; reason?: string }

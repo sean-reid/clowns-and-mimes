@@ -15,6 +15,13 @@ signal error_received(code: String, message: String)
 var _socket: WebSocketPeer = null
 var _connected: bool = false
 var _send_queue: Array[String] = []
+# Per-connection resumption secret handed back by the server in the
+# snapshot envelope. Sent on every subsequent send_join so a transient
+# WS drop is treated as a reconnect (existing PlayerState resumed) rather
+# than a fresh join (which would reject mid-match). Cleared on
+# disconnect_from so leaving the game intentionally never lets a stale
+# token claim a slot in a different room.
+var session_token: String = ""
 
 func connect_to(ws_url: String) -> void:
 	# Drop any stale enqueued messages from a previous session before
@@ -35,6 +42,7 @@ func disconnect_from() -> void:
 	_socket = null
 	_connected = false
 	_send_queue.clear()
+	session_token = ""
 
 func send_join(name: String, prefer_team: String = "", host_token: String = "") -> void:
 	var payload := {"t": "join", "v": ServerConfig.protocol_version(), "name": name}
@@ -42,6 +50,11 @@ func send_join(name: String, prefer_team: String = "", host_token: String = "") 
 		payload["preferTeam"] = prefer_team
 	if not host_token.is_empty():
 		payload["hostToken"] = host_token
+	# session_token is only set after the server has handed us one in a
+	# prior snapshot. Sending it here is what makes the next join a
+	# reconnect rather than a fresh join.
+	if not session_token.is_empty():
+		payload["sessionToken"] = session_token
 	_enqueue(payload)
 
 # Host-only message that asks the room to leave the `filling` phase and
@@ -109,6 +122,13 @@ func _handle_packet(packet: PackedByteArray) -> void:
 		"snapshot":
 			var snap: Dictionary = data.get("snapshot", {})
 			var you_are: String = data.get("youAre", "")
+			# Stash the resumption secret for the next reconnect, but only
+			# from snapshots that carry one. Snapshots after a successful
+			# resume re-issue the same token; missing field is treated as a
+			# no-op so older server builds still work.
+			var token: String = data.get("sessionToken", "")
+			if not token.is_empty():
+				session_token = token
 			snapshot_received.emit(snap, you_are)
 		"delta":
 			delta_received.emit(data)

@@ -577,7 +577,28 @@ func _on_room_error(code: String, message: String) -> void:
 	if code == "version_mismatch":
 		_show_version_mismatch_popup(message)
 		return
+	if code == "match_in_progress":
+		# Server rejected a reconnect because either the grace window
+		# expired or this client never had a valid sessionToken. Tell the
+		# player the match is gone instead of letting them sit in the
+		# reconnecting banner forever.
+		_show_match_in_progress_popup()
+		return
 	hud.append_log("Server error %s: %s" % [code, message])
+
+func _show_match_in_progress_popup() -> void:
+	# Stop the reconnect ladder so it doesn't keep retrying into the same
+	# rejection.
+	_reconnect_active = false
+	_hide_reconnect_banner()
+	var dialog := AcceptDialog.new()
+	dialog.title = "Match ended"
+	dialog.dialog_text = "You were disconnected for too long. Returning to the menu."
+	dialog.ok_button_text = "Back to menu"
+	dialog.unresizable = true
+	dialog.confirmed.connect(_on_back_to_menu)
+	add_child(dialog)
+	dialog.popup_centered()
 
 func _show_version_mismatch_popup(server_message: String) -> void:
 	# Hard variant of the main-menu update popup. The server has refused to

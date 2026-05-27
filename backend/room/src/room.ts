@@ -18,6 +18,7 @@ import {
   PLAYER_RADIUS,
   type WallSegment,
 } from '@cm/shared/labyrinth';
+import { balanceTeamAssignments } from './teamBalance.ts';
 import {
   stepMovement,
   WALK_SPEED,
@@ -896,11 +897,40 @@ export class Room implements DurableObject {
   }
 
   private startMatch(): void {
+    this.balanceHumansForMatchStart();
     this.firstTeam = Math.random() < 0.5 ? 'mime' : 'clown';
     this.phase = 'free_roam';
     this.turnEndsAt = Date.now() + FREE_ROAM_MS;
     this.broadcast({ t: 'event', kind: { kind: 'phase', phase: this.phase } });
     this.tickHandle = setInterval(() => this.tick(), TICK_MS);
+  }
+
+  /**
+   * Even out the human roster across the two teams immediately before the
+   * match goes live. Until this point every human was assigned a team at
+   * `onJoin` via `pickTeam`, which biases toward the under-tallied side as
+   * each player arrives. That works while everyone joins in clean
+   * alternation, but the playtest reported all five humans landing on
+   * `mime` - the join order, bot pre-fills, and tie-break (`mime` wins on
+   * equal tallies) lined up to give one team every human in the room.
+   * Sorting by id (UUIDs are random) and alternating assignments here
+   * guarantees a 50/50 split regardless of join order.
+   *
+   * Runs before `fillBots` would notice any imbalance, since `startMatch`
+   * is the single funnel and the bot fill happens at the callers (one
+   * step earlier in `onStartMatch` / `scheduleBotFill`). Re-spawning a
+   * human whose team changed is necessary so they don't start in the
+   * other team's territory.
+   */
+  private balanceHumansForMatchStart(): void {
+    const reassignments = balanceTeamAssignments([...this.players.values()]);
+    for (const [id, team] of reassignments) {
+      const p = this.players.get(id);
+      if (p) {
+        p.team = team;
+        p.position = this.pickSpawnPosition(team);
+      }
+    }
   }
 
   private tick(): void {

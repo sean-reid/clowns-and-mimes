@@ -331,7 +331,7 @@ stateDiagram-v2
   Filling --> FreeRoam30: host start_match (private) / auto-fill timer (open)
   FreeRoam30 --> TurnLoop
   TurnLoop --> Ended: a team is fully frozen
-  Ended --> [*]: all humans quit; room torn down on next disconnect
+  Ended --> [*]: all humans quit (room torn down on next disconnect)
 ```
 
 There is no in-room rematch flow yet. Players Quit out of the end screen and matchmake again from the menu.

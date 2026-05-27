@@ -386,7 +386,12 @@ func _schedule_next_reconnect() -> void:
 	# in case neither fires (socket stuck pending), schedule the next ladder
 	# step after the same backoff window.
 	await get_tree().create_timer(wait_s + 1.0).timeout
-	if _reconnect_active and not room_client.is_connected_to_server():
+	# Player may have hit Back to menu (or accepted the failed-reconnect
+	# popup) during the wait, which nulls room_client. Guard before
+	# touching it.
+	if room_client == null or not _reconnect_active:
+		return
+	if not room_client.is_connected_to_server():
 		_schedule_next_reconnect()
 
 func _show_reconnect_banner(text: String) -> void:
@@ -687,6 +692,13 @@ func _advance_predicted_tick(world_move: Vector2, sprint_held: bool) -> void:
 	local_player.set_external_motion(planar, local_sprinting and world_move.length() > 0.0)
 
 func _stream_input(delta: float) -> void:
+	# _on_back_to_menu and the reconnect-failed popup null room_client and
+	# emit a scene change. The scene swap takes one frame to land, so this
+	# physics tick can fire once on a null reference if we don't guard.
+	# Same shape of guard during a reconnect attempt (room_client exists
+	# but the WS is not open) since send_text would fail anyway.
+	if room_client == null or not room_client.is_connected_to_server():
+		return
 	input_accumulator += delta
 	if input_accumulator < INPUT_TICK_PERIOD:
 		return
@@ -898,12 +910,20 @@ func _active_team() -> String:
 
 func _send_tag(target_id: String) -> bool:
 	if online_mode:
+		# Same null / disconnected guard as _stream_input: the player can
+		# trigger a tag during the one-frame window between
+		# _on_back_to_menu (or a failed reconnect) nulling room_client
+		# and the scene actually swapping.
+		if room_client == null or not room_client.is_connected_to_server():
+			return false
 		room_client.send_tag(target_id)
 		return true
 	return rules.try_tag(local_player_id, target_id)
 
 func _send_unfreeze(target_id: String) -> bool:
 	if online_mode:
+		if room_client == null or not room_client.is_connected_to_server():
+			return false
 		room_client.send_unfreeze(target_id)
 		return true
 	return rules.try_unfreeze(local_player_id, target_id)

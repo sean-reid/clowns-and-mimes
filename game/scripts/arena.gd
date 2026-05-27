@@ -726,6 +726,11 @@ func _advance_local_prediction(_delta: float) -> void:
 		if current_y - Physics.HOVER_HEIGHT > 0.1:
 			body_y = maxf(Physics.HOVER_HEIGHT, current_y - 5.0 * _delta)
 	local_player.global_position = Vector3(rendered_xz.x, body_y, rendered_xz.y)
+	# Push the predicted jumpStartedAt onto the body so its
+	# _apply_jump_squash runs from the same source the predictor uses.
+	# The local player rarely sees their own head (camera is inside it)
+	# but the third-person follow / spectator view also reads this.
+	local_player.jump_started_at_ms = _pred_jump_started_at_ms
 
 ## Advance the authoritative predicted position by one server-tick worth of
 ## motion. Called once per physics tick from _stream_input, matching the
@@ -879,13 +884,25 @@ func _apply_player_state(entry: Dictionary) -> void:
 	var yaw: float = float(entry.get("yaw", 0.0))
 	var is_frozen: bool = bool(entry.get("frozen", false))
 	var sprint: float = float(entry.get("sprintEnergy", 100.0))
+	# Server-authoritative jumpStartedAt. Drives the squash-and-stretch
+	# animation. Null on the wire arrives as Variant null; convert to
+	# the GDScript -1 null sentinel.
+	var server_jump_started: Variant = entry.get("jumpStartedAt", null)
+	var jump_started_at_ms: int = (
+		int(server_jump_started) if server_jump_started != null else -1
+	)
 	if id == local_player_id:
 		# Don't overwrite the local player's predicted position; sync the
 		# server-authoritative bits that the client cannot derive on its own.
 		node.frozen = is_frozen
 		node.sprint_energy = sprint
+		# Local body's jumpStartedAt comes from the predictor, not the
+		# server snapshot - the predictor is one tick ahead and stays
+		# in sync via the reconcile replay. Setting it here would lag
+		# the squash animation behind the body's actual Y.
 	else:
 		node.apply_remote_state(pos_vec, yaw, is_frozen, sprint)
+		node.jump_started_at_ms = jump_started_at_ms
 
 func _handle_tagged(event: Dictionary) -> void:
 	var victim_id: String = event.get("victimId", "")

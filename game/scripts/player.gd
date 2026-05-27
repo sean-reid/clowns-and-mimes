@@ -87,6 +87,21 @@ var _remote_armed: bool = false
 # offline scenes / tests / the local body itself.
 var arena: Node = null
 
+# Authoritative jumpStartedAt for THIS body (Unix ms). -1 means "not
+# jumping". For the local body arena.gd writes the predictor's value
+# each frame; for remote bodies apply_remote_state pulls it from the
+# server's PlayerState. Drives the squash-and-stretch curve via
+# _apply_jump_squash(), and signals the same arc helper that owns Y
+# position so animation and Y stay in lockstep.
+var jump_started_at_ms: int = -1
+# Cached scale applied to the head mesh each frame. Lerped back to
+# Vector3.ONE over SQUASH_RECOVER_S when no jump is active so the
+# transition out of a jump doesn't pop. Stored on the node so the
+# recovery survives even when the arc ends mid-frame.
+var _head_squash_scale: Vector3 = Vector3.ONE
+const SQUASH_RECOVER_S := 0.15
+const PhysicsScript := preload("res://scripts/physics.gd")
+
 func _ready() -> void:
 	if is_local and not bot:
 		Input.set_mouse_mode(Input.MOUSE_MODE_CAPTURED)
@@ -140,7 +155,7 @@ func _input(event: InputEvent) -> void:
 		camera.rotate_x(-event.relative.y * LOOK_SENSITIVITY)
 		camera.rotation.x = clampf(camera.rotation.x, -1.2, 1.2)
 
-func _process(_delta: float) -> void:
+func _process(delta: float) -> void:
 	# Remote-body position update at render rate. Previously this lived in
 	# _physics_process at 60 Hz, but the lerp is purely visual (no
 	# collision interaction, no move_and_slide), and on a high-refresh-rate
@@ -152,6 +167,11 @@ func _process(_delta: float) -> void:
 	# why local motion is smooth and remote bodies stuttered.
 	if _remote_armed and not is_local and not frozen:
 		_drive_remote_interp()
+	# Squash-and-stretch driven by jumpStartedAt. Runs for every body
+	# (local + remote) so jumping reads consistently across all
+	# observers. _delta is the render frame dt, used to ease the
+	# recovery scale back to identity after a jump ends.
+	_apply_jump_squash(delta)
 
 func _physics_process(delta: float) -> void:
 	if frozen:
@@ -349,6 +369,12 @@ func _drive_remote_interp() -> void:
 # topologies (torus, möbius, klein) this is what keeps a bot whose
 # canonical position just wrapped from z=+39 to z=-39 visible at z=+41
 # instead of teleporting 80 m away from the camera.
+#
+# Y is preserved from the canonical position verbatim. Topology delta
+# zeroes Y (wrapping is planar), so a naive `camera_pos + delta` would
+# inherit the camera's Y - which made every remote body visibly rise
+# whenever the local player jumped. Compose XZ from the camera-relative
+# wrap and keep canonical.y untouched.
 func _to_camera_nearest_copy(canonical: Vector3) -> Vector3:
 	if arena == null:
 		return canonical
@@ -359,10 +385,12 @@ func _to_camera_nearest_copy(canonical: Vector3) -> Vector3:
 	if local == null:
 		return canonical
 	var camera_pos: Vector3 = local.global_position
-	# topology.delta returns the shortest displacement from camera to
-	# canonical, wrapping each axis. Adding it back to camera_pos yields
-	# the canonical position in the camera's "current cover" frame.
-	return camera_pos + topology.delta(camera_pos, canonical)
+	var planar_offset: Vector3 = topology.delta(camera_pos, canonical)
+	return Vector3(
+		camera_pos.x + planar_offset.x,
+		canonical.y,
+		camera_pos.z + planar_offset.z,
+	)
 
 func _update_marker() -> void:
 	# Local player should not see their own marker even while frozen.
@@ -375,3 +403,67 @@ func _update_marker() -> void:
 	elif not frozen and marker_instance != null:
 		marker_instance.queue_free()
 		marker_instance = null
+
+# Disney bouncing-ball squash + stretch driven by jumpStartedAt.
+# Returns a scale applied to the head mesh each render frame.
+#
+# Curve key poses (normalized progress t in [0, 1] across the arc):
+#   anticipation squash  t < 0.10: wide + short
+#   stretch upward       t < 0.40: tall + thin
+#   peak compression     t < 0.60: slightly squashed at apex
+#   stretch downward     t < 0.90: tall + thin (returning)
+#   landing squash       t < 1.00: wide + short
+# Smoothstep eases between consecutive poses so the deformation reads
+# without snapping. Outside the arc window the cached scale lerps back
+# to identity over SQUASH_RECOVER_S.
+const _SQUASH_KEYFRAMES: Array = [
+	[0.00, Vector2(1.2, 0.7)],
+	[0.10, Vector2(0.85, 1.3)],
+	[0.40, Vector2(1.1, 0.85)],
+	[0.60, Vector2(0.85, 1.3)],
+	[0.90, Vector2(1.2, 0.7)],
+	[1.00, Vector2(1.0, 1.0)],
+]
+
+func _apply_jump_squash(delta_s: float) -> void:
+	if head == null:
+		return
+	var target: Vector3 = _compute_jump_squash_target()
+	if target == Vector3.ONE:
+		# Not jumping (or arc ended). Recover to identity over a short
+		# window so the head doesn't pop back to neutral scale at the
+		# end of the arc.
+		var lerp_t: float = clampf(delta_s / SQUASH_RECOVER_S, 0.0, 1.0)
+		_head_squash_scale = _head_squash_scale.lerp(Vector3.ONE, lerp_t)
+	else:
+		# Mid-arc: snap to the computed scale. The curve itself is
+		# already smooth (smoothstep between keyframes), so an extra
+		# lerp here would lag the silhouette behind the position.
+		_head_squash_scale = target
+	head.scale = _head_squash_scale
+
+func _compute_jump_squash_target() -> Vector3:
+	if jump_started_at_ms < 0:
+		return Vector3.ONE
+	var now_ms: int = int(Time.get_unix_time_from_system() * 1000.0)
+	var duration_ms: int = int(PhysicsScript.JUMP_DURATION_S * 1000.0)
+	var elapsed_ms: int = now_ms - jump_started_at_ms
+	if elapsed_ms < 0 or elapsed_ms >= duration_ms:
+		return Vector3.ONE
+	var t: float = float(elapsed_ms) / float(duration_ms)
+	# Find the bracketing pair of keyframes around t.
+	for i in range(_SQUASH_KEYFRAMES.size() - 1):
+		var a: Array = _SQUASH_KEYFRAMES[i]
+		var b: Array = _SQUASH_KEYFRAMES[i + 1]
+		var t_a: float = float(a[0])
+		var t_b: float = float(b[0])
+		if t < t_b:
+			var span: float = t_b - t_a
+			var local_t: float = 0.0 if span <= 1e-6 else (t - t_a) / span
+			var smooth_t: float = smoothstep(0.0, 1.0, local_t)
+			var scale_a: Vector2 = a[1]
+			var scale_b: Vector2 = b[1]
+			var xz: float = lerpf(scale_a.x, scale_b.x, smooth_t)
+			var y: float = lerpf(scale_a.y, scale_b.y, smooth_t)
+			return Vector3(xz, y, xz)
+	return Vector3.ONE

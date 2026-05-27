@@ -286,6 +286,21 @@ export class Room implements DurableObject {
   private notifyMatchmaker(humans: number, bots: number): void {
     const base = this.env.MATCHMAKER_URL;
     if (!base) return;
+    // The matchmaker's open-room pool exists to send fresh strangers
+    // somewhere they can actually join. The moment the room leaves
+    // `filling`, onJoin starts rejecting new joins with
+    // match_in_progress, so the room must come OUT of the pool. Without
+    // this, the matchmaker keeps handing our wsUrl to strangers based
+    // on humans+bots < soft capacity, and they all bounce off with a
+    // close-4003 in the HUD. Re-attach is handled implicitly: when the
+    // room eventually returns to `filling` (humans hit zero → bots
+    // cleared → phase reset in finalizeDisconnect) the next onJoin's
+    // notifyMatchmaker call lands here with phase==='filling' and the
+    // entry re-appears in the pool.
+    if (this.phase !== 'filling') {
+      this.detachMatchmaker();
+      return;
+    }
     const roomId = this.state.id.toString();
     fetch(`${base}/lobby/room-state`, {
       method: 'POST',
@@ -1033,6 +1048,11 @@ export class Room implements DurableObject {
     this.turnEndsAt = Date.now() + FREE_ROAM_MS;
     this.broadcast({ t: 'event', kind: { kind: 'phase', phase: this.phase } });
     this.tickHandle = setInterval(() => this.tick(), TICK_MS);
+    // Drop ourselves from the matchmaker's open-room pool immediately
+    // so strangers stop being routed here. The notifyMatchmaker guard
+    // would catch a subsequent call too, but doing it now closes the
+    // window between `phase = free_roam` and the next state push.
+    this.detachMatchmaker();
   }
 
   /**

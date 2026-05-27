@@ -13,10 +13,13 @@ class_name Physics
 # written relative to it.
 const HOVER_HEIGHT := 0.5
 
-# Peak rise above HOVER_HEIGHT during a jump. Center reaches ~2.0 m at
-# apex, which clears another hovering player's body extent and stays
-# well below the 6 m wall height (head ~3 m at peak, plenty of margin).
-const JUMP_AMP := 1.5
+# Peak rise above HOVER_HEIGHT during a jump. At 2.0 m the body's
+# center reaches ~2.5 m at apex, giving a comfortable 0.6 m vertical
+# clearance over a grounded body (separation 2.0 m vs the 1.4 m tag
+# threshold) so jumping reads as a real evasion tool rather than a
+# "barely scraped past" miss. Head height at peak is ~3.2 m, still
+# well below the 6 m wall so jumping can't see over walls.
+const JUMP_AMP := 2.0
 
 # Length of a single jump arc, takeoff to landing, in seconds. Short
 # enough to feel responsive, long enough for the squash-and-stretch
@@ -24,10 +27,10 @@ const JUMP_AMP := 1.5
 const JUMP_DURATION_S := 0.6
 
 # Tag vertical-overlap threshold in meters. A tag is rejected when
-# |attacker.y - victim.y| >= this value. Slightly less than JUMP_AMP so
-# a jumper at peak just barely evades a grounded attacker. Mistimed
-# jumpers (one at peak, one at takeoff or landing) are within the
-# threshold and the tag fires per Option A.
+# |attacker.y - victim.y| >= this value. Comfortably below JUMP_AMP so
+# a peak jumper (separation = 2.0 m) clearly evades a grounded
+# attacker. Mistimed jumpers (one at peak, one at takeoff or landing)
+# can still tag each other per Option A.
 const BODY_VERTICAL_EXTENT := 1.4
 
 # Post-landing minimum before the next jump can trigger. Prevents

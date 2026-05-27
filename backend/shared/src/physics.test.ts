@@ -9,7 +9,8 @@ import {
   isJumping,
   verticallyOverlapping,
 } from './physics.ts';
-import { stepJump } from './movement.ts';
+import { resolvePlayerCollisions, stepJump } from './movement.ts';
+import type { PlayerState } from './protocol.ts';
 
 const ARC_MS = JUMP_DURATION_S * 1000;
 
@@ -86,10 +87,11 @@ describe('verticallyOverlapping', () => {
     expect(verticallyOverlapping(lo, hi)).toBe(verticallyOverlapping(hi, lo));
   });
 
-  it('a peak jumper just barely evades a grounded body (Option A boundary)', () => {
+  it('a peak jumper comfortably evades a grounded body (Option A)', () => {
     // Peak jumper at HOVER_HEIGHT + JUMP_AMP. Grounded at HOVER_HEIGHT.
-    // Separation is exactly JUMP_AMP. BODY_VERTICAL_EXTENT is tuned to be
-    // just below JUMP_AMP, so the overlap predicate must return false.
+    // Separation = JUMP_AMP = 2.0 m, comfortably above the 1.4 m
+    // BODY_VERTICAL_EXTENT threshold, so the overlap predicate rejects
+    // and the tag misses.
     const grounded = at(HOVER_HEIGHT);
     const peak = at(HOVER_HEIGHT + JUMP_AMP);
     expect(verticallyOverlapping(grounded, peak)).toBe(false);
@@ -138,5 +140,100 @@ describe('stepJump', () => {
     const a = stepJump({ jumpStartedAt: null }, { jump: true, nowMs: 7777 });
     const b = stepJump({ jumpStartedAt: null }, { jump: true, nowMs: 7777 });
     expect(a).toEqual(b);
+  });
+});
+
+describe('resolvePlayerCollisions', () => {
+  const makePlayer = (
+    id: string,
+    x: number,
+    z: number,
+    jumpStartedAt: number | null = null,
+    frozen = false,
+  ): PlayerState => ({
+    id,
+    name: id,
+    team: 'mime',
+    bot: false,
+    position: { x, y: HOVER_HEIGHT, z },
+    yaw: 0,
+    frozen,
+    sprintEnergy: 100,
+    sprinting: false,
+    jumpStartedAt,
+  });
+
+  it('does nothing when players are far apart', () => {
+    const a = makePlayer('a', 0, 0);
+    const b = makePlayer('b', 5, 0);
+    const before = { ...a.position };
+    resolvePlayerCollisions([a, b], new Map(), 0.0167, [], 'plane', 80, 0);
+    expect(a.position).toEqual(before);
+  });
+
+  it('pushes overlapping bodies apart', () => {
+    const a = makePlayer('a', 0, 0);
+    const b = makePlayer('b', 0.5, 0);
+    resolvePlayerCollisions([a, b], new Map(), 0.0167, [], 'plane', 80, 0);
+    const finalDist = Math.hypot(b.position.x - a.position.x, b.position.z - a.position.z);
+    expect(finalDist).toBeGreaterThanOrEqual(2 * 0.4 - 1e-6);
+  });
+
+  it('applies stronger bounce when at least one body is jumping', () => {
+    const aGrounded = makePlayer('a', 0, 0);
+    const bGrounded = makePlayer('b', 0.5, 0);
+    const prevGrounded = new Map([
+      ['a', { x: -0.1, z: 0 }],
+      ['b', { x: 0.6, z: 0 }],
+    ]);
+    resolvePlayerCollisions(
+      [aGrounded, bGrounded],
+      prevGrounded,
+      0.0167,
+      [],
+      'plane',
+      80,
+      1_000_000,
+    );
+    const groundedSep = Math.hypot(
+      bGrounded.position.x - aGrounded.position.x,
+      bGrounded.position.z - aGrounded.position.z,
+    );
+
+    const aAerial = makePlayer('a', 0, 0, 1_000_000);
+    const bAerial = makePlayer('b', 0.5, 0);
+    const prevAerial = new Map([
+      ['a', { x: -0.1, z: 0 }],
+      ['b', { x: 0.6, z: 0 }],
+    ]);
+    resolvePlayerCollisions([aAerial, bAerial], prevAerial, 0.0167, [], 'plane', 80, 1_000_000);
+    const aerialSep = Math.hypot(
+      bAerial.position.x - aAerial.position.x,
+      bAerial.position.z - aAerial.position.z,
+    );
+
+    expect(aerialSep).toBeGreaterThan(groundedSep);
+  });
+
+  it('does not push a frozen body', () => {
+    const a = makePlayer('a', 0, 0);
+    const b = makePlayer('b', 0.5, 0, null, true);
+    const bBefore = { ...b.position };
+    resolvePlayerCollisions([a, b], new Map(), 0.0167, [], 'plane', 80, 0);
+    expect(b.position).toEqual(bBefore);
+    // The non-frozen body takes the full push so they end up separated.
+    const finalDist = Math.hypot(b.position.x - a.position.x, b.position.z - a.position.z);
+    expect(finalDist).toBeGreaterThanOrEqual(2 * 0.4 - 1e-6);
+  });
+
+  it('is deterministic across re-runs with the same input', () => {
+    const a1 = makePlayer('a', 0, 0);
+    const b1 = makePlayer('b', 0.5, 0);
+    const a2 = makePlayer('a', 0, 0);
+    const b2 = makePlayer('b', 0.5, 0);
+    resolvePlayerCollisions([a1, b1], new Map(), 0.0167, [], 'plane', 80, 0);
+    resolvePlayerCollisions([a2, b2], new Map(), 0.0167, [], 'plane', 80, 0);
+    expect(a1.position).toEqual(a2.position);
+    expect(b1.position).toEqual(b2.position);
   });
 });

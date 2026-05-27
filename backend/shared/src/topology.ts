@@ -112,6 +112,31 @@ export function topologyDistance(a: Vec2, b: Vec2, topology: Topology, width: nu
  * shorter than the in-domain delta; bots that ignore this end up zigzagging
  * at seams because the Euclidean delta points back across the whole arena.
  */
+/**
+ * Wrap-aware vector delta from `from` to `to`. Returns the shortest
+ * signed displacement under the topology's identification (so a torus
+ * delta near the seam points across the seam, not around the long way).
+ * Caller composes the magnitude as needed.
+ */
+export function wrappedDeltaVec(from: Vec2, to: Vec2, topology: Topology, width: number): Vec2 {
+  switch (topology) {
+    case 'plane':
+      return { x: to.x - from.x, z: to.z - from.z };
+    case 'torus':
+      return { x: wrappedDelta(from.x, to.x, width), z: wrappedDelta(from.z, to.z, width) };
+    case 'klein':
+      return {
+        x: wrappedDelta(from.x, to.x, 2 * width),
+        z: wrappedDelta(from.z, to.z, width),
+      };
+    case 'mobius':
+      return {
+        x: wrappedDelta(from.x, to.x, 2 * MOBIUS_HALF_X),
+        z: to.z - from.z,
+      };
+  }
+}
+
 export function wrappedUnitDelta(from: Vec2, to: Vec2, topology: Topology, width: number): Vec2 {
   let dx: number;
   let dz: number;

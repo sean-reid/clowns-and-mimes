@@ -3,10 +3,20 @@
 // Both sides must call this with the same dt, inputs, and walls or
 // reconciliation replay drifts from the server.
 
-import type { Topology, Vec2, Vec3 } from './protocol.ts';
-import { pathCrossesWall, type WallSegment } from './labyrinth.ts';
-import { wrapPositionFromStep } from './topology.ts';
-import { HOVER_HEIGHT, JUMP_COOLDOWN_S, JUMP_DURATION_S, jumpArcY } from './physics.ts';
+import type { PlayerState, Topology, Vec2, Vec3 } from './protocol.ts';
+import { pathCrossesWall, PLAYER_RADIUS, type WallSegment } from './labyrinth.ts';
+import { wrapPositionFromStep, wrappedDeltaVec } from './topology.ts';
+import {
+  BOUNCE_E_AERIAL,
+  BOUNCE_E_GROUNDED,
+  BOUNCE_E_WALL,
+  HOVER_HEIGHT,
+  JUMP_COOLDOWN_S,
+  JUMP_DURATION_S,
+  isJumping,
+  jumpArcY,
+  verticallyOverlapping,
+} from './physics.ts';
 
 export const WALK_SPEED = 3.2;
 export const SPRINT_SPEED = 5.6;
@@ -105,6 +115,30 @@ export function stepMovement(
     nextXZ = wrapPositionFromStep(startXZ, candidate, topology, worldWidth);
     break;
   }
+  // Wall rebound: if the chosen candidate lost motion along an axis the
+  // wall blocked, apply a tiny opposite push so the body visibly "bumps"
+  // off the wall instead of dead-stopping. Compares the planned full
+  // diagonal motion (candidates[0]) against what we actually moved; the
+  // delta is the blocked component. With BOUNCE_E_WALL = 0.15 and
+  // typical sprint speed, the bump is < 1 cm per tick - subtle, but
+  // enough to read at 60 Hz. Re-check walls so a sliding rebound near a
+  // corner doesn't punch through the second wall.
+  const attemptedDx = candidates[0]!.x - startXZ.x;
+  const attemptedDz = candidates[0]!.z - startXZ.z;
+  const actualDx = nextXZ.x - startXZ.x;
+  const actualDz = nextXZ.z - startXZ.z;
+  const lossDx = attemptedDx - actualDx;
+  const lossDz = attemptedDz - actualDz;
+  const lossMag = Math.hypot(lossDx, lossDz);
+  const attemptedMag = Math.hypot(attemptedDx, attemptedDz);
+  if (attemptedMag > 0 && lossMag / attemptedMag > 0.1) {
+    const reboundX = -lossDx * BOUNCE_E_WALL;
+    const reboundZ = -lossDz * BOUNCE_E_WALL;
+    const candidateXZ: Vec2 = { x: nextXZ.x + reboundX, z: nextXZ.z + reboundZ };
+    const reboundBlocked =
+      walls.length > 0 && pathCrossesWall(walls, nextXZ.x, nextXZ.z, candidateXZ.x, candidateXZ.z);
+    if (!reboundBlocked) nextXZ = candidateXZ;
+  }
   const nextPos: Vec3 = { x: nextXZ.x, y: state.position.y, z: nextXZ.z };
   const drained = wantSprint && moveLen > 0;
   const nextSprint = clamp(
@@ -199,3 +233,100 @@ export function bodyYForState(state: { jumpStartedAt: number | null }, nowMs: nu
 // movement constants can find it in the same module instead of
 // reaching into physics.ts for one symbol.
 export { HOVER_HEIGHT };
+
+/**
+ * Resolve player-vs-player overlaps after every player's XZ step has
+ * been applied. Pushes overlapping bodies apart along their contact
+ * normal AND adds a small extra-separation impulse proportional to
+ * their approach speed - this is what produces the visible bounce.
+ *
+ * `prevPositions` is the XZ each player held at the START of this
+ * tick (server holds this in a side-map; the client predictor can
+ * stub with current position for bodies it does not simulate). dt is
+ * the tick duration in seconds. The function mutates `players[i]`
+ * positions in place; bodies whose post-push position would cross a
+ * wall are left at their pre-push position so corner cases do not
+ * shove anyone through geometry.
+ *
+ * Coefficient of restitution: BOUNCE_E_AERIAL when either body is
+ * currently jumping (per physics.ts::isJumping), otherwise
+ * BOUNCE_E_GROUNDED. Frozen bodies still participate (a frozen body
+ * is solid; you bump off it) but do not get pushed themselves.
+ */
+export function resolvePlayerCollisions(
+  players: PlayerState[],
+  prevPositions: ReadonlyMap<string, Vec2>,
+  dt: number,
+  walls: readonly WallSegment[],
+  topology: Topology,
+  worldWidth: number,
+  nowMs: number,
+): void {
+  const minSep = 2 * PLAYER_RADIUS;
+  // Sort by id so the iteration order is deterministic - prevents any
+  // "first iterated player wins" bias and keeps server / client
+  // replay outputs bit-identical.
+  const sorted = [...players].sort((a, b) => a.id.localeCompare(b.id));
+  for (let i = 0; i < sorted.length; i++) {
+    for (let j = i + 1; j < sorted.length; j++) {
+      const a = sorted[i]!;
+      const b = sorted[j]!;
+      if (a.frozen && b.frozen) continue;
+      const delta = wrappedDeltaVec(
+        { x: a.position.x, z: a.position.z },
+        { x: b.position.x, z: b.position.z },
+        topology,
+        worldWidth,
+      );
+      const distXZ = Math.hypot(delta.x, delta.z);
+      if (distXZ >= minSep) continue;
+      if (!verticallyOverlapping(a, b)) continue;
+      // Normal points from a toward b. Zero-distance case: pick an
+      // arbitrary deterministic direction so the math is defined.
+      let nx: number;
+      let nz: number;
+      if (distXZ > 1e-6) {
+        nx = delta.x / distXZ;
+        nz = delta.z / distXZ;
+      } else {
+        nx = 1;
+        nz = 0;
+      }
+      const overlap = minSep - distXZ;
+      // Approach speed along the contact normal. Both prev positions
+      // default to current if missing (client predictor case for
+      // remote bodies it does not simulate); approach speed becomes 0
+      // and only the overlap is resolved, no impulse.
+      const aPrev = prevPositions.get(a.id) ?? { x: a.position.x, z: a.position.z };
+      const bPrev = prevPositions.get(b.id) ?? { x: b.position.x, z: b.position.z };
+      const aVx = (a.position.x - aPrev.x) / dt;
+      const aVz = (a.position.z - aPrev.z) / dt;
+      const bVx = (b.position.x - bPrev.x) / dt;
+      const bVz = (b.position.z - bPrev.z) / dt;
+      const approachAlongN = (aVx - bVx) * nx + (aVz - bVz) * nz;
+      const aJumping = isJumping(a, nowMs);
+      const bJumping = isJumping(b, nowMs);
+      const e = aJumping || bJumping ? BOUNCE_E_AERIAL : BOUNCE_E_GROUNDED;
+      const extraSep = Math.max(0, approachAlongN) * e * dt;
+      const pushEach = (overlap + extraSep) / 2;
+      // Frozen bodies don't get pushed (their captor expects them to
+      // hold position); the other body takes the full push instead.
+      const aShare = a.frozen ? 0 : b.frozen ? 2 : 1;
+      const bShare = b.frozen ? 0 : a.frozen ? 2 : 1;
+      const aTargetX = a.position.x - nx * pushEach * aShare;
+      const aTargetZ = a.position.z - nz * pushEach * aShare;
+      const bTargetX = b.position.x + nx * pushEach * bShare;
+      const bTargetZ = b.position.z + nz * pushEach * bShare;
+      const aBlocked =
+        walls.length > 0 && pathCrossesWall(walls, a.position.x, a.position.z, aTargetX, aTargetZ);
+      const bBlocked =
+        walls.length > 0 && pathCrossesWall(walls, b.position.x, b.position.z, bTargetX, bTargetZ);
+      if (aShare > 0 && !aBlocked) {
+        a.position = { x: aTargetX, y: a.position.y, z: aTargetZ };
+      }
+      if (bShare > 0 && !bBlocked) {
+        b.position = { x: bTargetX, y: b.position.y, z: bTargetZ };
+      }
+    }
+  }
+}

@@ -12,21 +12,25 @@ import type { Vec3 } from './protocol.ts';
 // written relative to it.
 export const HOVER_HEIGHT = 0.5;
 
-// Peak rise above HOVER_HEIGHT during a jump. Center reaches ~2.0 m at
-// apex, which clears another hovering player's body extent and stays
-// well below the 6 m wall height (head ~3 m at peak, plenty of margin).
-export const JUMP_AMP = 1.5;
+// Peak rise above HOVER_HEIGHT during a jump. At 2.0 m the body's
+// center reaches ~2.5 m at apex, giving a comfortable 0.6 m vertical
+// clearance over a grounded body (separation 2.0 m vs the 1.4 m tag
+// threshold) so jumping reads as a real evasion tool rather than a
+// "barely scraped past" miss. Head height at peak is ~3.2 m, still
+// well below the 6 m wall so jumping can't see over walls.
+export const JUMP_AMP = 2.0;
 
 // Length of a single jump arc, takeoff to landing. Short enough to feel
 // responsive, long enough for the squash-and-stretch animation to read.
 export const JUMP_DURATION_S = 0.6;
 
 // Tag vertical-overlap threshold. A tag is rejected when
-// |attacker.y - victim.y| >= this value. Slightly less than JUMP_AMP so
-// a jumper at peak (y = HOVER_HEIGHT + JUMP_AMP) just barely evades a
-// grounded attacker (y = HOVER_HEIGHT). Mistimed jumpers (one at peak,
-// one at takeoff or landing) are within the threshold and tag fires
-// per Option A.
+// |attacker.y - victim.y| >= this value. Comfortably below JUMP_AMP so
+// a jumper at peak (separation = JUMP_AMP = 2.0 m) clearly evades a
+// grounded attacker. Mistimed jumpers (one at peak, one at takeoff or
+// landing) can still tag each other per Option A. 1.4 m is roughly the
+// vertical extent of the capsule collider; using the collider's own
+// reach keeps the rule physically intuitive.
 export const BODY_VERTICAL_EXTENT = 1.4;
 
 // Post-landing minimum before the next jump can trigger. Prevents

@@ -70,9 +70,8 @@ func test_vertically_overlapping_symmetric() -> void:
 	)
 
 func test_vertically_overlapping_peak_evades_grounded() -> void:
-	# Option A boundary: a peak jumper just barely evades a grounded
-	# attacker. Separation is exactly JUMP_AMP; BODY_VERTICAL_EXTENT is
-	# tuned to be just below JUMP_AMP, so the predicate must return false.
+	# Option A: a peak jumper comfortably evades a grounded attacker.
+	# Separation = JUMP_AMP = 2.0 m, above the 1.4 m threshold.
 	var grounded: float = Physics.HOVER_HEIGHT
 	var peak: float = Physics.HOVER_HEIGHT + Physics.JUMP_AMP
 	assert_false(Physics.vertically_overlapping(grounded, peak))

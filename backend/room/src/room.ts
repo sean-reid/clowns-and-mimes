@@ -23,6 +23,7 @@ import {
 import { balanceTeamAssignments } from './teamBalance.ts';
 import {
   bodyYForState,
+  resolvePlayerCollisions,
   stepJump,
   stepMovement,
   WALK_SPEED,
@@ -261,6 +262,13 @@ export class Room implements DurableObject {
   // alongside the simulation (otherwise a 10 s wifi drop would burn
   // through 10 s of the active turn timer in the player's absence).
   private pausedSince: number | null = null;
+  // Each player's XZ position as of the start of the current tick.
+  // resolvePlayerCollisions uses this to derive an approach speed
+  // between two bodies (so the bounce-back impulse can scale with
+  // closing velocity). Updated at the end of every simulate() pass
+  // from the post-tick positions, so the NEXT tick's collision pass
+  // sees the right "where each player was".
+  private readonly prevTickPositions = new Map<string, { x: number; z: number }>();
   private botFillHandle: ReturnType<typeof setTimeout> | null = null;
   private readonly botMinds = new Map<string, BotMind>();
   // Wall-clock ms when each player was last unfrozen. Used by canTag to
@@ -683,17 +691,6 @@ export class Room implements DurableObject {
    * back-and-forth as visible jitter. The threshold is two body radii plus
    * a small buffer so capsules never touch.
    */
-  private collidesWithOtherPlayer(self: PlayerState, x: number, z: number): boolean {
-    const PERSONAL_SPACE = 1.0; // 2 * PLAYER_RADIUS (0.4) + buffer
-    for (const other of this.players.values()) {
-      if (other.id === self.id) continue;
-      const dx = other.position.x - x;
-      const dz = other.position.z - z;
-      if (dx * dx + dz * dz < PERSONAL_SPACE * PERSONAL_SPACE) return true;
-    }
-    return false;
-  }
-
   /**
    * Pick a spawn point that (a) is not inside a wall, and (b) does not
    * overlap any existing player. Tries up to SPAWN_PICK_ATTEMPTS jitter
@@ -1176,6 +1173,24 @@ export class Room implements DurableObject {
     this.simulateHumans(dt);
     this.simulateBots(dt);
     this.advanceIdleJumpState();
+    // After every player has moved this tick, resolve any overlap +
+    // apply bounceback. Runs once per tick so impulses are bounded.
+    resolvePlayerCollisions(
+      [...this.players.values()],
+      this.prevTickPositions,
+      dt,
+      this.walls,
+      this.topology,
+      WORLD_WIDTH,
+      Date.now(),
+    );
+    // Refresh prev positions AFTER bounceback so next tick's approach
+    // velocity reflects the post-bounce stance, not the pre-bounce
+    // overlap that would otherwise show up as a phantom impulse.
+    this.prevTickPositions.clear();
+    for (const p of this.players.values()) {
+      this.prevTickPositions.set(p.id, { x: p.position.x, z: p.position.z });
+    }
     this.recordPositionsForLagComp();
   }
 
@@ -1267,7 +1282,13 @@ export class Room implements DurableObject {
         this.walls,
         this.topology,
         WORLD_WIDTH,
-        (candidate) => this.collidesWithOtherPlayer(p, candidate.x, candidate.z),
+        // No collision gate here: resolvePlayerCollisions in the
+        // post-step pass handles overlap by pushing bodies apart and
+        // adding the bounceback impulse. A tick-level gate would
+        // suppress the overlap that the bounceback design needs to
+        // see; per-tick max overlap is bounded by walk speed * dt
+        // (~5 cm), which the next tick's resolve fully unwinds.
+        () => false,
       );
       // Jump trigger / lockout. The client stamps input.nowMs when it
       // sends the input; we use that timestamp (clamped to local clock
@@ -1546,7 +1567,11 @@ export class Room implements DurableObject {
           this.walls.length > 0 &&
           pathCrossesWall(this.walls, bot.position.x, bot.position.z, candidate.x, candidate.z);
         if (wallBlocked) continue;
-        if (this.collidesWithOtherPlayer(bot, candidate.x, candidate.z)) continue;
+        // Bot-vs-other collisions are handled by resolvePlayerCollisions
+        // in the post-step pass (same as humans). A per-tick gate here
+        // would block the brief overlap that the bounceback needs to
+        // see, leaving bots dead-stopped against each other instead of
+        // ricocheting.
         const wrapped = wrapPosition(
           { x: candidate.x, z: candidate.z },
           this.topology,

@@ -87,6 +87,33 @@ static func step(
 		next_pos = Vector2(wrapped3.x, wrapped3.z)
 		break
 
+	# Wall rebound (mirrors stepMovement in backend/shared/src/movement.ts).
+	# If the chosen candidate lost motion to a blocked candidate, apply a
+	# tiny opposite push proportional to BOUNCE_E_WALL so the body visibly
+	# "bumps" off the wall instead of dead-stopping. Keeps reconcile drift
+	# at zero since the server applies the same rebound.
+	const PhysicsScript := preload("res://scripts/physics.gd")
+	var attempted_dx: float = candidates[0].x - pos.x
+	var attempted_dz: float = candidates[0].y - pos.y
+	var actual_dx: float = next_pos.x - pos.x
+	var actual_dz: float = next_pos.y - pos.y
+	var loss_dx: float = attempted_dx - actual_dx
+	var loss_dz: float = attempted_dz - actual_dz
+	var loss_mag: float = sqrt(loss_dx * loss_dx + loss_dz * loss_dz)
+	var attempted_mag: float = sqrt(attempted_dx * attempted_dx + attempted_dz * attempted_dz)
+	if attempted_mag > 0.0 and loss_mag / attempted_mag > 0.1:
+		var rebound_x: float = -loss_dx * PhysicsScript.BOUNCE_E_WALL
+		var rebound_z: float = -loss_dz * PhysicsScript.BOUNCE_E_WALL
+		var candidate_xz := Vector2(next_pos.x + rebound_x, next_pos.y + rebound_z)
+		var rebound_blocked: bool = (
+			walls.size() > 0
+			and path_crosses_wall(
+				walls, next_pos.x, next_pos.y, candidate_xz.x, candidate_xz.y
+			)
+		)
+		if not rebound_blocked:
+			next_pos = candidate_xz
+
 	var drained: bool = want_sprint and move_len > 0.0
 	var energy_delta: float = (-SPRINT_DRAIN_PER_S if drained else SPRINT_REGEN_PER_S) * dt
 	var next_energy: float = clampf(sprint_energy + energy_delta, 0.0, MAX_SPRINT)

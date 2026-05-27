@@ -20,6 +20,10 @@ var mode: Mode = Mode.OFFLINE
 var topology: Topology = Topology.PLANE
 var lobby_code: String = ""
 var server_url: String = ""
+# Host token from the matchmaker create response. Sent on the WS join so the
+# room can identify which connected player is the host, gating start_match.
+# Empty for non-host (JOIN / OPEN) modes - they never see it.
+var host_token: String = ""
 
 func _ready() -> void:
 	randomize()

@@ -100,8 +100,7 @@ flowchart TB
   HostFlow --> Lobby
   CodeFlow --> Lobby
   StrangerFlow --> Lobby
-  Lobby -->|matchmaking complete| StartCountdown[10s start countdown]
-  StartCountdown --> Freeroam[60s free roam]
+  Lobby -->|host clicks Start / open auto-fills| Freeroam[30s free roam]
   Freeroam --> TurnLoop
   TurnLoop -->|all of one team frozen| EndScreen
   EndScreen -->|Play again| Lobby
@@ -113,7 +112,7 @@ The game client is structured around scene composition in Godot:
 - `Main.tscn` is the root that swaps the active screen.
 - `TitleScreen.tscn` plays the three-phase title animation and a short oompa loop.
 - `MainMenu.tscn` shows host, code, and strangers options plus username entry.
-- `Lobby.tscn` is the dim center square where players spawn and wait for matchmaking.
+- `Lobby.tscn` is the pre-arena screen that surfaces the lobby code (host) or join status (joiner), the player roster, and the host's Start button.
 - `Arena.tscn` instantiates a topology scene and the labyrinth.
 - `HUD.tscn` overlays sprint bar, countdown, team status, side log, and frozen overlay.
 
@@ -261,12 +260,12 @@ flowchart LR
 ```
 
 - `matchmaker` Worker exposes:
-  - `POST /lobby` creates a private room and returns `{code, roomId, wsUrl}`. The code is written to KV with a 6 hour TTL.
-  - `POST /lobby/{code}/join` reads the KV entry and returns `{roomId, wsUrl}`.
+  - `POST /lobby` creates a private room and returns `{code, roomId, wsUrl, hostToken}`. The matchmaker mints a random `hostToken` and stores it in the KV entry next to `roomId` and `topology`. Only this response surfaces the token; subsequent joiners never see it. The KV entry has a 6 hour TTL.
+  - `POST /lobby/{code}/join` reads the KV entry and returns `{roomId, wsUrl}` (deliberately omitting the host token so a joiner cannot claim the host role).
   - `POST /open/join` lists open-room entries by prefix, picks the most populated one under the soft capacity (12), increments its joined counter, and returns its `wsUrl`. Falls back to spinning up a fresh open room with a random topology when no candidate exists.
   - `GET /healthz` for uptime checks.
-- `wsUrl` is composed as `wss://<room-worker-name>.<account-subdomain>.workers.dev/ws/{roomId}` where `<account-subdomain>` is the account's `*.workers.dev` slug, provided to the matchmaker as the `WORKERS_SUBDOMAIN` env var.
-- `room` Durable Object holds room state, broadcasts deltas, drives the 20 Hz tick loop, and runs server-side bot AI in stranger rooms. Uses the WebSocket hibernation API to stay cheap when idle.
+- `wsUrl` is composed as `wss://<room-worker-name>.<account-subdomain>.workers.dev/ws/{roomId}?topology=<topology>` where `<account-subdomain>` is the account's `*.workers.dev` slug, provided to the matchmaker as the `WORKERS_SUBDOMAIN` env var. The host's URL additionally carries `&host=<hostToken>` so the Room DO can identify the host connection on WS upgrade.
+- `room` Durable Object holds room state, broadcasts deltas, drives the 60 Hz tick loop, and runs the server-side bot AI for every room. Uses the WebSocket hibernation API to stay cheap when idle.
 - `shared` provides protocol types and topology helpers compiled into both Workers via subpath exports (`@cm/shared`, `@cm/shared/topology`).
 
 ## Matchmaking
@@ -288,11 +287,10 @@ flowchart TD
   JoinExisting --> Wait
   CreateOpen --> Wait
   Wait --> Ready{Ready?}
-  Ready -->|min players or timer| Start10[Start 10s countdown]
-  Start10 --> Free[60s free roam]
+  Ready -->|host clicks Start / open auto-fills| Free[30s free roam]
 ```
 
-Open rooms target a soft capacity of 12 humans before opening a fresh room. Once a human joins, the room schedules a 3 second bot-fill timer; when it fires the room fills empty seats up to 4 bots per team and starts the 10 second countdown, so a solo player never sits in an empty lobby.
+Open rooms target a soft capacity of 12 humans before opening a fresh room. Once a human joins, the room schedules a 3 second bot-fill timer; when it fires the room fills empty seats up to 4 bots per team and transitions straight into free roam, so a solo player never sits in an empty lobby. Private (hosted) rooms skip the auto-fill timer: the room stays in `filling` until the host's `start_match` message arrives, then bots fill the remaining slots and the match begins.
 
 ## Room lifecycle
 
@@ -300,14 +298,14 @@ Open rooms target a soft capacity of 12 humans before opening a fresh room. Once
 stateDiagram-v2
   [*] --> Empty
   Empty --> Filling: first join
-  Filling --> Locked: matchmaking complete
-  Locked --> Countdown10
-  Countdown10 --> FreeRoam60
-  FreeRoam60 --> TurnLoop
+  Filling --> FreeRoam30: host start_match (private) / auto-fill timer (open)
+  FreeRoam30 --> TurnLoop
   TurnLoop --> EndScreen: a team is fully frozen
   EndScreen --> Filling: rematch in private host mode
   EndScreen --> [*]: open mode rematch returns to MM
 ```
+
+Joins arriving after `Filling` are rejected with `match_in_progress`, both to prevent freeze-circumvention via leave + rejoin and to keep new players from disrupting an in-flight turn.
 
 Turn duration progression: round 1 is 30 seconds per team, round 2 is 60 seconds, round 3 is 90 seconds, then +30 each round, capped at 5 minutes.
 
@@ -316,7 +314,8 @@ Turn duration progression: round 1 is 30 seconds per team, round 2 is 60 seconds
 - All state transitions are server-authoritative.
 - The server validates tag attempts: distance under threshold, both players alive, attacker not frozen, attacker on the active turn team.
 - Movement deltas exceeding the maximum sprint speed are clamped.
-- Clients connect with a build version and a session token derived from the room code. Mismatched versions are rejected with a clear error.
+- Clients connect with a build version on the WS `join` payload. Mismatched versions are rejected with `version_mismatch` and a popup pointing at the latest release.
+- Private lobbies receive a `hostToken` from the matchmaker on create. Only the host's WS URL carries it (`?host=<token>`) and only that connection is allowed to issue the `start_match` message that transitions the room out of `filling`. Joiners never see the token.
 
 We do not attempt binary anti-tamper. The blast radius of cheating is limited because the server is the source of truth.
 

@@ -287,12 +287,22 @@ func _start_online() -> void:
 
 func _on_room_connected() -> void:
 	GameState.ensure_username()
-	room_client.send_join(GameState.username)
+	# Pass the host token (empty for JOIN / OPEN modes, present only for the
+	# HOST mode lobby). Server uses it to mark this connection as the host
+	# and gate the start_match message to that one player.
+	room_client.send_join(GameState.username, "", GameState.host_token)
 	# Reset the reconnect ladder so the next disconnect starts fresh from the
 	# shortest backoff window.
 	_reconnect_attempt = 0
 	_reconnect_active = false
 	_hide_reconnect_banner()
+	# Backward-compat hook for the legacy "host clicks Start in the lobby
+	# and the arena starts solo" flow. Once the lobby UX in #102 lands the
+	# host will press Start in the lobby itself; until then, the host's
+	# arena _start_online immediately tells the room to begin so the
+	# server's hosted-room path does not strand the host in `filling`.
+	if GameState.mode == GameState.Mode.HOST and not GameState.host_token.is_empty():
+		room_client.send_start_match()
 
 func _on_room_disconnected(reason: String) -> void:
 	# Most disconnects in the wild are transient: Cloudflare Durable Object

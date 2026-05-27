@@ -36,11 +36,19 @@ func disconnect_from() -> void:
 	_connected = false
 	_send_queue.clear()
 
-func send_join(name: String, prefer_team: String = "") -> void:
+func send_join(name: String, prefer_team: String = "", host_token: String = "") -> void:
 	var payload := {"t": "join", "v": ServerConfig.protocol_version(), "name": name}
 	if not prefer_team.is_empty():
 		payload["preferTeam"] = prefer_team
+	if not host_token.is_empty():
+		payload["hostToken"] = host_token
 	_enqueue(payload)
+
+# Host-only message that asks the room to leave the `filling` phase and
+# transition into `free_roam`. The server rejects this from any client
+# that did not present the matching hostToken on `join`.
+func send_start_match() -> void:
+	_enqueue({"t": "start_match"})
 
 func send_input(seq: int, dt: float, move: Vector2, look_yaw: float, sprint: bool) -> void:
 	_enqueue(

@@ -55,12 +55,20 @@ export interface RoomSnapshot {
 export type Topology = 'plane' | 'torus' | 'mobius' | 'klein';
 
 export type ClientToServer =
-  | { t: 'join'; v: number; name: string; preferTeam?: Team }
+  // hostToken is the random secret the matchmaker hands the host on lobby
+  // create. The server uses it to identify which connected player is the
+  // host so the start_match message below can be gated to that one player.
+  | { t: 'join'; v: number; name: string; preferTeam?: Team; hostToken?: string }
   | { t: 'leave' }
   | { t: 'input'; input: PlayerInput }
   | { t: 'tag_attempt'; targetId: string; clientTime: number }
   | { t: 'unfreeze_attempt'; targetId: string; clientTime: number }
-  | { t: 'ping'; clientTime: number };
+  | { t: 'ping'; clientTime: number }
+  // Private-lobby host transitions the room out of `filling` and into
+  // `free_roam`. Server fills empty slots with bots on receipt and rejects
+  // the message from any non-host player or when the phase is past
+  // `filling`.
+  | { t: 'start_match' };
 
 export type ServerToClient =
   | { t: 'snapshot'; snapshot: RoomSnapshot; youAre: string }
@@ -88,7 +96,9 @@ export type ErrorCode =
   | 'room_not_found'
   | 'invalid_message'
   | 'rate_limited'
-  | 'internal';
+  | 'internal'
+  | 'match_in_progress'
+  | 'not_host';
 
 export interface MatchmakeCreateBody {
   topology: Topology;
@@ -99,6 +109,11 @@ export interface MatchmakeCreateResponse {
   code: string;
   roomId: string;
   wsUrl: string;
+  // Random secret minted at lobby creation. The client passes it as the
+  // hostToken on its WS `join` message; the server uses it to identify the
+  // host so the `start_match` message is gated to that one player.
+  // Joiners (POST /lobby/:code/join) do NOT receive this, only the host.
+  hostToken: string;
 }
 
 export interface MatchmakeJoinResponse {

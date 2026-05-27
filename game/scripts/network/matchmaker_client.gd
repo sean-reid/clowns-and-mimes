@@ -6,7 +6,7 @@ extends Node
 
 const ServerConfig := preload("res://scripts/network/server_config.gd")
 
-signal lobby_created(code: String, room_id: String, ws_url: String)
+signal lobby_created(code: String, room_id: String, ws_url: String, host_token: String)
 signal lobby_joined(room_id: String, ws_url: String)
 ## Emitted when the matchmaker returns 404 on a join-by-code request. The
 ## room never existed (or has expired); the lobby treats this as a hard
@@ -101,10 +101,15 @@ func _on_create_response(parsed: Dictionary) -> void:
 	var code: String = parsed.get("code", "")
 	var room_id: String = parsed.get("roomId", "")
 	var ws_url: String = parsed.get("wsUrl", "")
-	if code.is_empty() or room_id.is_empty() or ws_url.is_empty():
+	# hostToken is what the host's WS join payload sends so the room can
+	# recognize them as host and gate the start_match message. The
+	# matchmaker returns it only on POST /lobby (create); joinByCode for
+	# other players never returns it.
+	var host_token: String = parsed.get("hostToken", "")
+	if code.is_empty() or room_id.is_empty() or ws_url.is_empty() or host_token.is_empty():
 		request_failed.emit("Lobby server returned an incomplete response.")
 		return
-	lobby_created.emit(code, room_id, ws_url)
+	lobby_created.emit(code, room_id, ws_url, host_token)
 
 func _on_join_response(parsed: Dictionary) -> void:
 	var room_id: String = parsed.get("roomId", "")

@@ -49,6 +49,12 @@ func _render() -> void:
 			code_label.text = ""
 
 func _start_matchmaking() -> void:
+	# Reset any stale host token from a previous session. Only the HOST
+	# path repopulates it via _on_lobby_created; JOIN / OPEN modes never
+	# carry a token, and a leftover value from a prior host session would
+	# otherwise be sent on the next join and the server would falsely
+	# accept that client as host.
+	GameState.host_token = ""
 	matchmaker = MatchmakerClientScript.new()
 	add_child(matchmaker)
 	matchmaker.lobby_created.connect(_on_lobby_created)
@@ -73,10 +79,11 @@ func _schedule_fallback_timer() -> void:
 	if not network_resolved:
 		_go_offline("network timed out")
 
-func _on_lobby_created(code: String, _room_id: String, ws_url: String) -> void:
+func _on_lobby_created(code: String, _room_id: String, ws_url: String, host_token: String) -> void:
 	network_resolved = true
 	GameState.lobby_code = code
 	GameState.server_url = ws_url
+	GameState.host_token = host_token
 	code_label.text = "Code: %s" % code
 	# Host stays in the lobby until they confirm. Without this gate the code
 	# label rendered for ~0.7 s and the host was dropped into the arena before

@@ -107,12 +107,36 @@ describe('matchmaker', () => {
     env = makeEnv();
   });
 
-  it('creates a private lobby with a code and returns ws url', async () => {
+  it('creates a private lobby with a code and returns ws url plus host token', async () => {
     const res = await call(env, 'POST', '/lobby', { topology: 'torus' });
     expect(res.status).toBe(200);
-    const body = (await res.json()) as { code: string; roomId: string; wsUrl: string };
+    const body = (await res.json()) as {
+      code: string;
+      roomId: string;
+      wsUrl: string;
+      hostToken: string;
+    };
     expect(body.code).toMatch(/^[BCDFGHJKLMNPQRSTVWXYZ23456789]{6}$/);
     expect(body.wsUrl).toContain('test-room');
+    // hostToken is a UUIDv4 so it has the recognizable 8-4-4-4-12 hex shape.
+    expect(body.hostToken).toMatch(
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/,
+    );
+    // The host's wsUrl carries the token as a query param so the Room DO can
+    // identify the host connection on WS upgrade.
+    expect(body.wsUrl).toContain(`host=${encodeURIComponent(body.hostToken)}`);
+  });
+
+  it('joinByCode does NOT return the host token', async () => {
+    const created = await call(env, 'POST', '/lobby', { topology: 'plane' });
+    const { code } = (await created.json()) as { code: string };
+    const res = await call(env, 'POST', `/lobby/${code}/join`);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { wsUrl: string; hostToken?: string };
+    expect(body.hostToken).toBeUndefined();
+    // Joiner's wsUrl also must NOT carry the host token in the query
+    // string - that would let any joiner claim the host role.
+    expect(body.wsUrl).not.toContain('host=');
   });
 
   it('rejects invalid topology', async () => {

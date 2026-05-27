@@ -58,15 +58,21 @@ async function createPrivateLobby(req: Request, env: Env): Promise<Response> {
   }
   const code = await freshCode(env);
   const roomId = crypto.randomUUID();
+  // hostToken is the random secret the host uses to prove they are the
+  // host on their WS join. Joiners (POST /lobby/:code/join) never see it -
+  // they just get the wsUrl. Stored alongside roomId / topology so it
+  // survives the matchmaker worker bouncing between requests.
+  const hostToken = crypto.randomUUID();
   await env.LOBBY_CODES.put(
     code,
-    JSON.stringify({ roomId, topology: body.topology, createdAt: Date.now() }),
+    JSON.stringify({ roomId, topology: body.topology, createdAt: Date.now(), hostToken }),
     { expirationTtl: PRIVATE_ROOM_TTL_S },
   );
   const res: MatchmakeCreateResponse = {
     code,
     roomId,
-    wsUrl: wsUrlFor(env, roomId, body.topology),
+    wsUrl: wsUrlFor(env, roomId, body.topology, hostToken),
+    hostToken,
   };
   return json(res);
 }
@@ -74,6 +80,8 @@ async function createPrivateLobby(req: Request, env: Env): Promise<Response> {
 async function joinByCode(code: string, env: Env): Promise<Response> {
   const raw = await env.LOBBY_CODES.get(code);
   if (!raw) return error(404, 'room_not_found');
+  // Deliberately do NOT return the hostToken to a joiner. Only the response
+  // body of POST /lobby (createPrivateLobby) ever surfaces it.
   const parsed = JSON.parse(raw) as { roomId: string; topology: Topology };
   const res: MatchmakeJoinResponse = {
     roomId: parsed.roomId,
@@ -130,13 +138,22 @@ function randomCode(): string {
   return out;
 }
 
-function wsUrlFor(env: Env, roomId: string, topology: Topology): string {
+function wsUrlFor(env: Env, roomId: string, topology: Topology, hostToken?: string): string {
   const subdomain = env.WORKERS_SUBDOMAIN ? `${env.WORKERS_SUBDOMAIN}.` : '';
   // Stamp topology onto the URL so the Room DO can call setTopology on its
   // first fetch, before any client connects. Without this the room would
   // default to 'plane' regardless of what the matchmaker chose or the
   // lobby selected.
-  return `wss://${env.ROOM_WORKER}.${subdomain}workers.dev/ws/${roomId}?topology=${topology}`;
+  let url = `wss://${env.ROOM_WORKER}.${subdomain}workers.dev/ws/${roomId}?topology=${topology}`;
+  // Host-flavoured URL carries the hostToken as a query param. The Room DO
+  // reads it on WS upgrade and remembers it as the room's expected host
+  // secret; the host's `join` message must then carry the same token in
+  // its body to claim the role. Joiners (POST /lobby/:code/join) never get
+  // this URL - they receive the plain one from joinByCode.
+  if (hostToken) {
+    url += `&host=${encodeURIComponent(hostToken)}`;
+  }
+  return url;
 }
 
 function json<T>(body: T, status = 200): Response {

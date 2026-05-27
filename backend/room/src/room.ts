@@ -193,6 +193,18 @@ export interface RoomEnv {
 export class Room implements DurableObject {
   private readonly connections = new Map<WebSocket, Connection>();
   private readonly players = new Map<string, PlayerState>();
+  // Per-WebSocket host token, captured from the `?host=<token>` query param
+  // on the WS upgrade URL. Set by the matchmaker only on the host's URL
+  // (joinByCode never returns it). When the `join` message arrives over
+  // this socket, the room marks that connection's player as the host.
+  private readonly hostTokenByWs = new Map<WebSocket, string>();
+  // First host token seen on a WS upgrade for this room. Locked-in so
+  // a malicious second client constructing a different host URL cannot
+  // hijack the role.
+  private expectedHostToken: string | null = null;
+  // Player id of the host once they have completed the `join` handshake.
+  // Used to gate `start_match` to that one player.
+  private hostPlayerId: string | null = null;
   // One queue per player. Inputs arrive at 60 Hz from the client and are
   // drained one-per-tick by simulateHumans (matching the canonical Quake /
   // Source / Overwatch model). The cap (MAX_INPUT_QUEUE) bounds memory if a
@@ -286,9 +298,22 @@ export class Room implements DurableObject {
     if (requestedTopology && this.players.size === 0 && isValidTopology(requestedTopology)) {
       this.setTopology(requestedTopology);
     }
+    // Matchmaker stamps the host's URL with `?host=<token>` on private
+    // lobby create. The first such token a room sees becomes the room's
+    // expectedHostToken; subsequent host-flavoured URLs with a different
+    // token (only possible via a misconfiguration) are ignored.
+    const hostToken = url.searchParams.get('host');
     const pair = new WebSocketPair();
     const client = pair[0];
     const server = pair[1];
+    if (hostToken) {
+      if (this.expectedHostToken === null) {
+        this.expectedHostToken = hostToken;
+      }
+      // Stash per-WS so the `join` handler can recognize this client as
+      // the host without trusting payload-only fields.
+      this.hostTokenByWs.set(server, hostToken);
+    }
     this.state.acceptWebSocket(server);
     return new Response(null, { status: 101, webSocket: client });
   }
@@ -317,7 +342,7 @@ export class Room implements DurableObject {
   private handleMessage(ws: WebSocket, msg: ClientToServer): void {
     switch (msg.t) {
       case 'join':
-        this.onJoin(ws, msg.name, msg.v, msg.preferTeam);
+        this.onJoin(ws, msg.name, msg.v, msg.preferTeam, msg.hostToken);
         return;
       case 'leave':
         this.detach(ws);
@@ -334,13 +359,36 @@ export class Room implements DurableObject {
       case 'ping':
         this.send(ws, { t: 'pong', clientTime: msg.clientTime, serverTime: Date.now() });
         return;
+      case 'start_match':
+        this.onStartMatch(ws);
+        return;
     }
   }
 
-  private onJoin(ws: WebSocket, name: string, version: number, prefer?: Team): void {
+  private onJoin(
+    ws: WebSocket,
+    name: string,
+    version: number,
+    prefer?: Team,
+    payloadHostToken?: string,
+  ): void {
     if (version !== PROTOCOL_VERSION) {
       this.send(ws, { t: 'error', code: 'version_mismatch', message: 'update your client' });
       ws.close(4001, 'version');
+      return;
+    }
+    if (this.phase !== 'filling') {
+      // Match already running. Rejecting here is the second half of the
+      // "leave + rejoin to circumvent freeze" fix - the matchmaker code
+      // ideally never resolves for an in-progress room, but if the WS URL
+      // is somehow reused (manual reconnect, stale URL on disk) the room
+      // refuses the join cleanly so the client renders a popup.
+      this.send(ws, {
+        t: 'error',
+        code: 'match_in_progress',
+        message: 'this match has already started',
+      });
+      ws.close(4003, 'match_in_progress');
       return;
     }
     if (this.humanPlayers().length >= MAX_PLAYERS - this.botPlayers().length) {
@@ -371,14 +419,62 @@ export class Room implements DurableObject {
     };
     this.players.set(id, player);
     this.connections.set(ws, { ws, playerId: id });
+    // Host detection: the matchmaker stamped the room's expectedHostToken
+    // on the host's WS URL. Compare both the per-WS token (from the URL
+    // we saw on upgrade) and the optional payload token (belt and braces
+    // for clients that prefer to keep the token out of the URL). The
+    // first player whose token matches becomes the host; subsequent
+    // matches are ignored.
+    if (this.expectedHostToken !== null && this.hostPlayerId === null) {
+      const urlToken = this.hostTokenByWs.get(ws);
+      if (
+        (urlToken && urlToken === this.expectedHostToken) ||
+        (payloadHostToken && payloadHostToken === this.expectedHostToken)
+      ) {
+        this.hostPlayerId = id;
+      }
+    }
     this.send(ws, { t: 'snapshot', snapshot: this.snapshot(), youAre: id });
     this.broadcast({ t: 'event', kind: { kind: 'phase', phase: this.phase } });
-    if (this.phase === 'filling' && this.humanPlayers().length >= 2 && !this.tickHandle) {
-      this.startMatch();
-    } else if (this.phase === 'filling' && this.botFillHandle === null && !this.tickHandle) {
-      this.scheduleBotFill();
+    // Auto-start fallback only applies when the room has NO host. Private
+    // lobbies (matchmaker minted a hostToken) wait for an explicit
+    // start_match from the host; open/strangers rooms keep starting on
+    // the 2nd human / bot-fill timer like before.
+    const hasHost = this.expectedHostToken !== null;
+    if (!hasHost) {
+      if (this.phase === 'filling' && this.humanPlayers().length >= 2 && !this.tickHandle) {
+        this.startMatch();
+      } else if (this.phase === 'filling' && this.botFillHandle === null && !this.tickHandle) {
+        this.scheduleBotFill();
+      }
     }
     this.notifyMatchmaker(this.humanPlayers().length, this.botPlayers().length);
+  }
+
+  private onStartMatch(ws: WebSocket): void {
+    const conn = this.connections.get(ws);
+    if (!conn || conn.playerId !== this.hostPlayerId) {
+      this.send(ws, { t: 'error', code: 'not_host', message: 'only the host can start' });
+      return;
+    }
+    if (this.phase !== 'filling') {
+      this.send(ws, {
+        t: 'error',
+        code: 'match_in_progress',
+        message: 'match has already started',
+      });
+      return;
+    }
+    // Cancel the auto-fill timer if one happened to be scheduled (it would
+    // not normally fire for a hosted room, but the matchmaker may have
+    // changed mid-room or the room may have been promoted; safer to be
+    // defensive). Then fill bots and transition into free roam.
+    if (this.botFillHandle !== null) {
+      clearTimeout(this.botFillHandle);
+      this.botFillHandle = null;
+    }
+    this.fillBots();
+    this.startMatch();
   }
 
   /** Schedule a one-shot bot fill so a solo joiner gets opponents within a few seconds. */
@@ -579,6 +675,14 @@ export class Room implements DurableObject {
     const conn = this.connections.get(ws);
     if (!conn) return;
     this.connections.delete(ws);
+    this.hostTokenByWs.delete(ws);
+    // If the host drops, leave hostPlayerId null. They (or a successor
+    // who knows the hostToken) will re-claim on the next join. The room
+    // stays in `filling` until something triggers startMatch, so the
+    // empty-host state never strands the lobby.
+    if (this.hostPlayerId === conn.playerId) {
+      this.hostPlayerId = null;
+    }
     this.players.delete(conn.playerId);
     this.inputQueues.delete(conn.playerId);
     this.lastAppliedSeq.delete(conn.playerId);

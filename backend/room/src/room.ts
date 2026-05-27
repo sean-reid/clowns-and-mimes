@@ -241,6 +241,13 @@ export class Room implements DurableObject {
   private roundNumber = 0;
   private firstTeam: Team = 'mime';
   private tickHandle: ReturnType<typeof setInterval> | null = null;
+  // Date.now() at the moment the world paused because every human went
+  // into the disconnect grace window. Null while at least one human is
+  // active. On resume the first non-paused tick shifts turnEndsAt
+  // forward by the elapsed pause so the phase clock effectively pauses
+  // alongside the simulation (otherwise a 10 s wifi drop would burn
+  // through 10 s of the active turn timer in the player's absence).
+  private pausedSince: number | null = null;
   private botFillHandle: ReturnType<typeof setTimeout> | null = null;
   private readonly botMinds = new Map<string, BotMind>();
   // Wall-clock ms when each player was last unfrozen. Used by canTag to
@@ -984,6 +991,15 @@ export class Room implements DurableObject {
     return [...this.players.values()].filter((p) => !p.bot);
   }
 
+  // Humans whose WS is currently connected. Excludes players whose
+  // disconnectTimers entry is pending (the session-token grace window).
+  // Used by tick() to pause the world while every human is in grace,
+  // so a solo player who briefly drops wifi does not return to a
+  // partially-collapsed match.
+  private activeHumans(): number {
+    return this.humanPlayers().length - this.disconnectTimers.size;
+  }
+
   private botPlayers(): PlayerState[] {
     return [...this.players.values()].filter((p) => p.bot);
   }
@@ -1048,6 +1064,27 @@ export class Room implements DurableObject {
   }
 
   private tick(): void {
+    // Pause the world while every human is in the session-token grace
+    // window. Without this, a solo player who briefly drops wifi has
+    // the bots keep attacking their stationary body, the match runs
+    // through turn transitions in their absence, and frequently
+    // checkWin terminates the round before they can reconnect. The
+    // server tick keeps firing (the setInterval handle is still alive)
+    // but turning the body of the work into a no-op preserves player
+    // positions while the turnEndsAt cursor gets shifted forward on
+    // resume. Multi-human matches stay unaffected: as long as one
+    // human is connected, activeHumans > 0 and the tick runs normally.
+    if (this.activeHumans() === 0) {
+      if (this.pausedSince === null) this.pausedSince = Date.now();
+      return;
+    }
+    if (this.pausedSince !== null) {
+      // First tick after a resume - shift the turn clock forward by the
+      // pause duration so a returning player does not find their turn
+      // already half-over.
+      this.turnEndsAt += Date.now() - this.pausedSince;
+      this.pausedSince = null;
+    }
     const now = Date.now();
     if (this.phase === 'free_roam' && now >= this.turnEndsAt) {
       this.beginNextTurn();

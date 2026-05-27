@@ -6,6 +6,7 @@
 import type { Topology, Vec2, Vec3 } from './protocol.ts';
 import { pathCrossesWall, type WallSegment } from './labyrinth.ts';
 import { wrapPositionFromStep } from './topology.ts';
+import { HOVER_HEIGHT, JUMP_COOLDOWN_S, JUMP_DURATION_S, jumpArcY } from './physics.ts';
 
 export const WALK_SPEED = 3.2;
 export const SPRINT_SPEED = 5.6;
@@ -121,3 +122,80 @@ export function stepMovement(
 function clamp(v: number, lo: number, hi: number): number {
   return Math.min(hi, Math.max(lo, v));
 }
+
+export interface JumpStepInput {
+  // Rising-edge jump request (true on the input frame where the player
+  // pressed Space). Holding the key does NOT chain; clients debounce.
+  jump: boolean;
+  // Wall-clock time the client stamped on this input (Unix ms). Used as
+  // the new jumpStartedAt on trigger so the client predictor and the
+  // server agree on the arc start without a round-trip. Server callers
+  // should clamp into Date.now() ± 500 ms before passing in.
+  nowMs: number;
+}
+
+export interface JumpStepState {
+  // Null when the player is not in the jump-arc-or-cooldown lockout.
+  // Set to the takeoff timestamp when a jump triggers; stays set
+  // through the arc AND the post-landing cooldown so a queued
+  // `jump: true` next input cannot retrigger immediately. Clears to
+  // null automatically at the end of the lockout.
+  jumpStartedAt: number | null;
+}
+
+export interface JumpStepResult {
+  // New jumpStartedAt to write back to the player's state. Either
+  // unchanged, set to `input.nowMs` on takeoff, or null after the
+  // lockout expires. Y is NOT returned: the simulator's broadcast
+  // path recomputes Y from jumpStartedAt at the broadcast wall-clock
+  // so the snapshot's authoritative Y reflects the server's "now"
+  // rather than the input's arrival time.
+  jumpStartedAt: number | null;
+}
+
+/**
+ * One tick of jump trigger / lockout processing. Returns the
+ * authoritative jumpStartedAt to store on the player. Deterministic
+ * given the same state and input; reconcile replay produces identical
+ * output when the client feeds the same nowMs the server used.
+ *
+ * Lockout: jumpStartedAt stays set for JUMP_DURATION_S (arc) +
+ * JUMP_COOLDOWN_S (post-landing). New triggers are gated on
+ * jumpStartedAt === null so the cooldown sub-window naturally
+ * rejects rapid re-press. During the cooldown the body is already
+ * back at HOVER_HEIGHT (jumpArcY returns the floor for elapsed past
+ * the arc), only the input gate remains active.
+ */
+export function stepJump(state: JumpStepState, input: JumpStepInput): JumpStepResult {
+  const { nowMs } = input;
+  let jumpStartedAt = state.jumpStartedAt;
+
+  if (jumpStartedAt !== null) {
+    const elapsedMs = nowMs - jumpStartedAt;
+    const lockoutMs = (JUMP_DURATION_S + JUMP_COOLDOWN_S) * 1000;
+    if (elapsedMs >= lockoutMs) {
+      jumpStartedAt = null;
+    }
+  }
+
+  if (input.jump && jumpStartedAt === null) {
+    jumpStartedAt = nowMs;
+  }
+
+  return { jumpStartedAt };
+}
+
+/**
+ * Y the body should render at given the player's authoritative
+ * jumpStartedAt and the current wall-clock. Thin wrapper over
+ * jumpArcY so callers can stay in this module for the full jump
+ * surface.
+ */
+export function bodyYForState(state: { jumpStartedAt: number | null }, nowMs: number): number {
+  return jumpArcY(state.jumpStartedAt, nowMs);
+}
+
+// Re-export HOVER_HEIGHT so server callers that previously imported
+// movement constants can find it in the same module instead of
+// reaching into physics.ts for one symbol.
+export { HOVER_HEIGHT };

@@ -76,3 +76,23 @@ func test_vertically_overlapping_peak_evades_grounded() -> void:
 	var grounded: float = Physics.HOVER_HEIGHT
 	var peak: float = Physics.HOVER_HEIGHT + Physics.JUMP_AMP
 	assert_false(Physics.vertically_overlapping(grounded, peak))
+
+const LOCKOUT_MS := 700  # (JUMP_DURATION_S + JUMP_COOLDOWN_S) * 1000
+
+func test_step_jump_triggers_on_first_press() -> void:
+	assert_eq(Physics.step_jump(-1, true, 1000), 1000)
+
+func test_step_jump_idle_when_no_press() -> void:
+	assert_eq(Physics.step_jump(-1, false, 1000), -1)
+
+func test_step_jump_rejects_press_during_arc() -> void:
+	assert_eq(Physics.step_jump(1000, true, 1000 + ARC_MS / 2), 1000)
+
+func test_step_jump_rejects_press_during_cooldown() -> void:
+	assert_eq(Physics.step_jump(1000, true, 1000 + ARC_MS + 50), 1000)
+
+func test_step_jump_clears_after_lockout() -> void:
+	assert_eq(Physics.step_jump(1000, false, 1000 + LOCKOUT_MS), -1)
+
+func test_step_jump_clears_and_triggers_in_one_tick() -> void:
+	assert_eq(Physics.step_jump(1000, true, 1000 + LOCKOUT_MS + 5), 1000 + LOCKOUT_MS + 5)

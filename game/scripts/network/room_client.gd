@@ -71,7 +71,14 @@ func send_join(name: String, prefer_team: String = "", host_token: String = "") 
 func send_start_match() -> void:
 	_enqueue({"t": "start_match"})
 
-func send_input(seq: int, dt: float, move: Vector2, look_yaw: float, sprint: bool) -> void:
+func send_input(
+	seq: int,
+	dt: float,
+	move: Vector2,
+	look_yaw: float,
+	sprint: bool,
+	jump: bool,
+) -> void:
 	_enqueue(
 		{
 			"t": "input",
@@ -81,6 +88,12 @@ func send_input(seq: int, dt: float, move: Vector2, look_yaw: float, sprint: boo
 				"move": {"x": move.x, "z": move.y},
 				"lookYaw": look_yaw,
 				"sprint": sprint,
+				"jump": jump,
+				# nowMs anchors the jumpStartedAt timestamp on the server so the
+				# arc start matches the client's press time without an extra
+				# round-trip. Server clamps to its own clock if the skew is
+				# large; the value is otherwise unused for non-jump inputs.
+				"nowMs": _now_ms(),
 			},
 		}
 	)

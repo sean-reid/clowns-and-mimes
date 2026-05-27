@@ -72,3 +72,23 @@ static func is_jumping(started_at_ms: int, now_ms: int) -> bool:
 ## the existing XZ distance check.
 static func vertically_overlapping(y_a: float, y_b: float) -> bool:
 	return absf(y_a - y_b) < BODY_VERTICAL_EXTENT
+
+## Mirror of backend/shared/src/movement.ts::stepJump. Returns the new
+## jumpStartedAt (-1 for null) after one tick of trigger / lockout
+## processing.
+##
+## Lockout: jumpStartedAt stays set through the arc duration AND the
+## post-landing cooldown. New triggers are gated on the value being -1.
+## During the cooldown the body is already back at HOVER_HEIGHT
+## (jump_arc_y returns the floor for elapsed past the arc); only the
+## input gate remains active.
+static func step_jump(jump_started_at_ms: int, jump_pressed: bool, now_ms: int) -> int:
+	var lockout_ms: int = int((JUMP_DURATION_S + JUMP_COOLDOWN_S) * 1000.0)
+	var next: int = jump_started_at_ms
+	if next >= 0:
+		var elapsed_ms: int = now_ms - next
+		if elapsed_ms >= lockout_ms:
+			next = -1
+	if jump_pressed and next < 0:
+		next = now_ms
+	return next

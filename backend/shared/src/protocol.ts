@@ -29,6 +29,21 @@ export interface PlayerInput {
   move: Vec2;
   lookYaw: number;
   sprint: boolean;
+  // Rising-edge jump request. Set true on the input frame where the
+  // player pressed Space; false otherwise. The server triggers a new
+  // jump only when the player is not already jumping and is past the
+  // post-landing cooldown (see physics.ts::JUMP_COOLDOWN_S). Holding
+  // the key does NOT chain jumps; the client debounces to one true
+  // per press.
+  jump?: boolean;
+  // Wall-clock when the client emitted this input (Unix ms). Used as
+  // the jumpStartedAt timestamp on jump=true so the client predictor
+  // and the server agree on the arc start without a round-trip. The
+  // server clamps the value into the local Date.now() ± 500 ms window
+  // before stamping it, bounding client clock skew (and any nominal
+  // manipulation). Required on every input - movement is unaffected
+  // by the value, only jump trigger reads it.
+  nowMs: number;
   actionTag?: string;
   actionUnfreeze?: string;
 }

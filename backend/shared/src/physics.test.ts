@@ -2,12 +2,14 @@ import { describe, expect, it } from 'vitest';
 import {
   HOVER_HEIGHT,
   JUMP_AMP,
+  JUMP_COOLDOWN_S,
   JUMP_DURATION_S,
   BODY_VERTICAL_EXTENT,
   jumpArcY,
   isJumping,
   verticallyOverlapping,
 } from './physics.ts';
+import { stepJump } from './movement.ts';
 
 const ARC_MS = JUMP_DURATION_S * 1000;
 
@@ -91,5 +93,50 @@ describe('verticallyOverlapping', () => {
     const grounded = at(HOVER_HEIGHT);
     const peak = at(HOVER_HEIGHT + JUMP_AMP);
     expect(verticallyOverlapping(grounded, peak)).toBe(false);
+  });
+});
+
+describe('stepJump', () => {
+  const ARC_MS = JUMP_DURATION_S * 1000;
+  const COOLDOWN_MS = JUMP_COOLDOWN_S * 1000;
+  const LOCKOUT_MS = ARC_MS + COOLDOWN_MS;
+
+  it('triggers on first jump press', () => {
+    const out = stepJump({ jumpStartedAt: null }, { jump: true, nowMs: 1000 });
+    expect(out.jumpStartedAt).toBe(1000);
+  });
+
+  it('does nothing when jump is false and not in lockout', () => {
+    const out = stepJump({ jumpStartedAt: null }, { jump: false, nowMs: 1000 });
+    expect(out.jumpStartedAt).toBeNull();
+  });
+
+  it('rejects a second jump during the arc', () => {
+    const out = stepJump({ jumpStartedAt: 1000 }, { jump: true, nowMs: 1000 + ARC_MS / 2 });
+    expect(out.jumpStartedAt).toBe(1000);
+  });
+
+  it('rejects a second jump during the cooldown sub-window', () => {
+    const out = stepJump(
+      { jumpStartedAt: 1000 },
+      { jump: true, nowMs: 1000 + ARC_MS + COOLDOWN_MS / 2 },
+    );
+    expect(out.jumpStartedAt).toBe(1000);
+  });
+
+  it('clears jumpStartedAt at the end of the lockout window', () => {
+    const out = stepJump({ jumpStartedAt: 1000 }, { jump: false, nowMs: 1000 + LOCKOUT_MS });
+    expect(out.jumpStartedAt).toBeNull();
+  });
+
+  it('clears + triggers in a single tick when lockout expires and jump is pressed', () => {
+    const out = stepJump({ jumpStartedAt: 1000 }, { jump: true, nowMs: 1000 + LOCKOUT_MS + 5 });
+    expect(out.jumpStartedAt).toBe(1000 + LOCKOUT_MS + 5);
+  });
+
+  it('is deterministic across replays with the same input', () => {
+    const a = stepJump({ jumpStartedAt: null }, { jump: true, nowMs: 7777 });
+    const b = stepJump({ jumpStartedAt: null }, { jump: true, nowMs: 7777 });
+    expect(a).toEqual(b);
   });
 });

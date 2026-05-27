@@ -11,7 +11,7 @@ import type {
   Vec3,
 } from '@cm/shared';
 import { BATTLE_CRY_COUNT, PROTOCOL_VERSION } from '@cm/shared';
-import { HOVER_HEIGHT } from '@cm/shared/physics';
+import { HOVER_HEIGHT, JUMP_COOLDOWN_S, JUMP_DURATION_S } from '@cm/shared/physics';
 import { topologyDistance, wrapPosition, wrappedUnitDelta } from '@cm/shared/topology';
 import {
   generateWalls,
@@ -22,6 +22,8 @@ import {
 } from '@cm/shared/labyrinth';
 import { balanceTeamAssignments } from './teamBalance.ts';
 import {
+  bodyYForState,
+  stepJump,
   stepMovement,
   WALK_SPEED,
   SPRINT_SPEED,
@@ -29,6 +31,7 @@ import {
   SPRINT_DRAIN_PER_S,
   SPRINT_REGEN_PER_S,
 } from '@cm/shared/movement';
+import { verticallyOverlapping } from '@cm/shared/physics';
 import { BotPathfinder } from './botPathfinder.ts';
 
 // Server simulate + broadcast at 60 Hz. Each delta is ~16.7 ms apart so
@@ -77,6 +80,14 @@ const TURN_FIRST_MS = 30_000;
 const TURN_STEP_MS = 30_000;
 const TURN_CAP_MS = 5 * 60_000;
 const BOT_FILL_DELAY_MS = 3_000;
+// Maximum drift allowed between the client's stamped input.nowMs and
+// the server's Date.now() when the input lands. Inputs whose nowMs is
+// further out are still honoured but the server re-stamps the jump
+// arc start with its own clock, so a misbehaving (or wildly out of
+// sync) client cannot anchor jumpStartedAt arbitrarily far in the past
+// or future. 500 ms is generous against legitimate network jitter and
+// tight enough that the cheat ceiling is bounded.
+const JUMP_CLIENT_CLOCK_SKEW_MS = 500;
 // Window during which a player whose WS has closed can reconnect with
 // their sessionToken and resume the same PlayerState. Bots keep playing
 // against them in absentia; their input queue stays empty so their body
@@ -885,13 +896,28 @@ export class Room implements DurableObject {
       this.send(ws, { t: 'tag_result', ok: false, reason });
       return;
     }
-    victim.frozen = true;
+    this.freezePlayer(victim);
     this.send(ws, { t: 'tag_result', ok: true, targetId });
     this.broadcast({
       t: 'event',
       kind: { kind: 'tagged', attackerId: attacker.id, victimId: victim.id, team: attacker.team },
     });
     this.checkWin();
+  }
+
+  /**
+   * Centralised freeze. Sets `frozen = true` and cancels any active jump
+   * arc so a tagged-mid-air body drops back to HOVER_HEIGHT for the
+   * snapshot wire rather than freezing in place at altitude. Clients
+   * render the descent as a short Y-lerp; the server's authoritative
+   * position is already on the ground.
+   */
+  private freezePlayer(p: PlayerState): void {
+    p.frozen = true;
+    if (p.jumpStartedAt !== null) {
+      p.jumpStartedAt = null;
+      p.position = { x: p.position.x, y: HOVER_HEIGHT, z: p.position.z };
+    }
   }
 
   private onUnfreeze(ws: WebSocket, targetId: string): void {
@@ -975,6 +1001,14 @@ export class Room implements DurableObject {
       )
     )
       return 'wall_in_way';
+    // Vertical-overlap gate. Option A from the jumping plan: tag fires
+    // on XZ overlap + vertical overlap, regardless of jump state. A
+    // peak jumper's Y minus a grounded body's Y equals JUMP_AMP, which
+    // is tuned just above BODY_VERTICAL_EXTENT so the peak-vs-grounded
+    // case rejects here. Synchronized jumpers (both near peak) pass
+    // and tag normally; mistimed jumpers fall outside the threshold
+    // and miss.
+    if (!verticallyOverlapping(attacker, victim)) return 'vertical_separation';
     return null;
   }
 
@@ -1141,7 +1175,34 @@ export class Room implements DurableObject {
     const dt = TICK_MS / 1000;
     this.simulateHumans(dt);
     this.simulateBots(dt);
+    this.advanceIdleJumpState();
     this.recordPositionsForLagComp();
+  }
+
+  /**
+   * Refresh Y and clear stale jumpStartedAt for every player whose
+   * stepJump did not run this tick (input queue was empty, or the
+   * player is frozen, or is a bot in PR 2 - PR 5 will give bots their
+   * own jump trigger). Without this pass, a mid-air player whose
+   * inputs stopped landing would have its jumpStartedAt sit at the
+   * takeoff timestamp indefinitely and the broadcast snapshot's
+   * position.y would stay stale; clients would still compute the
+   * correct Y from jumpArcY but the wire would carry the wrong
+   * authoritative value.
+   */
+  private advanceIdleJumpState(): void {
+    const now = Date.now();
+    const lockoutMs = (JUMP_DURATION_S + JUMP_COOLDOWN_S) * 1000;
+    for (const p of this.players.values()) {
+      if (p.jumpStartedAt !== null && now - p.jumpStartedAt >= lockoutMs) {
+        p.jumpStartedAt = null;
+      }
+      p.position = {
+        x: p.position.x,
+        y: bodyYForState({ jumpStartedAt: p.jumpStartedAt }, now),
+        z: p.position.z,
+      };
+    }
   }
 
   /**
@@ -1208,7 +1269,22 @@ export class Room implements DurableObject {
         WORLD_WIDTH,
         (candidate) => this.collidesWithOtherPlayer(p, candidate.x, candidate.z),
       );
+      // Jump trigger / lockout. The client stamps input.nowMs when it
+      // sends the input; we use that timestamp (clamped to local clock
+      // skew) as the new jumpStartedAt so the client's predicted arc
+      // start matches the authoritative value without a round-trip.
+      // Y is computed authoritatively in advanceIdleJumpState at end
+      // of tick using the server's Date.now().
+      const serverNow = Date.now();
+      const inputNow = input.nowMs ?? serverNow;
+      const skewMs = Math.abs(inputNow - serverNow);
+      const arcNow = skewMs > JUMP_CLIENT_CLOCK_SKEW_MS ? serverNow : inputNow;
+      const jump = stepJump(
+        { jumpStartedAt: p.jumpStartedAt },
+        { jump: input.jump ?? false, nowMs: arcNow },
+      );
       p.position = next.position;
+      p.jumpStartedAt = jump.jumpStartedAt;
       p.sprintEnergy = next.sprintEnergy;
       p.sprinting = next.sprinting;
       p.yaw = input.lookYaw;
@@ -1556,7 +1632,7 @@ export class Room implements DurableObject {
         enemyDist <= TAG_RADIUS_BOT &&
         this.canTag(bot, target, TAG_RADIUS_BOT)
       ) {
-        target.frozen = true;
+        this.freezePlayer(target);
         this.broadcast({
           t: 'event',
           kind: { kind: 'tagged', attackerId: bot.id, victimId: target.id, team: bot.team },

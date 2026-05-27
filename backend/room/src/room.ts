@@ -195,7 +195,30 @@ interface BotMind {
   // different parts of the map instead of pacing between the same spots.
   // Newest at the end; capped at BOT_RECENT_TARGETS_KEEP.
   recentTargets: Array<{ x: number; z: number }>;
+  // Wall-clock of the bot's last jump takeoff (Unix ms). Used to debounce
+  // the three jump triggers (tag-threat, stuck-in-corner, tactical noise)
+  // so a bot doesn't bunny-hop every tick the predicate fires. 0 means
+  // "never jumped this match".
+  lastJumpedAt: number;
 }
+
+// Minimum gap between bot jumps so a sustained threat doesn't make the
+// bot hop on every tick. The natural JUMP_DURATION_S + JUMP_COOLDOWN_S
+// lockout in stepJump would already prevent it, but enforcing a longer
+// gap here keeps the rhythm reading as deliberate rather than spammy.
+const BOT_JUMP_REFRACTORY_MS = 1500;
+// Per-tick probability of a tactical-noise jump during an active chase.
+// 5% per second at 60 Hz simulate; gives ~3 noise jumps per minute,
+// enough to keep bots from being read trivially without spamming.
+const BOT_JUMP_NOISE_PER_SECOND = 0.05;
+// Extra reach added to TAG_RADIUS_BOT when evaluating the tag-threat
+// jump trigger. A bot inside (tag_radius + this) starts evading before
+// the attacker has actually reached tag range.
+const BOT_JUMP_EVADE_BUFFER = 0.5;
+// Maximum opponent distance for the corner-jump trigger. If a bot has
+// made no progress for BOT_NO_PROGRESS_WINDOW_MS AND an opponent is
+// within this range, jump to reposition.
+const BOT_JUMP_CORNER_THREAT_RADIUS = 4.0;
 
 interface Connection {
   ws: WebSocket;
@@ -605,6 +628,7 @@ export class Room implements DurableObject {
           lastKnownPos: null,
           investigateUntil: 0,
           recentTargets: [],
+          lastJumpedAt: 0,
         });
       }
     }
@@ -1341,6 +1365,7 @@ export class Room implements DurableObject {
         lastKnownPos: null,
         investigateUntil: 0,
         recentTargets: [],
+        lastJumpedAt: 0,
       };
       this.botMinds.set(bot.id, mind);
 
@@ -1433,6 +1458,58 @@ export class Room implements DurableObject {
       const fleeing =
         target !== null && enemyDist < BOT_VISION_RADIUS && active && active !== bot.team;
       const rescuing = rescueTarget !== null;
+
+      // Jump triggers. Three predicates share one refractory gate; any
+      // firing one re-anchors `bot.jumpStartedAt` (the simulate loop's
+      // advanceIdleJumpState then handles arc Y and lockout clearance).
+      // Skipped if the bot is already mid-arc or just landed - the
+      // refractory window outlasts the arc + cooldown so the next eval
+      // happens at a clean rest position.
+      const sinceLastJump = now - mind.lastJumpedAt;
+      const jumpEligible = bot.jumpStartedAt === null && sinceLastJump >= BOT_JUMP_REFRACTORY_MS;
+      let wantJump = false;
+      if (jumpEligible) {
+        // 1. Tag-threat evasion. Bot is on the defending team and an
+        //    unfrozen, non-jumping opponent is within tag range plus a
+        //    small reaction buffer. Skipping the trigger when the
+        //    threat is already airborne avoids both bodies dancing in
+        //    sync (which would still tag per Option A).
+        if (
+          fleeing &&
+          target !== null &&
+          !target.frozen &&
+          target.jumpStartedAt === null &&
+          enemyDist <= TAG_RADIUS_BOT + BOT_JUMP_EVADE_BUFFER
+        ) {
+          wantJump = true;
+        }
+        // 2. Cornered. The existing no-progress detector tells us the
+        //    bot is grinding into geometry; if any opponent is nearby
+        //    the jump repositions the bot via the bounceback that lands
+        //    after the arc rather than letting them be a sitting duck.
+        if (!wantJump) {
+          const noProgressDur = now - mind.progressSampleAt;
+          if (
+            noProgressDur >= BOT_NO_PROGRESS_WINDOW_MS &&
+            enemyDist <= BOT_JUMP_CORNER_THREAT_RADIUS
+          ) {
+            wantJump = true;
+          }
+        }
+        // 3. Tactical noise during active chase. Keeps the bots from
+        //    being readable trivially. Probability is scaled by the
+        //    tick duration so it stays per-second-stable regardless of
+        //    tick rate changes.
+        if (!wantJump && chasing) {
+          if (Math.random() < BOT_JUMP_NOISE_PER_SECOND * dt) {
+            wantJump = true;
+          }
+        }
+      }
+      if (wantJump) {
+        bot.jumpStartedAt = now;
+        mind.lastJumpedAt = now;
+      }
 
       let dir = { x: 0, z: 0 };
       if (fleeing && target) {

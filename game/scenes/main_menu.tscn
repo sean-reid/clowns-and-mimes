@@ -61,3 +61,14 @@ placeholder_text = "ABCDEF"
 
 [node name="JoinButton" type="Button" parent="Center/CodeRow"]
 text = "Join"
+
+[node name="SettingsButton" type="Button" parent="."]
+anchor_left = 1.0
+anchor_right = 1.0
+offset_left = -64.0
+offset_top = 12.0
+offset_right = -12.0
+offset_bottom = 56.0
+tooltip_text = "Settings"
+text = "⚙"
+theme_override_font_sizes/font_size = 26

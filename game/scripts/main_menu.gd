@@ -5,6 +5,8 @@ signal requested_screen(screen: String)
 const AssetPaths := preload("res://scripts/asset_paths.gd")
 const VersionCheck := preload("res://scripts/network/version_check.gd")
 
+const SettingsPanel := preload("res://scenes/settings_panel.tscn")
+
 @onready var host_button: Button = $Center/Buttons/HostButton
 @onready var open_button: Button = $Center/Buttons/OpenButton
 @onready var username_input: LineEdit = $Center/UsernameRow/Username
@@ -12,6 +14,7 @@ const VersionCheck := preload("res://scripts/network/version_check.gd")
 @onready var topology_picker: OptionButton = $Center/TopologyRow/Topology
 @onready var code_input: LineEdit = $Center/CodeRow/CodeEntry
 @onready var join_button: Button = $Center/CodeRow/JoinButton
+@onready var settings_button: Button = $SettingsButton
 
 func _ready() -> void:
 	username_input.placeholder_text = "Optional username"
@@ -24,6 +27,7 @@ func _ready() -> void:
 	# the field has focus.
 	code_input.text_submitted.connect(_on_code_submitted)
 	open_button.pressed.connect(_join_open)
+	settings_button.pressed.connect(_open_settings)
 	_populate_topologies()
 	username_input.text = GameState.username
 	# Idempotent: keeps the theme alive if the player returned here from a
@@ -112,3 +116,6 @@ func _join_open() -> void:
 	_commit_username()
 	GameState.set_mode(GameState.Mode.OPEN)
 	requested_screen.emit("lobby")
+
+func _open_settings() -> void:
+	add_child(SettingsPanel.instantiate())

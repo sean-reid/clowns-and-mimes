@@ -139,7 +139,12 @@ var _reconnect_label: Label = null
 # ---------------------------------------------------------------------------
 
 func _ready() -> void:
+	# Group registration so the settings overlay can find the live arena
+	# scene and re-apply visual prefs (light mode) without waiting for
+	# the next match load.
+	add_to_group("arena")
 	online_mode = not GameState.server_url.is_empty()
+	apply_light_mode(Settings.light_mode)
 	_setup_menu()
 	hud.set_sprint(100.0)
 	# Leave the countdown label blank until the first phase update arrives;
@@ -161,6 +166,33 @@ func _setup_menu() -> void:
 	add_child(menu)
 	menu.resume_requested.connect(_on_menu_resume)
 	menu.quit_to_menu_requested.connect(_on_menu_quit)
+
+func apply_light_mode(enabled: bool) -> void:
+	# Re-skin the arena Environment + DirectionalLight to either the
+	# default moody dusk palette or a bright daylight palette. Called once
+	# on _ready and again whenever Settings.light_mode toggles while a
+	# match is in progress.
+	var env_node: WorldEnvironment = get_node_or_null("Environment")
+	var sun: DirectionalLight3D = get_node_or_null("DirectionalLight")
+	if env_node == null or env_node.environment == null or sun == null:
+		return
+	var env: Environment = env_node.environment
+	if enabled:
+		env.background_color = Color(0.55, 0.75, 0.95)
+		env.ambient_light_color = Color(0.95, 0.95, 0.92)
+		env.ambient_light_energy = 0.6
+		env.fog_light_color = Color(0.72, 0.82, 0.95)
+		env.fog_density = 0.006
+		sun.light_energy = 1.0
+		sun.light_color = Color(1.0, 0.98, 0.92)
+	else:
+		env.background_color = Color(0.04, 0.04, 0.05)
+		env.ambient_light_color = Color(0.45, 0.4, 0.55)
+		env.ambient_light_energy = 0.18
+		env.fog_light_color = Color(0.06, 0.05, 0.09)
+		env.fog_density = 0.018
+		sun.light_energy = 0.45
+		sun.light_color = Color(1.0, 1.0, 1.0)
 
 func _unhandled_input(event: InputEvent) -> void:
 	if event.is_action_pressed("ui_pause") and not menu.visible:

@@ -474,16 +474,32 @@ func _reconcile_local_player(delta: Dictionary) -> void:
 		replayed_pos = step["position"]
 		local_sprint_energy = step["sprint_energy"]
 		local_sprinting = bool(step["sprinting"])
-	# Both sides run the same stepMovement, so the replayed position is
-	# usually within a few cm of the local prediction. Rather than snapping
-	# straight to it, set replayed_pos as the new "end of tick" target and
-	# anchor "start of tick" to where the body is rendered right now. The
-	# next render frames lerp from current visual position to the corrected
-	# target over one tick window, turning a 5 cm correction into a smooth
-	# slide instead of a visible pop.
-	_pred_prev_xz = Vector2(local_player.global_position.x, local_player.global_position.z)
+	# In steady state the predictor's _pred_current_xz already equals
+	# replayed_pos (both sides run the same stepMovement deterministically),
+	# so reconcile has nothing to correct. The previous design always
+	# re-anchored _pred_prev_xz to the body's rendered position and reset
+	# the lerp's tick-start anyway - and that anchoring was the actual bug.
+	# Because reconciles fire at 60 Hz and re-anchor prev to "where body is
+	# right now," any lag between the rendered position and _pred_current_xz
+	# was held in place across reconciles instead of being absorbed by the
+	# natural predict-tick cycle (which rotates _pred_current_xz into
+	# _pred_prev_xz every 16.7 ms). The lag compounded until it crossed the
+	# 1 m wrap-snap threshold in _advance_local_prediction and the body
+	# teleported forward visibly. That was the "humans choppy, bots smooth"
+	# regression after the NetClient autoload changed the per-frame process
+	# order (reconcile now runs before _advance_local_prediction).
+	#
+	# Only re-anchor when there is a real correction to absorb. A 5 cm
+	# threshold catches genuine drift (wall-slide divergence, wrap edge
+	# cases, server-side displacement) while letting the 60 Hz no-op
+	# reconciles pass through unobstructed. The threshold lives below
+	# the 1 m wrap-detection so big corrections still trip the wrap snap
+	# in _advance_local_prediction.
+	const CORRECTION_THRESHOLD := 0.05
+	if (replayed_pos - _pred_current_xz).length() > CORRECTION_THRESHOLD:
+		_pred_prev_xz = Vector2(local_player.global_position.x, local_player.global_position.z)
+		_pred_tick_start_t = Time.get_unix_time_from_system()
 	_pred_current_xz = replayed_pos
-	_pred_tick_start_t = Time.get_unix_time_from_system()
 	_pred_armed = true
 
 func _on_room_event(event: Dictionary) -> void:

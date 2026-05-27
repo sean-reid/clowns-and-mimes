@@ -1,6 +1,6 @@
 extends Node
 
-## Persistent player preferences (audio + graphics). Backed by
+## Persistent player preferences (audio + graphics + profile). Backed by
 ## `user://settings.cfg` so the choices survive across launches.
 ##
 ## Audio:
@@ -11,6 +11,11 @@ extends Node
 ##   - light_mode: swaps the arena Environment + DirectionalLight to
 ##     bright daylight values. Applied per-scene by arena.gd at _ready
 ##     based on the current flag.
+##
+## Profile:
+##   - custom_username: the last username the player typed by hand. Empty
+##     string means "no saved name, generate a random one each session."
+##     Names produced by the Random button are NOT saved here.
 ##
 ## Mutations emit `changed` so the active scene can re-apply the visual
 ## side of the change immediately without reloading.
@@ -23,6 +28,7 @@ const SECTION := "preferences"
 var music_muted: bool = false
 var sfx_muted: bool = false
 var light_mode: bool = false
+var custom_username: String = ""
 
 func _ready() -> void:
 	_load()
@@ -54,6 +60,13 @@ func set_light_mode(value: bool) -> void:
 	_save()
 	changed.emit()
 
+func set_custom_username(value: String) -> void:
+	if custom_username == value:
+		return
+	custom_username = value
+	_save()
+	changed.emit()
+
 func _apply_audio() -> void:
 	AudioBus.mute_bus("Music", music_muted)
 	AudioBus.mute_bus("SFX", sfx_muted)
@@ -67,10 +80,12 @@ func _load() -> void:
 	music_muted = bool(cfg.get_value(SECTION, "music_muted", false))
 	sfx_muted = bool(cfg.get_value(SECTION, "sfx_muted", false))
 	light_mode = bool(cfg.get_value(SECTION, "light_mode", false))
+	custom_username = String(cfg.get_value(SECTION, "custom_username", ""))
 
 func _save() -> void:
 	var cfg := ConfigFile.new()
 	cfg.set_value(SECTION, "music_muted", music_muted)
 	cfg.set_value(SECTION, "sfx_muted", sfx_muted)
 	cfg.set_value(SECTION, "light_mode", light_mode)
+	cfg.set_value(SECTION, "custom_username", custom_username)
 	cfg.save(CONFIG_PATH)

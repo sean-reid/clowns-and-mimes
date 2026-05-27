@@ -16,6 +16,15 @@ const SettingsPanel := preload("res://scenes/settings_panel.tscn")
 @onready var join_button: Button = $Center/CodeRow/JoinButton
 @onready var settings_button: Button = $SettingsButton
 
+# Tracks whether the current username field value was typed by the player
+# (vs produced by the Random button). Only typed names get persisted to
+# Settings.custom_username on submit; random names are session-only.
+var _username_was_typed: bool = false
+# Set true while we programmatically rewrite username_input.text so the
+# accompanying text_changed signal does NOT flip _username_was_typed back
+# to true. Without this, Random + Host would save the random name.
+var _suppress_username_signal: bool = false
+
 func _ready() -> void:
 	username_input.placeholder_text = "Optional username"
 	random_button.pressed.connect(_randomize_name)
@@ -28,8 +37,17 @@ func _ready() -> void:
 	code_input.text_submitted.connect(_on_code_submitted)
 	open_button.pressed.connect(_join_open)
 	settings_button.pressed.connect(_open_settings)
+	username_input.text_changed.connect(_on_username_text_changed)
 	_populate_topologies()
+	# Restore a previously saved custom username if one exists. Loading it
+	# back into GameState too means the lobby + arena pick it up without
+	# any further wiring.
+	if not Settings.custom_username.is_empty():
+		GameState.username = Settings.custom_username
+		_username_was_typed = true
+	_suppress_username_signal = true
 	username_input.text = GameState.username
+	_suppress_username_signal = false
 	# Idempotent: keeps the theme alive if the player returned here from a
 	# match, and starts it if they somehow reached the menu without the title.
 	# Unduck the Music bus in case a stinger left it lowered.
@@ -70,13 +88,33 @@ func _populate_topologies() -> void:
 	topology_picker.add_item("Klein bottle", GameState.Topology.KLEIN)
 
 func _randomize_name() -> void:
+	_suppress_username_signal = true
 	username_input.text = UsernameGenerator.generate()
+	_suppress_username_signal = false
+	# Suppress catches the text_changed below; reset the typed flag here
+	# so a subsequent submit treats this as a session-only random name.
+	_username_was_typed = false
+
+func _on_username_text_changed(_new_text: String) -> void:
+	if _suppress_username_signal:
+		return
+	_username_was_typed = true
 
 func _commit_username() -> void:
-	if username_input.text.is_empty():
+	var typed: String = username_input.text.strip_edges()
+	if typed.is_empty():
+		# Cleared field = explicit "use a random name." Drop any saved
+		# custom so the next session also starts fresh instead of
+		# resurrecting the old one.
 		GameState.username = UsernameGenerator.generate()
-	else:
-		GameState.username = username_input.text.strip_edges()
+		Settings.set_custom_username("")
+		return
+	GameState.username = typed
+	# Only persist a name the player actually typed. Random names stay
+	# session-only; we also don't clobber an existing saved custom when
+	# the player just submitted without touching the field.
+	if _username_was_typed:
+		Settings.set_custom_username(typed)
 
 func _host() -> void:
 	_commit_username()

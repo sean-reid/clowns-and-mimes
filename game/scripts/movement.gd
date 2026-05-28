@@ -101,7 +101,19 @@ static func step(
 	var loss_dz: float = attempted_dz - actual_dz
 	var loss_mag: float = sqrt(loss_dx * loss_dx + loss_dz * loss_dz)
 	var attempted_mag: float = sqrt(attempted_dx * attempted_dx + attempted_dz * attempted_dz)
-	if attempted_mag > 0.0 and loss_mag / attempted_mag > 0.1:
+	# Skip rebound when the apparent "loss" is actually a topology wrap.
+	# A genuine partial-block loss is bounded by the attempted step
+	# (slide loses one axis, full block loses both); anything larger
+	# means next_pos jumped to the far side of a seam, and rebounding
+	# off that would shove the body off the playfield. The 1.5x slack
+	# handles float-precision near the boundary without false-allowing
+	# real wraps (which are at minimum WIDTH / 2 in magnitude, way past
+	# the 1.5x window for any plausible single-tick step).
+	if (
+		attempted_mag > 0.0
+		and loss_mag <= attempted_mag * 1.5
+		and loss_mag / attempted_mag > 0.1
+	):
 		var rebound_x: float = -loss_dx * PhysicsScript.BOUNCE_E_WALL
 		var rebound_z: float = -loss_dz * PhysicsScript.BOUNCE_E_WALL
 		var candidate_xz := Vector2(next_pos.x + rebound_x, next_pos.y + rebound_z)

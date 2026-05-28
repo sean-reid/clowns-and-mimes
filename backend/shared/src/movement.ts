@@ -131,7 +131,17 @@ export function stepMovement(
   const lossDz = attemptedDz - actualDz;
   const lossMag = Math.hypot(lossDx, lossDz);
   const attemptedMag = Math.hypot(attemptedDx, attemptedDz);
-  if (attemptedMag > 0 && lossMag / attemptedMag > 0.1) {
+  // Only apply rebound for a GENUINE wall-blocked partial motion. If the
+  // loss is larger than the attempted step the "loss" is actually a
+  // topology wrap (nextXZ is on the far side of a seam, so raw delta
+  // shows tens of meters even though the body really moved a few cm).
+  // Rebounding from a wrap would shove the body off the playfield -
+  // playtest flicker at seams was caused by exactly that.
+  if (
+    attemptedMag > 0 &&
+    lossMag <= attemptedMag * 1.5 &&
+    lossMag / attemptedMag > 0.1
+  ) {
     const reboundX = -lossDx * BOUNCE_E_WALL;
     const reboundZ = -lossDz * BOUNCE_E_WALL;
     const candidateXZ: Vec2 = { x: nextXZ.x + reboundX, z: nextXZ.z + reboundZ };

@@ -14,6 +14,9 @@ on:
 permissions:
   contents: write
 
+env:
+  GODOT_VERSION: 4.3-stable
+
 jobs:
   build-game:
     name: Build game (${{ matrix.os }})
@@ -45,25 +48,29 @@ jobs:
         if: matrix.runner == 'ubuntu-latest'
         run: |
           set -eu
-          curl -L -o godot.zip https://github.com/godotengine/godot/releases/download/4.3-stable/Godot_v4.3-stable_linux.x86_64.zip
+          # Templates ship under a dotted path (4.3.stable) even though the
+          # release tag is dashed (4.3-stable). Derive both from one var.
+          GODOT_TEMPLATES_DIR="${GODOT_VERSION/-/.}"
+          curl -L -o godot.zip "https://github.com/godotengine/godot/releases/download/${GODOT_VERSION}/Godot_v${GODOT_VERSION}_linux.x86_64.zip"
           unzip -q godot.zip
-          sudo mv Godot_v4.3-stable_linux.x86_64 /usr/local/bin/godot
+          sudo mv "Godot_v${GODOT_VERSION}_linux.x86_64" /usr/local/bin/godot
           sudo chmod +x /usr/local/bin/godot
-          curl -L -o templates.tpz https://github.com/godotengine/godot/releases/download/4.3-stable/Godot_v4.3-stable_export_templates.tpz
-          mkdir -p ~/.local/share/godot/export_templates/4.3.stable
+          curl -L -o templates.tpz "https://github.com/godotengine/godot/releases/download/${GODOT_VERSION}/Godot_v${GODOT_VERSION}_export_templates.tpz"
+          mkdir -p "$HOME/.local/share/godot/export_templates/${GODOT_TEMPLATES_DIR}"
           unzip -q templates.tpz -d /tmp/templates
-          mv /tmp/templates/templates/* ~/.local/share/godot/export_templates/4.3.stable/
+          mv /tmp/templates/templates/* "$HOME/.local/share/godot/export_templates/${GODOT_TEMPLATES_DIR}/"
       - name: Install Godot 4 (macOS runner)
         if: matrix.runner == 'macos-latest'
         run: |
           set -eu
-          curl -L -o godot.zip https://github.com/godotengine/godot/releases/download/4.3-stable/Godot_v4.3-stable_macos.universal.zip
+          GODOT_TEMPLATES_DIR="${GODOT_VERSION/-/.}"
+          curl -L -o godot.zip "https://github.com/godotengine/godot/releases/download/${GODOT_VERSION}/Godot_v${GODOT_VERSION}_macos.universal.zip"
           unzip -q godot.zip
           sudo mv Godot.app /Applications/Godot.app
-          curl -L -o templates.tpz https://github.com/godotengine/godot/releases/download/4.3-stable/Godot_v4.3-stable_export_templates.tpz
-          mkdir -p ~/Library/Application\ Support/Godot/export_templates/4.3.stable
+          curl -L -o templates.tpz "https://github.com/godotengine/godot/releases/download/${GODOT_VERSION}/Godot_v${GODOT_VERSION}_export_templates.tpz"
+          mkdir -p "$HOME/Library/Application Support/Godot/export_templates/${GODOT_TEMPLATES_DIR}"
           unzip -q templates.tpz -d /tmp/templates
-          mv /tmp/templates/templates/* ~/Library/Application\ Support/Godot/export_templates/4.3.stable/
+          mv /tmp/templates/templates/* "$HOME/Library/Application Support/Godot/export_templates/${GODOT_TEMPLATES_DIR}/"
       - name: Prime project (import resources)
         shell: bash
         run: |

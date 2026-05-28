@@ -9,6 +9,9 @@ concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
+env:
+  GODOT_VERSION: 4.3-stable
+
 jobs:
   lint:
     name: Lint and format
@@ -94,9 +97,9 @@ jobs:
       - uses: actions/checkout@v4
       - name: Install Godot 4
         run: |
-          curl -L -o godot.zip https://github.com/godotengine/godot/releases/download/4.3-stable/Godot_v4.3-stable_linux.x86_64.zip
+          curl -L -o godot.zip "https://github.com/godotengine/godot/releases/download/${GODOT_VERSION}/Godot_v${GODOT_VERSION}_linux.x86_64.zip"
           unzip -q godot.zip
-          sudo mv Godot_v4.3-stable_linux.x86_64 /usr/local/bin/godot
+          sudo mv "Godot_v${GODOT_VERSION}_linux.x86_64" /usr/local/bin/godot
           sudo chmod +x /usr/local/bin/godot
       - name: Validate project parses
         run: |

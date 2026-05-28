@@ -224,11 +224,14 @@ func _process(delta: float) -> void:
 		# interpolates the body's visual transform between consecutive ticks
 		# so the motion stays smooth on high-refresh monitors without
 		# diverging from what the server applies.
-		if (
-			snapshot_received
-			and local_player != null
-			and not local_player.frozen
-		):
+		#
+		# Runs even when frozen so the frozen-mid-jump Y-descent lerp inside
+		# _advance_local_prediction can drop the body back to hover height.
+		# The XZ side is harmless while frozen because _stream_input zeros
+		# the input vectors (effective_move = Vector2.ZERO), so _pred_prev_xz
+		# and _pred_current_xz stop advancing - rendering re-applies the
+		# same XZ each frame.
+		if snapshot_received and local_player != null:
 			_advance_local_prediction(delta)
 	else:
 		_drive_offline_hud()
@@ -538,6 +541,9 @@ func _reconcile_local_player(delta: Dictionary) -> void:
 	var replayed_jump_started_at_ms: int = (
 		int(server_jump_started) if server_jump_started != null else -1
 	)
+	# Snapshot other bodies' XZ once outside the loop; they don't change
+	# during replay so the resolve step uses the same set every input.
+	var others_xz: Array = _collect_other_xz_positions()
 	for entry in pending_inputs:
 		var step := Movement.step(
 			{
@@ -554,6 +560,13 @@ func _reconcile_local_player(delta: Dictionary) -> void:
 			topology,
 		)
 		replayed_pos = step["position"]
+		# Resolve overlap so reconcile replays match the server's
+		# resolvePlayerCollisions pass. Without this, the reconcile loop
+		# can land on a position that's inside another body even though
+		# the server already pushed apart - one tick later the next
+		# reconcile snap creates the oscillation the camera flicker
+		# report describes.
+		replayed_pos = Movement.resolve_overlap(replayed_pos, others_xz, walls)
 		local_sprint_energy = step["sprint_energy"]
 		local_sprinting = bool(step["sprinting"])
 		replayed_jump_started_at_ms = Physics.step_jump(
@@ -756,6 +769,20 @@ func _advance_predicted_tick(
 	)
 	_pred_prev_xz = _pred_current_xz
 	_pred_current_xz = step["position"]
+	# Push out of overlap with any other body's rendered position. The
+	# server's resolvePlayerCollisions does the same on its side; without
+	# this, the local predictor advances INTO another body each tick and
+	# reconcile snaps back to the server's pushed-apart position - the
+	# round trip oscillates and the camera flickers between two angles.
+	# Approximation: we use the current rendered positions of other
+	# bodies (which lag the server by ~100 ms via remote interp), not
+	# their position at the input's exact tick. Server bounce will still
+	# correct any residual drift.
+	_pred_current_xz = Movement.resolve_overlap(
+		_pred_current_xz,
+		_collect_other_xz_positions(),
+		labyrinth.wall_endpoints(),
+	)
 	_pred_tick_start_t = Time.get_unix_time_from_system()
 	# Same step_jump the server runs. With the matching input_now_ms, the
 	# predicted jumpStartedAt equals what the server will store, so the
@@ -769,6 +796,20 @@ func _advance_predicted_tick(
 	local_sprinting = bool(step["sprinting"])
 	var planar: float = (_pred_current_xz - _pred_prev_xz).length() / INPUT_TICK_PERIOD
 	local_player.set_external_motion(planar, local_sprinting and world_move.length() > 0.0)
+
+# Collect XZ positions of every non-local rendered body. Used by the
+# predictor's collision-resolve step so the local body bounces off
+# others client-side rather than only after a server reconcile.
+func _collect_other_xz_positions() -> Array:
+	var result: Array = []
+	for id in player_nodes:
+		if id == local_player_id:
+			continue
+		var node: Node = player_nodes[id]
+		if node == null:
+			continue
+		result.append(Vector2(node.global_position.x, node.global_position.z))
+	return result
 
 func _stream_input(delta: float) -> void:
 	# _on_back_to_menu and the reconnect-failed popup null room_client and

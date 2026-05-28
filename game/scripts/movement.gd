@@ -124,6 +124,42 @@ static func step(
 		"sprinting": next_sprinting,
 	}
 
+## Push `self_xz` out of overlap with every entry in `others_xz`.
+## Mirrors the position-resolution half of
+## backend/shared/src/movement.ts::resolvePlayerCollisions so the client
+## predictor matches what the server's resolvePlayerCollisions will do.
+## Skips the closing-velocity impulse the server adds; that small
+## per-tick delta gets corrected by the next reconcile and is too
+## brittle to mirror precisely without per-other prev positions.
+##
+## Skips entries that are wall-blocked: a push into a wall would create
+## the same wall-clipping we are trying to avoid. The unblocked others
+## still resolve their share.
+static func resolve_overlap(self_xz: Vector2, others_xz: Array, walls: Array) -> Vector2:
+	var result := self_xz
+	for other in others_xz:
+		var other_xz: Vector2 = other
+		var diff: Vector2 = result - other_xz
+		var dist: float = diff.length()
+		if dist >= 2.0 * PLAYER_RADIUS:
+			continue
+		var nx: float
+		var nz: float
+		if dist > 1e-6:
+			nx = diff.x / dist
+			nz = diff.y / dist
+		else:
+			# Zero-distance fallback. Pick a deterministic axis so both
+			# server and client agree.
+			nx = 1.0
+			nz = 0.0
+		var overlap: float = 2.0 * PLAYER_RADIUS - dist
+		var candidate := Vector2(result.x + nx * overlap, result.y + nz * overlap)
+		if walls.size() > 0 and path_crosses_wall(walls, result.x, result.y, candidate.x, candidate.y):
+			continue
+		result = candidate
+	return result
+
 static func path_crosses_wall(walls: Array, ax: float, az: float, bx: float, bz: float) -> bool:
 	# Block moves that take the body closer to a wall than WALL_CLEARANCE
 	# allows. The end-only "is it deeper than the start?" check accepts a

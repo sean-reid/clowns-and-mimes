@@ -18,11 +18,25 @@ const MIME_COLOR := Color(0.95, 0.95, 0.95)
 const CLOWN_COLOR := Color(0.95, 0.18, 0.22)
 const MAX_LOG_LINES := 5
 
+# Upper bound on the team-status icon pool. 3 bots/team * 2 teams +
+# 4 humans + headroom = 10; round up to 20 so adding a team mode
+# or temporarily oversized rosters never overflows.
+const MAX_TEAM_ICONS := 20
+const ICON_COLOR_MIME := Color(0.95, 0.95, 0.95)
+const ICON_COLOR_CLOWN := Color(0.9, 0.2, 0.22)
+
 # Pre-allocated event-log Labels. append_log shifts text up through these
 # instead of creating/destroying nodes. The old design spawned a Label per
 # event with a 2.5s expiry coroutine; a burst of tag/save events compounded
 # scene-tree mutations and redraw signal cascades that snowballed visibly.
 var _log_lines: Array[Label] = []
+
+# Pre-allocated team-status icons. render_team_status flips visibility and
+# rewrites color/alpha on the first N instead of queue_freeing the old set
+# and instantiating a new one each delta. Same lesson as the event log:
+# per-event node churn at 60Hz triggers signal cascades that visibly stall
+# the editor and clients.
+var _team_icons: Array[ColorRect] = []
 
 func _ready() -> void:
 	frozen_overlay.text = ""
@@ -32,6 +46,7 @@ func _ready() -> void:
 	battle_cry_label.text = ""
 	battle_cry_label.modulate.a = 0.0
 	_setup_log_lines()
+	_setup_team_icons()
 
 func _setup_log_lines() -> void:
 	# Remove any labels left over from the .tscn or from a previous run.
@@ -90,17 +105,31 @@ func set_countdown_seconds(seconds: float) -> void:
 	else:
 		countdown_label.text = "%d" % int(ceil(seconds))
 
-func render_team_status(players: Array) -> void:
+func _setup_team_icons() -> void:
+	# Drop any icons left over from the .tscn or a previous run, then
+	# pre-allocate the pool once.
 	for child in team_status.get_children():
 		child.queue_free()
-	for player in players:
+	_team_icons.clear()
+	for i in MAX_TEAM_ICONS:
 		var icon := ColorRect.new()
 		icon.custom_minimum_size = Vector2(20, 20)
+		icon.visible = false
+		team_status.add_child(icon)
+		_team_icons.append(icon)
+
+func render_team_status(players: Array) -> void:
+	var n: int = mini(players.size(), _team_icons.size())
+	for i in n:
+		var player: Dictionary = players[i]
 		var clown_team: bool = player.get("team") == "clown"
 		var frozen: bool = bool(player.get("frozen"))
-		icon.color = Color(0.9, 0.2, 0.22) if clown_team else Color(0.95, 0.95, 0.95)
+		var icon: ColorRect = _team_icons[i]
+		icon.color = ICON_COLOR_CLOWN if clown_team else ICON_COLOR_MIME
 		icon.modulate.a = 0.35 if frozen else 1.0
-		team_status.add_child(icon)
+		icon.visible = true
+	for i in range(n, _team_icons.size()):
+		_team_icons[i].visible = false
 
 func append_log(message: String) -> void:
 	# Shift each text up one slot and drop the new line into the bottom

@@ -14,6 +14,7 @@ const TEST_SCRIPTS: Array[String] = [
 	"res://tests/test_bot_ai.gd",
 	"res://tests/test_version_check.gd",
 	"res://tests/test_physics.gd",
+	"res://tests/test_frozen_descent.gd",
 ]
 
 func _initialize() -> void:

@@ -212,10 +212,7 @@ func _process(delta: float) -> void:
 	# would write the snapshot Y for ~16 ms then freeze, offline bodies
 	# would never move Y at all).
 	if frozen and not predicted_externally and _frozen_descent_y > PhysicsScript.HOVER_HEIGHT + 0.001:
-		_frozen_descent_y = maxf(
-			PhysicsScript.HOVER_HEIGHT,
-			_frozen_descent_y - 5.0 * delta,
-		)
+		_frozen_descent_y = PhysicsScript.step_frozen_descent(_frozen_descent_y, delta)
 		global_position = Vector3(
 			global_position.x,
 			_frozen_descent_y,

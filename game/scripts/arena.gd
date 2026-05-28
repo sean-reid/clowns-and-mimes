@@ -25,6 +25,7 @@ const Movement := preload("res://scripts/movement.gd")
 const Physics := preload("res://scripts/physics.gd")
 const IN_GAME_MENU := preload("res://scenes/in_game_menu.tscn")
 const GameRulesScript := preload("res://scripts/game_rules.gd")
+const PlayerScript := preload("res://scripts/player.gd")
 const TopologyScript := preload("res://scripts/topology/topology.gd")
 const TopologyFactory := preload("res://scripts/topology/topology_factory.gd")
 const BotAIScript := preload("res://scripts/bot_ai.gd")
@@ -88,7 +89,7 @@ var labyrinth: Node3D = null
 var menu: CanvasLayer = null
 
 # Offline-only.
-var rules: Node = null
+var rules: GameRulesScript = null
 
 # Online-only.
 var room_client: Node = null
@@ -136,7 +137,7 @@ var _pred_jump_started_at_ms: int = -1
 var _jump_was_held: bool = false
 
 # Shared.
-var local_player: Node = null
+var local_player: PlayerScript = null
 var local_player_id: String = ""
 var player_nodes: Dictionary = {}
 var contact_cooldowns: Dictionary = {}

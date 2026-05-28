@@ -1,0 +1,83 @@
+{
+  "schemaVersion": 1,
+  "hoverHeight": 0.5,
+  "jumpAmp": 2,
+  "jumpDurationS": 0.6,
+  "jumpCooldownS": 0.1,
+  "arcCases": [
+    {
+      "label": "null_sentinel",
+      "startedAtMs": null,
+      "nowMs": 1700000000000,
+      "expectedY": 0.5
+    },
+    {
+      "label": "t_0",
+      "startedAtMs": 1700000000000,
+      "nowMs": 1700000000000,
+      "expectedY": 0.5
+    },
+    {
+      "label": "t_quarter",
+      "startedAtMs": 1700000000000,
+      "nowMs": 1700000000150,
+      "expectedY": 2
+    },
+    {
+      "label": "t_peak",
+      "startedAtMs": 1700000000000,
+      "nowMs": 1700000000300,
+      "expectedY": 2.5
+    },
+    {
+      "label": "t_three_quarter",
+      "startedAtMs": 1700000000000,
+      "nowMs": 1700000000450,
+      "expectedY": 2
+    },
+    {
+      "label": "t_almost_end",
+      "startedAtMs": 1700000000000,
+      "nowMs": 1700000000599,
+      "expectedY": 0.5133111111111114
+    },
+    {
+      "label": "t_past_end",
+      "startedAtMs": 1700000000000,
+      "nowMs": 1700000000700,
+      "expectedY": 0.5
+    }
+  ],
+  "jumpingCases": [
+    {
+      "label": "null_sentinel",
+      "startedAtMs": null,
+      "nowMs": 1700000000000,
+      "expectedJumping": false
+    },
+    {
+      "label": "fresh_jump",
+      "startedAtMs": 1700000000000,
+      "nowMs": 1700000000001,
+      "expectedJumping": true
+    },
+    {
+      "label": "mid_arc",
+      "startedAtMs": 1700000000000,
+      "nowMs": 1700000000300,
+      "expectedJumping": true
+    },
+    {
+      "label": "at_end",
+      "startedAtMs": 1700000000000,
+      "nowMs": 1700000000600,
+      "expectedJumping": false
+    },
+    {
+      "label": "past_end",
+      "startedAtMs": 1700000000000,
+      "nowMs": 1700000000601,
+      "expectedJumping": false
+    }
+  ]
+}

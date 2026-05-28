@@ -51,7 +51,18 @@ jobs:
           node-version: 22
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - run: pnpm --filter @cm/shared --filter @cm/matchmaker --filter @cm/room test
+      - name: Run unit tests with coverage
+        run: pnpm --filter @cm/shared --filter @cm/matchmaker --filter @cm/room test:coverage
+      - name: Upload coverage artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage
+          path: |
+            backend/shared/coverage/**
+            backend/matchmaker/coverage/**
+            backend/room/coverage/**
+          if-no-files-found: ignore
 
   e2e:
     name: E2E tests

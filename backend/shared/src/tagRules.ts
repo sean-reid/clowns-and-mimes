@@ -46,12 +46,14 @@ export function tagRejectionReason(
   if (attacker.frozen) return 'you_are_frozen';
   if (victim.frozen) return 'already_frozen';
   if (ctx.phase !== `turn_${attacker.team}`) return 'not_your_turn';
-  if (
-    ctx.victimSavedAtMs !== undefined &&
-    ctx.nowMs - ctx.victimSavedAtMs < ctx.unfreezeGraceMs
-  )
+  if (ctx.victimSavedAtMs !== undefined && ctx.nowMs - ctx.victimSavedAtMs < ctx.unfreezeGraceMs)
     return 'just_saved';
-  const d = topologyDistance(attacker.position, ctx.victimResolvedPos, ctx.topology, ctx.worldWidth);
+  const d = topologyDistance(
+    attacker.position,
+    ctx.victimResolvedPos,
+    ctx.topology,
+    ctx.worldWidth,
+  );
   if (d > radius) return `out_of_range:${d.toFixed(2)}`;
   if (
     ctx.walls.length > 0 &&

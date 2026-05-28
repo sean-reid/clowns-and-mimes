@@ -15,7 +15,7 @@ permissions:
   contents: write
 
 env:
-  GODOT_VERSION: 4.3-stable
+  GODOT_VERSION: 4.6.3-stable
 
 jobs:
   build-game:
@@ -48,8 +48,8 @@ jobs:
         if: matrix.runner == 'ubuntu-latest'
         run: |
           set -eu
-          # Templates ship under a dotted path (4.3.stable) even though the
-          # release tag is dashed (4.3-stable). Derive both from one var.
+          # Templates ship under a dotted path (4.6.3.stable) even though the
+          # release tag is dashed (4.6.3-stable). Derive both from one var.
           GODOT_TEMPLATES_DIR="${GODOT_VERSION/-/.}"
           curl -L -o godot.zip "https://github.com/godotengine/godot/releases/download/${GODOT_VERSION}/Godot_v${GODOT_VERSION}_linux.x86_64.zip"
           unzip -q godot.zip

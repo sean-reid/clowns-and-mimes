@@ -194,6 +194,16 @@ static func resolve_overlap(
 		if walls.size() > 0 and path_crosses_wall(walls, result.x, result.y, candidate.x, candidate.y):
 			continue
 		result = candidate
+	# Wrap after the push so the result stays in the canonical domain. A
+	# contact near a seam can shove the position outside, and on the next
+	# predict tick with zero input stepMovement leaves an extended position
+	# unchanged - the predictor then renders at extended one frame and the
+	# _physics_process wrap snaps it back the next, producing the seam
+	# flicker. Mirrors the same wrap on the server in
+	# backend/shared/src/movement.ts::resolvePlayerCollisions.
+	if topology != null:
+		var wrapped: Vector3 = topology.wrap(Vector3(result.x, 0.0, result.y))
+		result = Vector2(wrapped.x, wrapped.z)
 	return result
 
 static func path_crosses_wall(walls: Array, ax: float, az: float, bx: float, bz: float) -> bool:

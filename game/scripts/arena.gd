@@ -522,7 +522,15 @@ func _reconcile_local_player(delta: Dictionary) -> void:
 	if server_local.is_empty():
 		return
 	var pos_dict: Dictionary = server_local.get("position", {"x": 0.0, "z": 0.0})
-	var server_pos := Vector2(float(pos_dict.get("x", 0.0)), float(pos_dict.get("z", 0.0)))
+	var server_pos_raw := Vector2(float(pos_dict.get("x", 0.0)), float(pos_dict.get("z", 0.0)))
+	# Defensive wrap: an older server build (or any future regression) that
+	# leaves a position outside the canonical domain would otherwise pin
+	# _pred_current_xz at an extended value forever, and the body would
+	# flick between extended-rendered and canonical-wrapped each frame.
+	# Server's resolvePlayerCollisions now wraps post-push but mirror the
+	# guard here so a stale build can't reproduce the seam flicker.
+	var server_pos_wrapped: Vector3 = topology.wrap(Vector3(server_pos_raw.x, 0.0, server_pos_raw.y))
+	var server_pos := Vector2(server_pos_wrapped.x, server_pos_wrapped.z)
 	# Drop inputs the server has applied; replay the rest.
 	while pending_inputs.size() > 0 and int(pending_inputs[0]["seq"]) <= ack_seq:
 		pending_inputs.pop_front()

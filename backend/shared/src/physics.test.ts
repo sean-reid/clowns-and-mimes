@@ -236,4 +236,21 @@ describe('resolvePlayerCollisions', () => {
     expect(a1.position).toEqual(a2.position);
     expect(b1.position).toEqual(b2.position);
   });
+
+  it('keeps positions inside the canonical domain when pushed across the seam', () => {
+    // A contact at x = +39.8 pushed in the +x direction would otherwise
+    // land at +40.2 (outside the [-40, 40) canonical torus domain). Without
+    // the post-push wrap, the next tick's stepMovement leaves the extended
+    // value untouched when the player input is zero, and the server
+    // broadcasts +40.2 forever - the client renders body=+40.2 from
+    // _process and body=-39.8 from _physics_process every frame, producing
+    // the "two angles" seam camera flicker.
+    const a = makePlayer('a', 39.9, 0);
+    const b = makePlayer('b', 39.5, 0);
+    resolvePlayerCollisions([a, b], new Map(), 0.0167, [], 'torus', 80, 0);
+    expect(a.position.x).toBeGreaterThanOrEqual(-40);
+    expect(a.position.x).toBeLessThan(40);
+    expect(b.position.x).toBeGreaterThanOrEqual(-40);
+    expect(b.position.x).toBeLessThan(40);
+  });
 });

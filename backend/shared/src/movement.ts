@@ -5,7 +5,7 @@
 
 import type { PlayerState, Topology, Vec2, Vec3 } from './protocol.ts';
 import { pathCrossesWall, PLAYER_RADIUS, type WallSegment } from './labyrinth.ts';
-import { wrapPositionFromStep, wrappedDeltaVec } from './topology.ts';
+import { wrapPosition, wrapPositionFromStep, wrappedDeltaVec } from './topology.ts';
 import {
   BOUNCE_E_AERIAL,
   BOUNCE_E_GROUNDED,
@@ -332,10 +332,20 @@ export function resolvePlayerCollisions(
       const bBlocked =
         walls.length > 0 && pathCrossesWall(walls, b.position.x, b.position.z, bTargetX, bTargetZ);
       if (aShare > 0 && !aBlocked) {
-        a.position = { x: aTargetX, y: a.position.y, z: aTargetZ };
+        // Wrap after the push: a contact near a seam can shove the target
+        // position outside the canonical domain, and stepMovement on the
+        // next tick with zero input leaves an extended position untouched
+        // (its wrap only fires on a candidate move). The server then keeps
+        // broadcasting the extended coordinate forever, the client renders
+        // at body=extended one frame and body=wrap(extended) the next from
+        // _physics_process, and the camera flicks between two wrap-equivalent
+        // points - the "two angles" seam flicker.
+        const aWrapped = wrapPosition({ x: aTargetX, z: aTargetZ }, topology, worldWidth);
+        a.position = { x: aWrapped.x, y: a.position.y, z: aWrapped.z };
       }
       if (bShare > 0 && !bBlocked) {
-        b.position = { x: bTargetX, y: b.position.y, z: bTargetZ };
+        const bWrapped = wrapPosition({ x: bTargetX, z: bTargetZ }, topology, worldWidth);
+        b.position = { x: bWrapped.x, y: b.position.y, z: bWrapped.z };
       }
     }
   }

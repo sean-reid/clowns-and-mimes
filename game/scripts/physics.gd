@@ -7,40 +7,30 @@ class_name Physics
 ## simulation agree on every jump's Y at every tick.
 ##
 ## XZ planar motion lives in scripts/movement.gd; this module owns Y.
+##
+## Bit-shared numeric constants come from SharedConstants (generated from
+## backend/shared/src/physics.ts) so a single edit ratchets both sides.
+## See scripts/gen-shared-constants.mjs.
 
-# Resting Y of every player. Players hover slightly above the floor by
-# design; this names the existing implicit value so jump math can be
-# written relative to it.
-const HOVER_HEIGHT := 0.5
+const SharedConstants := preload("res://scripts/shared_constants.gd")
 
-# Peak rise above HOVER_HEIGHT during a jump. At 2.0 m the body's
-# center reaches ~2.5 m at apex, giving a comfortable 0.6 m vertical
-# clearance over a grounded body (separation 2.0 m vs the 1.4 m tag
-# threshold) so jumping reads as a real evasion tool rather than a
-# "barely scraped past" miss. Head height at peak is ~3.2 m, still
-# well below the 6 m wall so jumping can't see over walls.
-const JUMP_AMP := 2.0
-
-# Length of a single jump arc, takeoff to landing, in seconds. Short
-# enough to feel responsive, long enough for the squash-and-stretch
-# animation to read.
-const JUMP_DURATION_S := 0.6
-
-# Tag vertical-overlap threshold in meters. A tag is rejected when
-# |attacker.y - victim.y| >= this value. Comfortably below JUMP_AMP so
-# a peak jumper (separation = 2.0 m) clearly evades a grounded
-# attacker. Mistimed jumpers (one at peak, one at takeoff or landing)
-# can still tag each other per Option A.
-const BODY_VERTICAL_EXTENT := 1.4
-
-# Post-landing minimum before the next jump can trigger. Prevents
-# bunny-hopping without making the rhythm feel sluggish.
-const JUMP_COOLDOWN_S := 0.1
-
-# Coefficients of restitution. Match backend/shared/src/physics.ts.
-const BOUNCE_E_GROUNDED := 0.3
-const BOUNCE_E_AERIAL := 0.7
-const BOUNCE_E_WALL := 0.15
+# Resting Y of every player.
+const HOVER_HEIGHT := SharedConstants.HOVER_HEIGHT
+# Peak rise above HOVER_HEIGHT during a jump. Picked so head-at-peak
+# (~3.2 m) stays well below the 6 m wall but separation from a
+# grounded body (2.0 m) exceeds the 1.4 m tag overlap threshold.
+const JUMP_AMP := SharedConstants.JUMP_AMP
+# Length of a single jump arc takeoff to landing, in seconds.
+const JUMP_DURATION_S := SharedConstants.JUMP_DURATION_S
+# Tag vertical-overlap threshold. Tag rejected when
+# |attacker.y - victim.y| >= this value.
+const BODY_VERTICAL_EXTENT := SharedConstants.BODY_VERTICAL_EXTENT
+# Post-landing minimum before the next jump can trigger.
+const JUMP_COOLDOWN_S := SharedConstants.JUMP_COOLDOWN_S
+# Coefficients of restitution.
+const BOUNCE_E_GROUNDED := SharedConstants.BOUNCE_E_GROUNDED
+const BOUNCE_E_AERIAL := SharedConstants.BOUNCE_E_AERIAL
+const BOUNCE_E_WALL := SharedConstants.BOUNCE_E_WALL
 
 ## Deterministic jump arc. Returns the body's Y position given the
 ## jump's start timestamp (Unix ms) and the current time (Unix ms).

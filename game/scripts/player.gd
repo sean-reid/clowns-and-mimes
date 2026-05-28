@@ -11,11 +11,12 @@ signal frozen_changed(frozen: bool)
 
 const MARKER := preload("res://scenes/exclamation_marker.tscn")
 const AssetPaths := preload("res://scripts/asset_paths.gd")
-const WALK_SPEED := 3.2
-const SPRINT_SPEED := 5.6
-const MAX_SPRINT := 100.0
-const SPRINT_DRAIN_PER_S := 25.0
-const SPRINT_REGEN_PER_S := 15.0
+const SharedConstants := preload("res://scripts/shared_constants.gd")
+const WALK_SPEED := SharedConstants.WALK_SPEED
+const SPRINT_SPEED := SharedConstants.SPRINT_SPEED
+const MAX_SPRINT := SharedConstants.MAX_SPRINT
+const SPRINT_DRAIN_PER_S := SharedConstants.SPRINT_DRAIN_PER_S
+const SPRINT_REGEN_PER_S := SharedConstants.SPRINT_REGEN_PER_S
 const LOOK_SENSITIVITY := 0.0025
 
 @export var team: String = "mime"

@@ -14,6 +14,11 @@ extends CanvasLayer
 @onready var end_overlay: Control = $EndOverlay
 @onready var end_label: Label = $EndOverlay/EndLabel
 
+# Team palette for HUD elements (team badge, sprint bar tint, battle cry
+# label, status icons). Used everywhere in this file that needs to draw
+# a player in their team color. player.gd has its own darker BACK colors
+# for the avatar mesh - those are intentionally different (different
+# visual role) and stay local.
 const MIME_COLOR := Color(0.95, 0.95, 0.95)
 const CLOWN_COLOR := Color(0.95, 0.18, 0.22)
 const MAX_LOG_LINES := 5
@@ -22,8 +27,6 @@ const MAX_LOG_LINES := 5
 # 4 humans + headroom = 10; round up to 20 so adding a team mode
 # or temporarily oversized rosters never overflows.
 const MAX_TEAM_ICONS := 20
-const ICON_COLOR_MIME := Color(0.95, 0.95, 0.95)
-const ICON_COLOR_CLOWN := Color(0.9, 0.2, 0.22)
 
 # Pre-allocated event-log Labels. append_log shifts text up through these
 # instead of creating/destroying nodes. The old design spawned a Label per
@@ -125,7 +128,7 @@ func render_team_status(players: Array) -> void:
 		var clown_team: bool = player.get("team") == "clown"
 		var frozen: bool = bool(player.get("frozen"))
 		var icon: ColorRect = _team_icons[i]
-		icon.color = ICON_COLOR_CLOWN if clown_team else ICON_COLOR_MIME
+		icon.color = CLOWN_COLOR if clown_team else MIME_COLOR
 		icon.modulate.a = 0.35 if frozen else 1.0
 		icon.visible = true
 	for i in range(n, _team_icons.size()):

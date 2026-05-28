@@ -490,7 +490,7 @@ func _show_reconnect_failed_popup() -> void:
 	var retry_button := dialog.add_button("Reconnect", true, "retry")
 	retry_button.pressed.connect(_on_reconnect_retry_pressed.bind(dialog))
 	dialog.confirmed.connect(_on_reconnect_give_up)
-	add_child(dialog)
+	_attach_dialog_lifecycle(dialog)
 	dialog.popup_centered()
 
 func _on_reconnect_retry_pressed(dialog: AcceptDialog) -> void:
@@ -740,7 +740,7 @@ func _show_match_in_progress_popup() -> void:
 	dialog.ok_button_text = "Back to menu"
 	dialog.unresizable = true
 	dialog.confirmed.connect(_on_back_to_menu)
-	add_child(dialog)
+	_attach_dialog_lifecycle(dialog)
 	dialog.popup_centered()
 
 func _show_version_mismatch_popup(server_message: String) -> void:
@@ -758,8 +758,18 @@ func _show_version_mismatch_popup(server_message: String) -> void:
 	dialog.unresizable = true
 	var open_button := dialog.add_button("Get latest", true, "open_site")
 	open_button.pressed.connect(func(): OS.shell_open(VersionCheck.WEBSITE_URL))
-	add_child(dialog)
+	_attach_dialog_lifecycle(dialog)
 	dialog.popup_centered()
+
+# Wire any AcceptDialog so it self-cleans on any close path. Without this,
+# clicking the X (close_requested) or hitting OK on a popup whose confirmed
+# handler doesn't change scenes (version mismatch's Close button is the
+# canonical case) leaves the dialog node in the tree forever - stacking
+# multiple reconnect popups across a churny session leaks them all.
+func _attach_dialog_lifecycle(dialog: AcceptDialog) -> void:
+	dialog.confirmed.connect(dialog.queue_free)
+	dialog.close_requested.connect(dialog.queue_free)
+	add_child(dialog)
 
 func _drive_online_hud() -> void:
 	if not snapshot_received:

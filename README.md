@@ -30,6 +30,7 @@ No build steps are required. Download, install, launch.
 | Move           | WASD                                           |
 | Look           | Mouse                                          |
 | Sprint         | Hold Shift                                     |
+| Jump           | Space                                          |
 | Tag / unfreeze | Run into the other player (no button required) |
 | Menu           | Esc (world keeps running)                      |
 

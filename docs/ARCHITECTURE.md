@@ -130,6 +130,7 @@ Player movement is handled by `player.gd`, a `CharacterBody3D` with:
 - WASD for translational movement
 - Mouse look with capture
 - Shift to sprint while sprint energy is above zero
+- Space to jump on a deterministic 0.6 s parabolic arc, peak 2 m above hover (clears the 1.4 m tag-overlap threshold). Sprint is orthogonal — holding Shift through a jump preserves sprint and does not drain extra energy. Cooldown is 0.1 s after landing.
 - Footstep sound emitter modulated by current planar speed
 - Tag and unfreeze fire on contact: when the active turn's team brushes within `CONTACT_RADIUS` (1.4 m) of an eligible opponent or teammate, `tag_attempt` / `unfreeze_attempt` is sent to the server. A 0.15 s per-target cooldown keeps one physics frame from firing the same tag repeatedly; the server's own cooldown is the long gate.
 
@@ -243,7 +244,7 @@ sequenceDiagram
   C->>DO: start_match  (host only, transitions out of `filling`)
 ```
 
-Wire protocol is JSON over WebSocket with a `t` discriminator on every message and `PROTOCOL_VERSION = 1` (defined in `@cm/shared/protocol`). The room rejects mismatched versions with a `version_mismatch` error and closes the socket with close code 4001.
+Wire protocol is JSON over WebSocket with a `t` discriminator on every message and `PROTOCOL_VERSION = 2` (defined in `@cm/shared/protocol`). The room rejects mismatched versions with a `version_mismatch` error and closes the socket with close code 4001. Version 2 carries `position: Vec3` (Y is meaningful for the jump arc) and `jumpStartedAt: number | null` on `PlayerState`, plus a `jump: boolean` rising-edge field on `PlayerInput`.
 
 Message types: `join`, `leave`, `input`, `start_match`, `tag_attempt`, `tag_result`, `unfreeze_attempt`, `unfreeze_result`, `ping`, `pong`, `snapshot`, `delta`, `event`, `error`.
 
@@ -343,7 +344,7 @@ Turn duration progression: round 1 is 30 seconds per team, round 2 is 60 seconds
 ## Anti-cheat
 
 - All state transitions are server-authoritative.
-- The server validates tag attempts: distance under threshold, both players alive, attacker not frozen, attacker on the active turn team.
+- The server validates tag attempts: distance under threshold, vertical overlap (`|attacker.y - victim.y| < 1.4 m`, so a jumper at peak height evades a grounded opponent), both players alive, attacker not frozen, attacker on the active turn team. The vertical gate is reported back as `tag_result.reason = 'vertical_separation'` so the HUD can surface "out of reach (jumped)".
 - Movement deltas exceeding the maximum sprint speed are clamped.
 - Clients connect with a build version on the WS `join` payload. Mismatched versions are rejected with `version_mismatch` and a popup pointing at the latest release.
 - Private lobbies receive a `hostToken` from the matchmaker on create. Only the host's WS URL carries it (`?host=<token>`) and only that connection is allowed to issue the `start_match` message that transitions the room out of `filling`. Joiners never see the token.

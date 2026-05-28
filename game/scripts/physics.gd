@@ -76,6 +76,20 @@ static func is_jumping(started_at_ms: int, now_ms: int) -> bool:
 static func vertically_overlapping(y_a: float, y_b: float) -> bool:
 	return absf(y_a - y_b) < BODY_VERTICAL_EXTENT
 
+# Rate at which a frozen body's Y interpolates back to HOVER_HEIGHT
+# after the freeze interrupts a jump mid-arc. Visual smoothing only -
+# the server stops simulating Y the moment freeze is set, so the
+# client picks up the descent so the body doesn't sit suspended at
+# peak waiting for the next snapshot. 5 m/s is chosen so the body
+# reaches the floor in well under half the freeze duration.
+const FROZEN_DESCENT_RATE := 5.0
+
+## One tick of the frozen-mid-jump descent ramp. Returns the next Y
+## clamped at HOVER_HEIGHT so the body settles at the floor and stops.
+## Pure function so it can be unit-tested without a scene tree.
+static func step_frozen_descent(current_y: float, delta: float) -> float:
+	return maxf(HOVER_HEIGHT, current_y - FROZEN_DESCENT_RATE * delta)
+
 ## Mirror of backend/shared/src/movement.ts::stepJump. Returns the new
 ## jumpStartedAt (-1 for null) after one tick of trigger / lockout
 ## processing.

@@ -1,0 +1,41 @@
+# Weekly dependency updates. npm at the workspace root covers every
+# package.json under backend/* + website + tests/* via pnpm-workspace.yaml.
+# github-actions covers .github/workflows/*.yml.
+#
+# Updates open as PRs against dev so CI exercises them before merge.
+
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    target-branch: dev
+    open-pull-requests-limit: 5
+    groups:
+      # Bundle small dev-tool bumps so each Monday isn't a wall of PRs.
+      dev-tooling:
+        dependency-type: development
+        update-types:
+          - minor
+          - patch
+      # Bundle Cloudflare Worker types + wrangler since they ratchet
+      # in lockstep.
+      cloudflare:
+        patterns:
+          - '@cloudflare/*'
+          - 'wrangler'
+    commit-message:
+      prefix: chore
+      include: scope
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    target-branch: dev
+    open-pull-requests-limit: 3
+    commit-message:
+      prefix: ci

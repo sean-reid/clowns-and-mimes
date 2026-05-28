@@ -10,16 +10,20 @@ class_name Movement
 ## collision, or wrap behavior on one side must land on the other in the same
 ## PR.
 
-const WALK_SPEED := 3.2
-const SPRINT_SPEED := 5.6
-# Single-tick travel cap matches MAX_TICK_TRAVEL in shared/movement.ts.
-const MAX_TICK_TRAVEL := SPRINT_SPEED * 1.5
-const MAX_SPRINT := 100.0
-const SPRINT_DRAIN_PER_S := 25.0
-const SPRINT_REGEN_PER_S := 15.0
-const SPRINT_ENGAGE_THRESHOLD := 20.0
+const SharedConstants := preload("res://scripts/shared_constants.gd")
 
-# Wall collision parameters. Match backend/shared/src/labyrinth.ts.
+const WALK_SPEED := SharedConstants.WALK_SPEED
+const SPRINT_SPEED := SharedConstants.SPRINT_SPEED
+# Single-tick travel cap derived from SPRINT_SPEED * 1.5 on both sides.
+const MAX_TICK_TRAVEL := SPRINT_SPEED * 1.5
+const MAX_SPRINT := SharedConstants.MAX_SPRINT
+const SPRINT_DRAIN_PER_S := SharedConstants.SPRINT_DRAIN_PER_S
+const SPRINT_REGEN_PER_S := SharedConstants.SPRINT_REGEN_PER_S
+const SPRINT_ENGAGE_THRESHOLD := SharedConstants.SPRINT_ENGAGE_THRESHOLD
+
+# Wall collision parameters. Local to this file (not in shared) because
+# wall geometry lives only in @cm/shared/labyrinth on the TS side; the
+# client mirrors here. Both sides still need to agree; keep manually.
 const WALL_THICKNESS := 0.4
 const WALL_HALF_THICKNESS := WALL_THICKNESS / 2.0
 const PLAYER_RADIUS := 0.4

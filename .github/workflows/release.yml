@@ -18,8 +18,36 @@ env:
   GODOT_VERSION: 4.6.3-stable
 
 jobs:
+  validate-changelog:
+    name: Validate CHANGELOG entry exists
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check CHANGELOG has section for tag
+        run: |
+          set -eu
+          # Tag pushes only. workflow_dispatch runs without a tag in
+          # GITHUB_REF_NAME (it's the branch instead), so short-circuit
+          # to a pass for those - the publish-release step also gates
+          # on startsWith refs/tags/.
+          if [[ "$GITHUB_REF" != refs/tags/* ]]; then
+            echo "Not a tag push; skipping CHANGELOG validation."
+            exit 0
+          fi
+          tag="${GITHUB_REF_NAME#v}"
+          # Match exactly "## [X.Y.Z]" at line start. The publish-release
+          # step uses the same shape to extract notes; without an entry,
+          # GitHub would auto-generate notes and the release body would
+          # have no narrative.
+          if ! grep -qE "^## \[$tag\]" CHANGELOG.md; then
+            echo "::error file=CHANGELOG.md::Missing ## [$tag] section. Add it before tagging $GITHUB_REF_NAME."
+            exit 1
+          fi
+          echo "Found CHANGELOG section for $tag."
+
   build-game:
     name: Build game (${{ matrix.os }})
+    needs: validate-changelog
     runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false

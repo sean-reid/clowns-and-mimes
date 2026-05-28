@@ -291,6 +291,7 @@ func _setup_rules() -> void:
 	add_child(rules)
 	rules.topology = topology
 	rules.tagged.connect(_on_offline_tagged)
+	rules.tag_rejected.connect(_on_offline_tag_rejected)
 	rules.saved.connect(_on_offline_saved)
 	rules.won.connect(_on_offline_won)
 	rules.phase_changed.connect(_on_offline_phase_changed)
@@ -1129,6 +1130,15 @@ func _on_offline_tagged(victim_id: String, attacker_id: String, team: String) ->
 	if victim_id == local_player_id:
 		hud.flash_frozen(team, attacker_info.get("name", "?"))
 	_render_team_status_offline()
+
+func _on_offline_tag_rejected(attacker_id: String, _victim_id: String, reason: String) -> void:
+	# Offline mirror of the online tag_result handler. Only the local
+	# player gets feedback; remote-on-server bots don't have anyone to
+	# message and the verbose log would be noisy with bot misses.
+	if attacker_id != local_player_id:
+		return
+	if reason == "vertical_separation":
+		hud.append_log("Tag missed: out of reach (jumped)")
 
 func _on_offline_saved(victim_id: String, savior_id: String) -> void:
 	var victim: Node = player_nodes.get(victim_id)

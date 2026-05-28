@@ -6,6 +6,7 @@ extends Node
 ## turn cadence, and tag/unfreeze validation so behavior is consistent.
 
 const TopologyScript := preload("res://scripts/topology/topology.gd")
+const PhysicsScript := preload("res://scripts/physics.gd")
 
 enum Phase { LOBBY, FREE_ROAM, TURN_MIME, TURN_CLOWN, ENDED }
 
@@ -18,6 +19,7 @@ const UNFREEZE_RADIUS := 1.4
 
 signal phase_changed(phase: int)
 signal tagged(victim_id: String, attacker_id: String, team: String)
+signal tag_rejected(attacker_id: String, victim_id: String, reason: String)
 signal saved(victim_id: String, savior_id: String)
 signal won(team: String)
 
@@ -68,7 +70,16 @@ func try_tag(attacker_id: String, victim_id: String) -> bool:
 		return false
 	var attacker: Dictionary = players[attacker_id]
 	var victim: Dictionary = players[victim_id]
-	if not _can_tag(attacker, victim):
+	var reason: String = _tag_rejection_reason(attacker, victim)
+	if reason != "":
+		# Only surface the vertical-separation miss; the other rejections
+		# (same team, frozen attacker, wrong turn, out of range) are either
+		# silent on the server too or get noticed via gameplay feedback.
+		# This keeps offline parity with the server's tag_result event
+		# path: arena.gd handles `tag_rejected(_, _, 'vertical_separation')`
+		# the same way it handles the online tag_result.reason.
+		if reason == "vertical_separation":
+			tag_rejected.emit(attacker_id, victim_id, reason)
 		return false
 	victim["frozen"] = true
 	tagged.emit(victim_id, attacker_id, attacker["team"])
@@ -103,13 +114,26 @@ func active_team() -> String:
 	return ""
 
 func _can_tag(attacker: Dictionary, victim: Dictionary) -> bool:
+	return _tag_rejection_reason(attacker, victim) == ""
+
+# Returns the specific rejection reason for diagnostic surfacing, or ""
+# when the tag is allowed. Mirrors the server's tagRejectionReason path
+# in backend/room/src/room.ts so offline parity is structural, not just
+# behavioural.
+func _tag_rejection_reason(attacker: Dictionary, victim: Dictionary) -> String:
 	if attacker["team"] == victim["team"]:
-		return false
+		return "same_team"
 	if attacker["frozen"] or victim["frozen"]:
-		return false
+		return "frozen_participant"
 	if active_team() != attacker["team"]:
-		return false
-	return _distance(attacker["position"], victim["position"]) <= TAG_RADIUS
+		return "wrong_turn"
+	if _distance(attacker["position"], victim["position"]) > TAG_RADIUS:
+		return "out_of_range"
+	var a_pos: Vector3 = attacker["position"]
+	var v_pos: Vector3 = victim["position"]
+	if not PhysicsScript.vertically_overlapping(a_pos.y, v_pos.y):
+		return "vertical_separation"
+	return ""
 
 func _distance(a: Vector3, b: Vector3) -> float:
 	if topology == null:

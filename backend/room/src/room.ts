@@ -34,6 +34,7 @@ import {
 } from '@cm/shared/movement';
 import { BotPathfinder } from './botPathfinder.ts';
 import { parseClientMessage } from './messageValidator.ts';
+import { RateLimiter } from './rateLimiter.ts';
 import { SnapshotBroadcaster, type SnapshotBroadcasterHost } from './snapshotBroadcaster.ts';
 import { TagManager, type TagManagerHost } from './tagManager.ts';
 
@@ -50,6 +51,12 @@ const TICK_MS = 1000 / TICK_HZ;
 // past this limit the OLDEST is dropped so the simulation does not lag
 // further behind live time.
 const MAX_INPUT_QUEUE = 4;
+// Per-WebSocket rate-limit budget. 120 msg burst, 60/s sustained.
+// At TICK_HZ=60 the steady-state client sends ~60 inputs/s plus
+// occasional ping/tag/etc; this caps a flooding client to roughly
+// the same cadence while letting a brief jitter burst through.
+const RATE_LIMIT_CAPACITY = 120;
+const RATE_LIMIT_REFILL_PER_MS = 0.06;
 const FREE_ROAM_MS = 30_000;
 // Two-radius tag/unfreeze model.
 //
@@ -321,6 +328,11 @@ export class Room implements DurableObject {
   private pathfinder: BotPathfinder | null = null;
   private readonly tagManager: TagManager;
   private readonly broadcaster: SnapshotBroadcaster;
+  // One token bucket per live WebSocket. Created on accept, removed on
+  // detach. webSocketMessage rejects with a rate_limited error when the
+  // bucket is empty; the connection stays open so a transient burst
+  // doesn't force a reconnect cycle.
+  private readonly rateLimiters = new Map<WebSocket, RateLimiter>();
 
   constructor(
     private readonly state: DurableObjectState,
@@ -444,10 +456,19 @@ export class Room implements DurableObject {
       this.hostTokenByWs.set(server, hostToken);
     }
     this.state.acceptWebSocket(server);
+    this.rateLimiters.set(
+      server,
+      new RateLimiter({ capacity: RATE_LIMIT_CAPACITY, refillPerMs: RATE_LIMIT_REFILL_PER_MS }),
+    );
     return new Response(null, { status: 101, webSocket: client });
   }
 
   webSocketMessage(ws: WebSocket, raw: string | ArrayBuffer): void {
+    const limiter = this.rateLimiters.get(ws);
+    if (limiter && !limiter.tryConsume()) {
+      this.send(ws, { t: 'error', code: 'rate_limited', message: 'too many messages' });
+      return;
+    }
     let parsed: unknown;
     try {
       parsed = JSON.parse(typeof raw === 'string' ? raw : new TextDecoder().decode(raw));
@@ -827,6 +848,7 @@ export class Room implements DurableObject {
     if (!conn) return;
     this.connections.delete(ws);
     this.hostTokenByWs.delete(ws);
+    this.rateLimiters.delete(ws);
     // If the host drops, leave hostPlayerId null. They (or a successor
     // who knows the hostToken) will re-claim on the next join. The room
     // stays in `filling` until something triggers startMatch, so the

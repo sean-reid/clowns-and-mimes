@@ -30,6 +30,16 @@ var seed_value: int = 0
 var topology: TopologyScript
 var pathfinder: AStar2D
 var solid_cells: Dictionary = {}
+
+# Path cache. bot_ai.gd calls find_path every tick per bot; in a busy
+# match (6 bots converging on a small set of patrol targets) the same
+# (from_cell, to_cell) pair recurs often. Cache the raw PackedVector2Array
+# keyed on "fx,fy->tx,ty" so the A* walk is skipped on cache hits. Each
+# call still does the cell-to-world conversion, so callers that mutate
+# the returned Array don't poison subsequent calls. Cleared on rebuild.
+const PATH_CACHE_MAX_ENTRIES := 32
+var _path_cache: Dictionary = {}
+var _path_cache_order: Array[String] = []
 # Per-axis cell counts for the pathfinding grid. Set from the topology's
 # playfield extents in build(); klein's double cover makes the x axis twice
 # as wide as the z axis. Everything else stays square.
@@ -97,11 +107,27 @@ func find_path(from: Vector3, to: Vector3) -> Array[Vector3]:
 		to_cell = _nearest_open_cell(to_cell)
 	if _is_solid(from_cell):
 		from_cell = _nearest_open_cell(from_cell)
-	var raw: PackedVector2Array = pathfinder.get_point_path(_cell_id(from_cell), _cell_id(to_cell))
+	var raw: PackedVector2Array = _cached_point_path(from_cell, to_cell)
 	var out: Array[Vector3] = []
 	for point in raw:
 		out.append(_cell_to_world(Vector2i(int(point.x), int(point.y))))
 	return out
+
+func _cached_point_path(from_cell: Vector2i, to_cell: Vector2i) -> PackedVector2Array:
+	var key: String = "%d,%d->%d,%d" % [from_cell.x, from_cell.y, to_cell.x, to_cell.y]
+	if _path_cache.has(key):
+		return _path_cache[key]
+	var raw: PackedVector2Array = pathfinder.get_point_path(_cell_id(from_cell), _cell_id(to_cell))
+	_path_cache[key] = raw
+	_path_cache_order.append(key)
+	if _path_cache_order.size() > PATH_CACHE_MAX_ENTRIES:
+		var evict: String = _path_cache_order.pop_front()
+		_path_cache.erase(evict)
+	return raw
+
+func _invalidate_path_cache() -> void:
+	_path_cache.clear()
+	_path_cache_order.clear()
 
 # ---------------------------------------------------------------------------
 # Construction
@@ -274,6 +300,7 @@ func _make_wall(seg_length: float) -> StaticBody3D:
 func _build_pathfinder() -> void:
 	pathfinder = AStar2D.new()
 	solid_cells.clear()
+	_invalidate_path_cache()
 	for cy in range(_grid_rows):
 		for cx in range(_grid_cols):
 			pathfinder.add_point(_cell_id(Vector2i(cx, cy)), Vector2(cx, cy))

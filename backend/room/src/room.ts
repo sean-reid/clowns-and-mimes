@@ -32,8 +32,8 @@ import {
   SPRINT_DRAIN_PER_S,
   SPRINT_REGEN_PER_S,
 } from '@cm/shared/movement';
-import { tagRejectionReason as sharedTagRejectionReason } from '@cm/shared/tagRules';
 import { BotPathfinder } from './botPathfinder.ts';
+import { TagManager, type TagManagerHost } from './tagManager.ts';
 
 // Server simulate + broadcast at 60 Hz. Each delta is ~16.7 ms apart so
 // reconciliation corrections arrive 3x faster than the previous 20 Hz
@@ -317,6 +317,7 @@ export class Room implements DurableObject {
   // change). simulateBots queries nextWaypoint so chase / rescue targets get
   // routed around wall segments instead of grinding into them.
   private pathfinder: BotPathfinder | null = null;
+  private readonly tagManager: TagManager;
 
   constructor(
     private readonly state: DurableObjectState,
@@ -324,6 +325,26 @@ export class Room implements DurableObject {
   ) {
     this.walls = generateWalls(this.seed, this.topology);
     this.rebuildPathfinder();
+    const host: TagManagerHost = {
+      players: this.players,
+      lastSavedAt: this.lastSavedAt,
+      connections: this.connections,
+      worldWidth: WORLD_WIDTH,
+      unfreezeGraceMs: UNFREEZE_GRACE_MS,
+      unfreezeRadiusClient: UNFREEZE_RADIUS_CLIENT,
+      lagCompMs: LAG_COMP_MS,
+      getWalls: () => this.walls,
+      getTopology: () => this.topology,
+      getPhase: () => this.phase,
+      setPhase: (p) => {
+        this.phase = p;
+      },
+      positionAt: (id, atMs) => this.positionAt(id, atMs),
+      broadcast: (msg) => this.broadcast(msg),
+      send: (ws, msg) => this.send(ws, msg),
+      stopTick: () => this.stopTick(),
+    };
+    this.tagManager = new TagManager(host);
   }
 
   private rebuildPathfinder(): void {
@@ -913,128 +934,19 @@ export class Room implements DurableObject {
   }
 
   private onTag(ws: WebSocket, targetId: string): void {
-    const conn = this.connections.get(ws);
-    if (!conn) return;
-    const attacker = this.players.get(conn.playerId);
-    const victim = this.players.get(targetId);
-    if (!attacker || !victim) {
-      this.send(ws, { t: 'tag_result', ok: false, reason: 'missing' });
-      return;
-    }
-    const reason = this.tagRejectionReason(attacker, victim, TAG_RADIUS_CLIENT, true);
-    if (reason !== null) {
-      this.send(ws, { t: 'tag_result', ok: false, reason });
-      return;
-    }
-    this.freezePlayer(victim);
-    this.send(ws, { t: 'tag_result', ok: true, targetId });
-    this.broadcast({
-      t: 'event',
-      kind: { kind: 'tagged', attackerId: attacker.id, victimId: victim.id, team: attacker.team },
-    });
-    this.checkWin();
-  }
-
-  /**
-   * Centralised freeze. Sets `frozen = true` and cancels any active jump
-   * arc so a tagged-mid-air body drops back to HOVER_HEIGHT for the
-   * snapshot wire rather than freezing in place at altitude. Clients
-   * render the descent as a short Y-lerp; the server's authoritative
-   * position is already on the ground.
-   */
-  private freezePlayer(p: PlayerState): void {
-    p.frozen = true;
-    if (p.jumpStartedAt !== null) {
-      p.jumpStartedAt = null;
-      p.position = { x: p.position.x, y: HOVER_HEIGHT, z: p.position.z };
-    }
+    this.tagManager.onTag(ws, targetId, TAG_RADIUS_CLIENT);
   }
 
   private onUnfreeze(ws: WebSocket, targetId: string): void {
-    const conn = this.connections.get(ws);
-    if (!conn) return;
-    const savior = this.players.get(conn.playerId);
-    const victim = this.players.get(targetId);
-    if (!savior || !victim || !victim.frozen || savior.team !== victim.team) {
-      this.send(ws, { t: 'unfreeze_result', ok: false, reason: 'invalid' });
-      return;
-    }
-    // Lag-compensate the frozen teammate's position too: the client clicked
-    // save based on where they saw the body, not where the server currently
-    // has it. Frozen players don't move so this rarely matters, but staying
-    // consistent with onTag keeps the rules simple.
-    const victimPos = this.positionAt(victim.id, Date.now() - LAG_COMP_MS);
-    const dist = topologyDistance(savior.position, victimPos, this.topology, WORLD_WIDTH);
-    if (dist > UNFREEZE_RADIUS_CLIENT) {
-      // Encode the actual distance in the reason so the client diagnostic
-      // can show the magnitude of the gap (helps tune the radius without
-      // wading through Workers logs).
-      this.send(ws, {
-        t: 'unfreeze_result',
-        ok: false,
-        reason: `out_of_range:${dist.toFixed(2)}`,
-      });
-      return;
-    }
-    if (
-      this.walls.length > 0 &&
-      pathCrossesWall(this.walls, savior.position.x, savior.position.z, victimPos.x, victimPos.z)
-    ) {
-      this.send(ws, { t: 'unfreeze_result', ok: false, reason: 'wall_in_way' });
-      return;
-    }
-    victim.frozen = false;
-    this.lastSavedAt.set(victim.id, Date.now());
-    this.send(ws, { t: 'unfreeze_result', ok: true, targetId });
-    this.broadcast({
-      t: 'event',
-      kind: { kind: 'saved', saviorId: savior.id, victimId: victim.id },
-    });
-  }
-
-  /**
-   * Returns null when the tag is legal, or a short reason string otherwise.
-   * The reason is forwarded in tag_result so the HUD can surface why a tag
-   * was rejected ('not_your_turn', 'out_of_range', 'wall_in_way', ...)
-   * instead of just 'invalid'.
-   *
-   * lagCompensate is true for client-initiated tags only: the victim's
-   * position is rewound by LAG_COMP_MS so the distance check runs against
-   * the world state the client saw at the moment of the tag. Server-side
-   * bot tags pass false because they have no lag to compensate for.
-   */
-  private tagRejectionReason(
-    attacker: PlayerState,
-    victim: PlayerState,
-    radius: number,
-    lagCompensate: boolean,
-  ): string | null {
-    const victimResolvedPos2D = lagCompensate
-      ? this.positionAt(victim.id, Date.now() - LAG_COMP_MS)
-      : victim.position;
-    // tagRules.ts uses Vec3 so we can plug verticallyOverlapping into it.
-    // The lag-rewind only adjusts XZ; Y stays at the current value because
-    // jump arcs are deterministic functions of jumpStartedAt and we want
-    // the vertical-overlap check to use the latest authoritative Y.
-    const victimResolvedPos: Vec3 = {
-      x: victimResolvedPos2D.x,
-      y: victim.position.y,
-      z: victimResolvedPos2D.z,
-    };
-    return sharedTagRejectionReason(attacker, victim, radius, {
-      victimResolvedPos,
-      phase: this.phase,
-      victimSavedAtMs: this.lastSavedAt.get(victim.id),
-      unfreezeGraceMs: UNFREEZE_GRACE_MS,
-      nowMs: Date.now(),
-      walls: this.walls,
-      topology: this.topology,
-      worldWidth: WORLD_WIDTH,
-    });
+    this.tagManager.onUnfreeze(ws, targetId);
   }
 
   private canTag(attacker: PlayerState, victim: PlayerState, radius: number): boolean {
-    return this.tagRejectionReason(attacker, victim, radius, false) === null;
+    return this.tagManager.canTag(attacker, victim, radius);
+  }
+
+  private freezePlayer(p: PlayerState): void {
+    this.tagManager.freezePlayer(p);
   }
 
   private tally(team: Team): number {
@@ -1088,17 +1000,7 @@ export class Room implements DurableObject {
   }
 
   private checkWin(): void {
-    const mimesActive = [...this.players.values()].filter((p) => p.team === 'mime' && !p.frozen);
-    const clownsActive = [...this.players.values()].filter((p) => p.team === 'clown' && !p.frozen);
-    if (mimesActive.length === 0) {
-      this.phase = 'ended';
-      this.broadcast({ t: 'event', kind: { kind: 'win', team: 'clown' } });
-      this.stopTick();
-    } else if (clownsActive.length === 0) {
-      this.phase = 'ended';
-      this.broadcast({ t: 'event', kind: { kind: 'win', team: 'mime' } });
-      this.stopTick();
-    }
+    this.tagManager.checkWin();
   }
 
   private startMatch(): void {

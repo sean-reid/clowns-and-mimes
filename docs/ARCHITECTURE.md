@@ -75,8 +75,17 @@ clowns-and-mimes/
     project.godot
   backend/
     matchmaker/              Cloudflare Worker entry for matchmaking
-    room/                    Durable Object hosting one game room
-    shared/                  protocol types shared by both
+                             (X-Protocol-Version handshake at /lobby,
+                             /lobby/:code/join, /open/join)
+    room/                    Durable Object hosting one game room.
+                             room.ts is the lifecycle + simulation;
+                             tagManager.ts, snapshotBroadcaster.ts,
+                             messageValidator.ts, rateLimiter.ts are
+                             the extracted concerns.
+    shared/                  protocol types + pure rules used by both
+                             sides AND the Godot client (movement,
+                             physics, topology, labyrinth, gridMaze,
+                             mobius, tagRules)
   website/                   Astro static site
   tests/
     e2e/                     Playwright + headless game smoke checks
@@ -264,7 +273,7 @@ Reconnect / session resume:
 
 - Each fresh `join` is answered with a `sessionToken` (UUIDv4) in the snapshot envelope, server-only stored in the room's `sessionTokens` map.
 - On a transient WS drop, the arena's reconnect ladder (`RECONNECT_BACKOFF_S = [0.5, 1.5, 3.0]`) reconnects the same `RoomClient` and re-sends `join` with the stashed `sessionToken`. The server matches the token to the existing `PlayerState`, rebinds the new WS to that playerId, and replies with a fresh snapshot. The player resumes mid-match instead of being treated as a fresh join (and the freeze-circumvention guard still rejects token-less mid-match joins).
-- The server holds the slot open for `RECONNECT_GRACE_MS = 15 s`. Past that, `finalizeDisconnect` tears the player down and the next ladder attempt receives `match_in_progress`.
+- The server holds the slot open for `RECONNECT_GRACE_MS = 45 s`. Past that, `finalizeDisconnect` tears the player down and the next ladder attempt receives `match_in_progress`.
 - A wedged transport (typical of yanked wifi) is detected by `ERR_OUT_OF_MEMORY` from `send_text`: `RoomClient` closes the socket, clears the queue, and emits `disconnected` so the ladder fires within ~1 s rather than waiting for OS-level TCP keepalive to elapse (~30 s).
 - While every human is in grace, the server's per-tick `simulate` body is a no-op and `turnEndsAt` is shifted forward by the pause duration on the first resumed tick. Bots, frozen flags, and the turn clock all preserve where the offline player left them. Multi-human matches keep ticking normally because `activeHumans` is non-zero.
 
@@ -344,9 +353,11 @@ Turn duration progression: round 1 is 30 seconds per team, round 2 is 60 seconds
 ## Anti-cheat
 
 - All state transitions are server-authoritative.
-- The server validates tag attempts: distance under threshold, vertical overlap (`|attacker.y - victim.y| < 1.4 m`, so a jumper at peak height evades a grounded opponent), both players alive, attacker not frozen, attacker on the active turn team. The vertical gate is reported back as `tag_result.reason = 'vertical_separation'` so the HUD can surface "out of reach (jumped)".
+- The server validates tag attempts via `@cm/shared/tagRules`: distance under threshold, vertical overlap (`|attacker.y - victim.y| < 1.4 m`, so a jumper at peak height evades a grounded opponent), both players alive, attacker not frozen, attacker on the active turn team. The vertical gate is reported back as `tag_result.reason = 'vertical_separation'` so the HUD can surface "out of reach (jumped)"; other reason codes (`wall_in_way`, `just_saved`, `not_your_turn`) are surfaced the same way, throttled to one HUD line per 1.5 s.
 - Movement deltas exceeding the maximum sprint speed are clamped.
-- Clients connect with a build version on the WS `join` payload. Mismatched versions are rejected with `version_mismatch` and a popup pointing at the latest release.
+- Every incoming WebSocket message is shape-validated (`messageValidator.ts`) before dispatch. Bad payloads (wrong type, `NaN`, missing fields, overlong strings) get `invalid_message` and are dropped.
+- Per-connection token-bucket rate limit (`rateLimiter.ts`): 120 burst, 60/s sustained. Flooding clients receive `rate_limited` and the message is dropped without closing the socket.
+- Clients are gated on protocol version twice: matchmaker checks the `X-Protocol-Version` header before vending a `wsUrl` (426 `protocol_mismatch` on mismatch), and the room re-checks the version field on the WS `join` payload (close 4001 `version_mismatch`). The first slice catches stale clients before the WS dial.
 - Private lobbies receive a `hostToken` from the matchmaker on create. Only the host's WS URL carries it (`?host=<token>`) and only that connection is allowed to issue the `start_match` message that transitions the room out of `filling`. Joiners never see the token.
 
 We do not attempt binary anti-tamper. The blast radius of cheating is limited because the server is the source of truth.

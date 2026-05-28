@@ -33,6 +33,7 @@ import {
   SPRINT_REGEN_PER_S,
 } from '@cm/shared/movement';
 import { BotPathfinder } from './botPathfinder.ts';
+import { SnapshotBroadcaster, type SnapshotBroadcasterHost } from './snapshotBroadcaster.ts';
 import { TagManager, type TagManagerHost } from './tagManager.ts';
 
 // Server simulate + broadcast at 60 Hz. Each delta is ~16.7 ms apart so
@@ -318,6 +319,7 @@ export class Room implements DurableObject {
   // routed around wall segments instead of grinding into them.
   private pathfinder: BotPathfinder | null = null;
   private readonly tagManager: TagManager;
+  private readonly broadcaster: SnapshotBroadcaster;
 
   constructor(
     private readonly state: DurableObjectState,
@@ -325,6 +327,17 @@ export class Room implements DurableObject {
   ) {
     this.walls = generateWalls(this.seed, this.topology);
     this.rebuildPathfinder();
+    const broadcasterHost: SnapshotBroadcasterHost = {
+      players: this.players,
+      connections: this.connections,
+      lastAppliedSeq: this.lastAppliedSeq,
+      getPhase: () => this.phase,
+      getTurnEndsAt: () => this.turnEndsAt,
+      getSeed: () => this.seed,
+      getTopology: () => this.topology,
+      getRoomId: () => this.state.id.toString(),
+    };
+    this.broadcaster = new SnapshotBroadcaster(broadcasterHost);
     const host: TagManagerHost = {
       players: this.players,
       lastSavedAt: this.lastSavedAt,
@@ -1714,46 +1727,19 @@ export class Room implements DurableObject {
   }
 
   private broadcastDelta(): void {
-    const players = [...this.players.values()];
-    for (const conn of this.connections.values()) {
-      this.send(conn.ws, {
-        t: 'delta',
-        players,
-        phase: this.phase,
-        turnEndsAt: this.turnEndsAt,
-        // ackSeq is the seq of the input most recently applied in
-        // simulateHumans, not the most recently received. The client uses
-        // this to know which buffered inputs to drop and which to replay
-        // when reconciling its predicted position with the server's truth.
-        ackSeq: this.lastAppliedSeq.get(conn.playerId) ?? 0,
-      });
-    }
+    this.broadcaster.broadcastDelta();
   }
 
   private snapshot(): RoomSnapshot {
-    return {
-      v: PROTOCOL_VERSION,
-      roomId: this.state.id.toString(),
-      seed: this.seed,
-      topology: this.topology,
-      phase: this.phase,
-      turnEndsAt: this.turnEndsAt,
-      players: [...this.players.values()],
-    };
+    return this.broadcaster.snapshot();
   }
 
   private broadcast(msg: ServerToClient): void {
-    for (const conn of this.connections.values()) {
-      this.send(conn.ws, msg);
-    }
+    this.broadcaster.broadcast(msg);
   }
 
   private send(ws: WebSocket, msg: ServerToClient): void {
-    try {
-      ws.send(JSON.stringify(msg));
-    } catch {
-      // socket likely closed; cleanup happens on close event
-    }
+    this.broadcaster.send(ws, msg);
   }
 
   private stopTick(): void {

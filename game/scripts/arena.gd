@@ -566,7 +566,7 @@ func _reconcile_local_player(delta: Dictionary) -> void:
 		# the server already pushed apart - one tick later the next
 		# reconcile snap creates the oscillation the camera flicker
 		# report describes.
-		replayed_pos = Movement.resolve_overlap(replayed_pos, others_xz, walls)
+		replayed_pos = Movement.resolve_overlap(replayed_pos, others_xz, walls, topology)
 		local_sprint_energy = step["sprint_energy"]
 		local_sprinting = bool(step["sprinting"])
 		replayed_jump_started_at_ms = Physics.step_jump(
@@ -782,6 +782,7 @@ func _advance_predicted_tick(
 		_pred_current_xz,
 		_collect_other_xz_positions(),
 		labyrinth.wall_endpoints(),
+		topology,
 	)
 	_pred_tick_start_t = Time.get_unix_time_from_system()
 	# Same step_jump the server runs. With the matching input_now_ms, the

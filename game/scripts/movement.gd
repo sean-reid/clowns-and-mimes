@@ -144,22 +144,46 @@ static func step(
 ## per-tick delta gets corrected by the next reconcile and is too
 ## brittle to mirror precisely without per-other prev positions.
 ##
+## Distance + push direction are computed via topology.delta so wrapping
+## seams don't flip the result. Without this the predictor briefly sees
+## bots on the opposite side of the world (until the next render frame
+## flips their _to_camera_nearest_copy rendered position), misses the
+## overlap entirely, and the server's bounce pass produces a visible
+## reconcile snap on every seam crossing. topology being null means the
+## caller is in offline / pre-build mode; fall back to raw Euclidean.
+##
 ## Skips entries that are wall-blocked: a push into a wall would create
 ## the same wall-clipping we are trying to avoid. The unblocked others
 ## still resolve their share.
-static func resolve_overlap(self_xz: Vector2, others_xz: Array, walls: Array) -> Vector2:
+static func resolve_overlap(
+	self_xz: Vector2,
+	others_xz: Array,
+	walls: Array,
+	topology = null,
+) -> Vector2:
 	var result := self_xz
 	for other in others_xz:
 		var other_xz: Vector2 = other
-		var diff: Vector2 = result - other_xz
-		var dist: float = diff.length()
+		var diff_x: float
+		var diff_z: float
+		if topology != null:
+			var d: Vector3 = topology.delta(
+				Vector3(other_xz.x, 0.0, other_xz.y),
+				Vector3(result.x, 0.0, result.y),
+			)
+			diff_x = d.x
+			diff_z = d.z
+		else:
+			diff_x = result.x - other_xz.x
+			diff_z = result.y - other_xz.y
+		var dist: float = sqrt(diff_x * diff_x + diff_z * diff_z)
 		if dist >= 2.0 * PLAYER_RADIUS:
 			continue
 		var nx: float
 		var nz: float
 		if dist > 1e-6:
-			nx = diff.x / dist
-			nz = diff.y / dist
+			nx = diff_x / dist
+			nz = diff_z / dist
 		else:
 			# Zero-distance fallback. Pick a deterministic axis so both
 			# server and client agree.

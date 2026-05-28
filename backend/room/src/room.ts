@@ -33,6 +33,7 @@ import {
   SPRINT_REGEN_PER_S,
 } from '@cm/shared/movement';
 import { BotPathfinder } from './botPathfinder.ts';
+import { parseClientMessage } from './messageValidator.ts';
 import { SnapshotBroadcaster, type SnapshotBroadcasterHost } from './snapshotBroadcaster.ts';
 import { TagManager, type TagManagerHost } from './tagManager.ts';
 
@@ -447,13 +448,16 @@ export class Room implements DurableObject {
   }
 
   webSocketMessage(ws: WebSocket, raw: string | ArrayBuffer): void {
-    let msg: ClientToServer;
+    let parsed: unknown;
     try {
-      msg = JSON.parse(
-        typeof raw === 'string' ? raw : new TextDecoder().decode(raw),
-      ) as ClientToServer;
+      parsed = JSON.parse(typeof raw === 'string' ? raw : new TextDecoder().decode(raw));
     } catch {
       this.send(ws, { t: 'error', code: 'invalid_message', message: 'bad json' });
+      return;
+    }
+    const msg = parseClientMessage(parsed);
+    if (msg === null) {
+      this.send(ws, { t: 'error', code: 'invalid_message', message: 'bad payload' });
       return;
     }
     this.handleMessage(ws, msg);

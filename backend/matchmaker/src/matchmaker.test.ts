@@ -90,15 +90,32 @@ function makeEnv(): Env {
   };
 }
 
+import { PROTOCOL_VERSION } from '@cm/shared';
+
 async function call(env: Env, method: string, path: string, body?: unknown): Promise<Response> {
+  const headers: Record<string, string> = {
+    'x-protocol-version': String(PROTOCOL_VERSION),
+  };
+  if (body !== undefined) headers['content-type'] = 'application/json';
   return worker.fetch(
     new Request(`https://x.test${path}`, {
       method,
       body: body !== undefined ? JSON.stringify(body) : undefined,
-      headers: body !== undefined ? { 'content-type': 'application/json' } : {},
+      headers,
     }),
     env,
   );
+}
+
+async function callWithoutVersion(
+  env: Env,
+  method: string,
+  path: string,
+  versionHeader?: string,
+): Promise<Response> {
+  const headers: Record<string, string> = { 'content-type': 'application/json' };
+  if (versionHeader !== undefined) headers['x-protocol-version'] = versionHeader;
+  return worker.fetch(new Request(`https://x.test${path}`, { method, headers }), env);
 }
 
 describe('matchmaker', () => {
@@ -198,5 +215,28 @@ describe('matchmaker', () => {
     const res = await call(env, 'GET', '/healthz');
     const body = (await res.json()) as { ok: boolean };
     expect(body.ok).toBe(true);
+  });
+
+  it('rejects /lobby without the protocol-version header', async () => {
+    const res = await callWithoutVersion(env, 'POST', '/lobby');
+    expect(res.status).toBe(426);
+    const body = (await res.json()) as { error: string; server_v: number; client_v: number | null };
+    expect(body.error).toBe('protocol_mismatch');
+    expect(body.server_v).toBe(PROTOCOL_VERSION);
+    expect(body.client_v).toBeNull();
+  });
+
+  it('rejects /lobby with a stale protocol version', async () => {
+    const stale = String(PROTOCOL_VERSION - 1);
+    const res = await callWithoutVersion(env, 'POST', '/lobby', stale);
+    expect(res.status).toBe(426);
+    const body = (await res.json()) as { error: string; client_v: number | null };
+    expect(body.error).toBe('protocol_mismatch');
+    expect(body.client_v).toBe(PROTOCOL_VERSION - 1);
+  });
+
+  it('still serves /healthz when the header is missing', async () => {
+    const res = await callWithoutVersion(env, 'GET', '/healthz');
+    expect(res.status).toBe(200);
   });
 });

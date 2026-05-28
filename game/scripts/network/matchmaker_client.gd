@@ -40,7 +40,11 @@ func _post(
 	http.timeout = 10.0
 	http.request_completed.connect(_make_handler(http, on_response, on_failure))
 	var url: String = ServerConfig.matchmaker_url() + path
-	var headers: PackedStringArray = ["Content-Type: application/json", "Accept: application/json"]
+	var headers: PackedStringArray = [
+		"Content-Type: application/json",
+		"Accept: application/json",
+		"X-Protocol-Version: %d" % ServerConfig.protocol_version(),
+	]
 	var payload: String = JSON.stringify(body) if body.size() > 0 else "{}"
 	var err: int = http.request(url, headers, HTTPClient.METHOD_POST, payload)
 	if err != OK:
@@ -75,6 +79,8 @@ func _friendly_http_error(http_status: int, body: PackedByteArray) -> String:
 		return "The server rejected the request."
 	if http_status == 404:
 		return "Lobby not found."
+	if http_status == 426 and error_code == "protocol_mismatch":
+		return "This client is out of date. Update to play online."
 	if http_status == 429:
 		return "Too many requests. Wait a moment and try again."
 	if http_status >= 500:

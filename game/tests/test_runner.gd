@@ -16,6 +16,7 @@ const TEST_SCRIPTS: Array[String] = [
 	"res://tests/test_physics.gd",
 	"res://tests/test_frozen_descent.gd",
 	"res://tests/test_movement_determinism.gd",
+	"res://tests/test_gridmaze_determinism.gd",
 ]
 
 func _initialize() -> void:

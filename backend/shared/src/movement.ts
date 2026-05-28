@@ -137,11 +137,7 @@ export function stepMovement(
   // shows tens of meters even though the body really moved a few cm).
   // Rebounding from a wrap would shove the body off the playfield -
   // playtest flicker at seams was caused by exactly that.
-  if (
-    attemptedMag > 0 &&
-    lossMag <= attemptedMag * 1.5 &&
-    lossMag / attemptedMag > 0.1
-  ) {
+  if (attemptedMag > 0 && lossMag <= attemptedMag * 1.5 && lossMag / attemptedMag > 0.1) {
     const reboundX = -lossDx * BOUNCE_E_WALL;
     const reboundZ = -lossDz * BOUNCE_E_WALL;
     const candidateXZ: Vec2 = { x: nextXZ.x + reboundX, z: nextXZ.z + reboundZ };

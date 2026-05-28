@@ -6,6 +6,31 @@ When cutting a release: rename the `[Unreleased]` heading below to the version b
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-05-27
+
+Jumping. Press Space to bounce up on a deterministic ~0.6 s parabolic arc that clears the tag-overlap threshold, then drops you back to hover. The arc is server-authoritative and the client predicts it bit-identically so reconciliation never disagrees about altitude. Bodies bump off each other (and walls) when they collide, bots learn to jump to dodge a tag, and tagging into a peak jumper now misses with an "out of reach" message instead of silently succeeding. Reconnect-after-drop is also more forgiving now, so a transient WebSocket blip doesn't tear the room down.
+
+### Added
+
+- Spacebar jump. Deterministic 0.6 s arc, ~2 m peak above hover, 0.1 s landing cooldown. Driven by a single `jumpStartedAt` field on `PlayerState` so the arc replays identically on server and client without any extra sync traffic.
+- Vertical-overlap tag rule. `canTag` rejects an attempt when the victim's Y is more than `BODY_VERTICAL_EXTENT` (1.4 m) above the attacker. The HUD side log shows "out of reach (jumped)" so the player understands why the tag missed instead of feeling the input got dropped.
+- Player-player and player-wall bounceback. Two bodies that overlap on a tick get pushed apart with a small impulse; restitution is light when both are grounded, pronounced when either is airborne, and very soft against walls. A wall-clamp pass after the bounceback prevents collision-induced shoves through walls.
+- Bot jump AI. Bots gain a "should I jump?" predicate that fires on three triggers: an incoming tag from an opposing turn within `TAG_RADIUS + 0.5` m, a stuck-against-something timeout while an opponent is nearby, and a low-probability tactical noise jump during chases. A short refractory window keeps bot evasion readable.
+- Disney bouncing-ball squash and stretch on every jumping body. The mesh anticipates, stretches up, squashes at the peak, stretches down, and squashes on landing.
+- Frozen-mid-jump descent. Tagging a peak jumper clears their jump arc on the server and the client lerps their Y down to hover height at 5 m/s so they visibly drift back to the float position instead of staying in the air. Works for both the local body and remote bodies on other clients.
+
+### Changed
+
+- `PROTOCOL_VERSION` is now `2`. `PlayerState.position` carries a Y component (`Vec3` instead of `Vec2`), and `PlayerInput` carries a rising-edge `jump: boolean`. Older clients are rejected with the existing `version_mismatch` close.
+- Reconnect grace window widened from 15 s to 45 s. The client's worst-case reconnect ladder takes ~13 s and the disconnect itself takes a moment to surface; the old margin lost the race in the wild and finalized the player slot before the reconnect arrived, dropping the room's bots in the process.
+- The "Disconnected: closed by peer: -1" side-log line is held back until the reconnect ladder actually gives up. The "Reconnecting…" banner remains the right transient UI for the common case where the ladder absorbs the drop invisibly.
+
+### Fixed
+
+- Seam camera flicker. `resolvePlayerCollisions` now wraps its output back into the canonical domain on both server and client. A push that landed a body's xz a few centimetres outside the topology's [-half, +half] range used to stick (subsequent ticks with zero input passed through `stepMovement` unchanged), the server broadcast the extended coordinate every tick, and the client's render frame painted the body at the extended position while `_physics_process` immediately wrapped it back — producing the "two angles" flicker reported on torus, Möbius, and Klein.
+- Frozen-mid-jump body no longer stays in the air on the local screen. The descent gate that was skipping the lerp while frozen has been removed; the lerp now runs because `_stream_input` already zeros the input vectors and the predicted XZ stays static.
+- README, `docs/ARCHITECTURE.md`, and the website's controls poster all advertise the new Space binding. `docs/ARCHITECTURE.md` also calls out the new `Vec3`, `jumpStartedAt`, and `vertical_separation` rejection.
+
 ## [0.4.2] - 2026-05-27
 
 Quick follow-up to the v0.4.1 reconnect work: open-strangers matchmaking now correctly skips rooms that are already in a match.

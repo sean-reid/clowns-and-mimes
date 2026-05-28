@@ -153,6 +153,12 @@ var _reconnect_label: Label = null
 # every CF edge blip the ladder absorbed invisibly.
 var _last_disconnect_reason: String = ""
 
+# Suppress repeat tag-rejection HUD lines closer than this many seconds.
+# Without this, walking into a wall while spamming the contact button
+# spams the side log at 60Hz.
+const TAG_REJECT_HUD_THROTTLE_S := 1.5
+var _last_tag_reject_log_at: float = -1000.0
+
 # ---------------------------------------------------------------------------
 # Lifecycle
 # ---------------------------------------------------------------------------
@@ -639,14 +645,30 @@ func _on_room_event(event: Dictionary) -> void:
 func _handle_tag_result(event: Dictionary) -> void:
 	if bool(event.get("ok", false)):
 		return
-	# Surface specific failure reasons to the HUD log so the player can
-	# tell why the tag missed. vertical_separation in particular is the
-	# new "they jumped out of reach" feedback after PR 2's tag-vertical
-	# gate; without a message the tag just silently fails and the
-	# player thinks the input dropped.
-	var reason: String = String(event.get("reason", ""))
+	_surface_tag_reject(String(event.get("reason", "")))
+
+# Maps server tag_result.reason codes to short HUD hints. Codes the
+# player wouldn't act on (same_team, you_are_frozen, missing) stay
+# silent. out_of_range fires on every near-miss so it's silent too;
+# the reach is visually obvious. Throttled so contact spam at 60Hz
+# doesn't fill the log.
+func _surface_tag_reject(reason: String) -> void:
+	var hint: String = ""
 	if reason == "vertical_separation":
-		hud.append_log("Tag missed: out of reach (jumped)")
+		hint = "Tag missed: out of reach (jumped)"
+	elif reason == "wall_in_way":
+		hint = "Tag blocked: wall in the way"
+	elif reason == "just_saved":
+		hint = "Just unfrozen - try again in a moment"
+	elif reason == "not_your_turn":
+		hint = "Wait for your team's turn"
+	if hint.is_empty():
+		return
+	var now: float = Time.get_unix_time_from_system()
+	if now - _last_tag_reject_log_at < TAG_REJECT_HUD_THROTTLE_S:
+		return
+	_last_tag_reject_log_at = now
+	hud.append_log(hint)
 
 func _handle_phase_event(phase: String, cry_index: int) -> void:
 	# Server sends 'turn_mime' / 'turn_clown' for the active-turn phases plus a
@@ -1137,8 +1159,7 @@ func _on_offline_tag_rejected(attacker_id: String, _victim_id: String, reason: S
 	# message and the verbose log would be noisy with bot misses.
 	if attacker_id != local_player_id:
 		return
-	if reason == "vertical_separation":
-		hud.append_log("Tag missed: out of reach (jumped)")
+	_surface_tag_reject(reason)
 
 func _on_offline_saved(victim_id: String, savior_id: String) -> void:
 	var victim: Node = player_nodes.get(victim_id)

@@ -404,8 +404,11 @@ func _schedule_next_reconnect() -> void:
 		return
 	# Clear stale per-session state so reconciliation does not replay inputs
 	# from before the drop. The fresh snapshot from the server's onJoin will
-	# repopulate everything.
+	# repopulate everything. contact_cooldowns is keyed by player ID; ID reuse
+	# across reconnects is unlikely but possible, and a stale entry would
+	# silently swallow the first tag after resume.
 	pending_inputs.clear()
+	contact_cooldowns.clear()
 	snapshot_received = false
 	room_client.connect_to(GameState.server_url)
 	# If the connect call dispatches another `disconnected` immediately
@@ -488,6 +491,7 @@ func _on_snapshot(snapshot: Dictionary, you_are: String) -> void:
 	# inputs sent before the snapshot arrived describe motion from a
 	# different origin and replaying them would compound the offset.
 	pending_inputs.clear()
+	contact_cooldowns.clear()
 	for entry in snapshot.get("players", []):
 		if entry.get("id", "") == local_player_id and local_player != null:
 			var pos: Dictionary = entry.get("position", {"x": 0.0, "z": 0.0})

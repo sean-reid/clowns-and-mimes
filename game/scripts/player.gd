@@ -18,6 +18,29 @@ const MAX_SPRINT := SharedConstants.MAX_SPRINT
 const SPRINT_DRAIN_PER_S := SharedConstants.SPRINT_DRAIN_PER_S
 const SPRINT_REGEN_PER_S := SharedConstants.SPRINT_REGEN_PER_S
 const LOOK_SENSITIVITY := 0.0025
+# Pitch clamp on the first-person camera in radians (~±69°). Past this
+# the head tilts so far back / forward that the body intersects the
+# camera and the view goes haywire.
+const CAMERA_PITCH_LIMIT := 1.2
+
+# Footstep audio params. unit_size is the 3D-audio attenuation radius;
+# max_db is louder for the local player than remote (they hear their
+# own feet better). volume_db_silent floors the volume when the body
+# stops so no chirp leaks out at zero speed.
+const FOOTSTEP_UNIT_SIZE := 8.0
+const FOOTSTEP_MAX_DB_LOCAL := 0.0
+const FOOTSTEP_MAX_DB_REMOTE := -6.0
+const FOOTSTEP_VOLUME_DB_SILENT := -80.0
+const FOOTSTEP_VOLUME_DB_LOCAL := 0.0
+const FOOTSTEP_VOLUME_DB_REMOTE := -8.0
+const FOOTSTEP_SILENT_SPEED_THRESHOLD := 0.2
+# Pitch scales with speed: walking maps planar_speed/WALK_SPEED into
+# [WALK_MIN, WALK_MAX]; sprinting raises the range to [SPRINT_MIN,
+# SPRINT_MAX] so the gait reads as urgent.
+const FOOTSTEP_WALK_PITCH_MIN := 0.85
+const FOOTSTEP_WALK_PITCH_MAX := 1.5
+const FOOTSTEP_SPRINT_PITCH_MIN := 1.2
+const FOOTSTEP_SPRINT_PITCH_MAX := 1.6
 
 @export var team: String = "mime"
 @export var bot: bool = false
@@ -156,9 +179,9 @@ func _setup_footsteps() -> void:
 	footstep_player = AudioStreamPlayer3D.new()
 	footstep_player.stream = stream
 	footstep_player.bus = "SFX"
-	footstep_player.unit_size = 8.0
-	footstep_player.max_db = 0.0 if is_local else -6.0
-	footstep_player.volume_db = -80.0
+	footstep_player.unit_size = FOOTSTEP_UNIT_SIZE
+	footstep_player.max_db = FOOTSTEP_MAX_DB_LOCAL if is_local else FOOTSTEP_MAX_DB_REMOTE
+	footstep_player.volume_db = FOOTSTEP_VOLUME_DB_SILENT
 	add_child(footstep_player)
 	footstep_player.play()
 
@@ -190,7 +213,7 @@ func _input(event: InputEvent) -> void:
 	if event is InputEventMouseMotion and Input.get_mouse_mode() == Input.MOUSE_MODE_CAPTURED:
 		rotate_y(-event.relative.x * LOOK_SENSITIVITY)
 		camera.rotate_x(-event.relative.y * LOOK_SENSITIVITY)
-		camera.rotation.x = clampf(camera.rotation.x, -1.2, 1.2)
+		camera.rotation.x = clampf(camera.rotation.x, -CAMERA_PITCH_LIMIT, CAMERA_PITCH_LIMIT)
 
 func _process(delta: float) -> void:
 	# Remote-body position update at render rate. Previously this lived in
@@ -326,17 +349,22 @@ func set_external_motion(planar_speed: float, sprinting: bool) -> void:
 func _update_footsteps(planar_speed: float, sprinting: bool) -> void:
 	if footstep_player == null:
 		return
-	if planar_speed < 0.2:
-		footstep_player.volume_db = -80.0
+	if planar_speed < FOOTSTEP_SILENT_SPEED_THRESHOLD:
+		footstep_player.volume_db = FOOTSTEP_VOLUME_DB_SILENT
 		footstep_player.pitch_scale = 1.0
 		return
-	footstep_player.volume_db = (0.0 if is_local else -8.0)
-	# Pitch scales with speed: walk = 1.0, sprint = ~1.4. Pitch range clamped so
-	# pause doesn't audibly chirp during deceleration.
-	var ratio: float = clampf(planar_speed / WALK_SPEED, 0.85, 1.5)
+	footstep_player.volume_db = FOOTSTEP_VOLUME_DB_LOCAL if is_local else FOOTSTEP_VOLUME_DB_REMOTE
+	# Pitch scales with speed: walking 0.85..1.5, sprinting 1.2..1.6. The
+	# clamps keep pitch in a musical range so deceleration doesn't audibly
+	# chirp at the boundary.
+	var ratio: float = clampf(
+		planar_speed / WALK_SPEED, FOOTSTEP_WALK_PITCH_MIN, FOOTSTEP_WALK_PITCH_MAX
+	)
 	footstep_player.pitch_scale = ratio
 	if sprinting:
-		footstep_player.pitch_scale = clampf(planar_speed / WALK_SPEED, 1.2, 1.6)
+		footstep_player.pitch_scale = clampf(
+			planar_speed / WALK_SPEED, FOOTSTEP_SPRINT_PITCH_MIN, FOOTSTEP_SPRINT_PITCH_MAX
+		)
 
 func apply_remote_state(pos: Vector3, yaw: float, is_frozen: bool, sprint: float) -> void:
 	# Derive an effective planar speed from the delta between snapshots so the

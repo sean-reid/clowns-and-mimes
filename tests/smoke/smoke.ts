@@ -3,10 +3,15 @@
 // and verifies the room responds with a snapshot. Exits non-zero on any
 // failure so CI or a pnpm hook can rely on it.
 
+import { PROTOCOL_VERSION } from '@cm/shared';
 import { WebSocket } from 'ws';
 
-const PROTOCOL_VERSION = 1;
 const WS_TIMEOUT_MS = 8000;
+// Matchmaker requires this header on /lobby, /lobby/:code/join, /open/join
+// since PR #224. /healthz is exempt.
+const PROTOCOL_HEADERS: HeadersInit = {
+  'X-Protocol-Version': String(PROTOCOL_VERSION),
+};
 
 async function main(): Promise<void> {
   const base = process.argv[2];
@@ -14,7 +19,7 @@ async function main(): Promise<void> {
     console.error('usage: smoke.ts <matchmaker-url>');
     process.exit(2);
   }
-  console.log(`[smoke] base=${base}`);
+  console.log(`[smoke] base=${base} protocol_v=${PROTOCOL_VERSION}`);
 
   await check('healthz', async () => {
     const res = await fetch(`${base}/healthz`);
@@ -26,7 +31,7 @@ async function main(): Promise<void> {
   const created = await check('create lobby', async () => {
     const res = await fetch(`${base}/lobby`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', ...PROTOCOL_HEADERS },
       body: JSON.stringify({ topology: 'plane' }),
     });
     if (!res.ok) throw new Error(`status ${res.status}`);
@@ -37,7 +42,10 @@ async function main(): Promise<void> {
   });
 
   await check('join by code', async () => {
-    const res = await fetch(`${base}/lobby/${created.code}/join`, { method: 'POST' });
+    const res = await fetch(`${base}/lobby/${created.code}/join`, {
+      method: 'POST',
+      headers: PROTOCOL_HEADERS,
+    });
     if (!res.ok) throw new Error(`status ${res.status}`);
     const body = (await res.json()) as { roomId: string; wsUrl: string };
     if (body.roomId !== created.roomId) throw new Error(`roomId mismatch`);

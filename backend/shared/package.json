@@ -13,7 +13,8 @@
     "./gridMaze": "./src/gridMaze.ts",
     "./movement": "./src/movement.ts",
     "./mobius": "./src/mobius.ts",
-    "./physics": "./src/physics.ts"
+    "./physics": "./src/physics.ts",
+    "./tagRules": "./src/tagRules.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit",

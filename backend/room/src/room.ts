@@ -32,7 +32,7 @@ import {
   SPRINT_DRAIN_PER_S,
   SPRINT_REGEN_PER_S,
 } from '@cm/shared/movement';
-import { verticallyOverlapping } from '@cm/shared/physics';
+import { tagRejectionReason as sharedTagRejectionReason } from '@cm/shared/tagRules';
 import { BotPathfinder } from './botPathfinder.ts';
 
 // Server simulate + broadcast at 60 Hz. Each delta is ~16.7 ms apart so
@@ -1009,37 +1009,28 @@ export class Room implements DurableObject {
     radius: number,
     lagCompensate: boolean,
   ): string | null {
-    if (attacker.team === victim.team) return 'same_team';
-    if (attacker.frozen) return 'you_are_frozen';
-    if (victim.frozen) return 'already_frozen';
-    if (this.phase !== `turn_${attacker.team}`) return 'not_your_turn';
-    const savedAt = this.lastSavedAt.get(victim.id);
-    if (savedAt !== undefined && Date.now() - savedAt < UNFREEZE_GRACE_MS) return 'just_saved';
-    const victimPos = lagCompensate
+    const victimResolvedPos2D = lagCompensate
       ? this.positionAt(victim.id, Date.now() - LAG_COMP_MS)
       : victim.position;
-    const d = topologyDistance(attacker.position, victimPos, this.topology, WORLD_WIDTH);
-    if (d > radius) return `out_of_range:${d.toFixed(2)}`;
-    if (
-      this.walls.length > 0 &&
-      pathCrossesWall(
-        this.walls,
-        attacker.position.x,
-        attacker.position.z,
-        victimPos.x,
-        victimPos.z,
-      )
-    )
-      return 'wall_in_way';
-    // Vertical-overlap gate. Option A from the jumping plan: tag fires
-    // on XZ overlap + vertical overlap, regardless of jump state. A
-    // peak jumper's Y minus a grounded body's Y equals JUMP_AMP, which
-    // is tuned just above BODY_VERTICAL_EXTENT so the peak-vs-grounded
-    // case rejects here. Synchronized jumpers (both near peak) pass
-    // and tag normally; mistimed jumpers fall outside the threshold
-    // and miss.
-    if (!verticallyOverlapping(attacker, victim)) return 'vertical_separation';
-    return null;
+    // tagRules.ts uses Vec3 so we can plug verticallyOverlapping into it.
+    // The lag-rewind only adjusts XZ; Y stays at the current value because
+    // jump arcs are deterministic functions of jumpStartedAt and we want
+    // the vertical-overlap check to use the latest authoritative Y.
+    const victimResolvedPos: Vec3 = {
+      x: victimResolvedPos2D.x,
+      y: victim.position.y,
+      z: victimResolvedPos2D.z,
+    };
+    return sharedTagRejectionReason(attacker, victim, radius, {
+      victimResolvedPos,
+      phase: this.phase,
+      victimSavedAtMs: this.lastSavedAt.get(victim.id),
+      unfreezeGraceMs: UNFREEZE_GRACE_MS,
+      nowMs: Date.now(),
+      walls: this.walls,
+      topology: this.topology,
+      worldWidth: WORLD_WIDTH,
+    });
   }
 
   private canTag(attacker: PlayerState, victim: PlayerState, radius: number): boolean {

@@ -6,6 +6,20 @@ When cutting a release: rename the `[Unreleased]` heading below to the version b
 
 ## [Unreleased]
 
+## [0.5.1] - 2026-05-27
+
+Closes a gap shipped with v0.5.0: spacebar now jumps in offline mode, and offline bots learn the same three jump triggers their server-driven counterparts use. The jumping feature is now identical online and offline.
+
+### Added
+
+- Local player spacebar jump in offline mode. Rising-edge detection so a held key sends one jump, not 60. Same deterministic arc the server uses online.
+- Offline bot jump AI. `bot_ai.gd` mirrors the server's three triggers in `botJumpDecision`: tag-threat evasion when an active-turn opponent is within `TAG_RADIUS + 0.5 m` and not already airborne, decornering when the stuck timer trips with an opponent within `4 m`, and low-probability tactical noise during a chase against the bot's team.
+- Vertical-overlap rejection in the offline tag rule, with a `tag_rejected(attacker_id, victim_id, reason)` signal carrying the reason. The HUD log shows "Tag missed: out of reach (jumped)" when an offline tag misses a peak jumper, matching the online `tag_result.reason` surfacing.
+
+### Fixed
+
+- Tagged offline opponents no longer stay in the air. The frozen-mid-jump descent ramp in `player.gd` is now applied to any body whose Y isn't owned by the online predictor (covers offline-local, offline-bots, and online remote bodies on this client). Online local stays on its own ramp in `arena.gd::_advance_local_prediction`.
+
 ## [0.5.0] - 2026-05-27
 
 Jumping. Press Space to bounce up on a deterministic ~0.6 s parabolic arc that clears the tag-overlap threshold, then drops you back to hover. The arc is server-authoritative and the client predicts it bit-identically so reconciliation never disagrees about altitude. Bodies bump off each other (and walls) when they collide, bots learn to jump to dodge a tag, and tagging into a peak jumper now misses with an "out of reach" message instead of silently succeeding. Reconnect-after-drop is also more forgiving now, so a transient WebSocket blip doesn't tear the room down.

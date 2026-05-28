@@ -146,6 +146,12 @@ var _ping_accumulator: float = 0.0
 var _reconnect_attempt: int = 0
 var _reconnect_active: bool = false
 var _reconnect_label: Label = null
+# Stashed so _show_reconnect_failed_popup can surface the original drop
+# reason in the side log once the ladder has actually given up. We hold
+# the log line back from _on_room_disconnected because the "Reconnecting..."
+# banner is the right transient UI; the log line was noisy and scary on
+# every CF edge blip the ladder absorbed invisibly.
+var _last_disconnect_reason: String = ""
 
 # ---------------------------------------------------------------------------
 # Lifecycle
@@ -377,8 +383,12 @@ func _on_room_disconnected(reason: String) -> void:
 		return
 	_reconnect_active = true
 	_reconnect_attempt = 0
+	_last_disconnect_reason = reason
 	_show_reconnect_banner("Reconnecting...")
-	hud.append_log("Disconnected: %s" % reason)
+	# Hold off on the HUD log line. The "Reconnecting..." banner is enough
+	# transient feedback - most drops are CF edge / DO migration blips that
+	# the ladder absorbs invisibly. Only surface "Disconnected: <reason>"
+	# in the side log if the ladder gives up (see _show_reconnect_failed_popup).
 	_schedule_next_reconnect()
 
 func _schedule_next_reconnect() -> void:
@@ -430,6 +440,12 @@ func _hide_reconnect_banner() -> void:
 
 func _show_reconnect_failed_popup() -> void:
 	_hide_reconnect_banner()
+	# Surface the last disconnect reason now that the ladder gave up. Held
+	# back from _on_room_disconnected so the side log isn't spammed with
+	# "Disconnected: closed by peer: -1" on every transient blip that the
+	# ladder absorbs invisibly.
+	if _last_disconnect_reason != "":
+		hud.append_log("Disconnected: %s" % _last_disconnect_reason)
 	var dialog := AcceptDialog.new()
 	dialog.title = "Connection lost"
 	dialog.dialog_text = "Could not reach the server. Try again or back out to the main menu."

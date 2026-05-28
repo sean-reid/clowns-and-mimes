@@ -95,7 +95,16 @@ const JUMP_CLIENT_CLOCK_SKEW_MS = 500;
 // stands still (and is vulnerable to tags) until the WS is back. After
 // the window expires their PlayerState is torn down for real and the
 // usual humans-zero match-state cleanup runs.
-const RECONNECT_GRACE_MS = 15_000;
+//
+// 45 s is sized to outrun the worst-case client reconnect ladder. The
+// arena schedules 3 attempts with backoffs [0.5, 1.5, 3.0] and each
+// step waits `wait_s + 1` for the connection result, so the ladder
+// itself can take ~13 s. The disconnect also takes a moment to surface
+// on the client (TCP retries, Godot's STATE_CLOSED detection). 15 s
+// left only ~2 s of margin and lost the race in the wild: finalize
+// ran first, the player slot was nuked, and the reconnect arrived as
+// a fresh join in a bot-empty room.
+const RECONNECT_GRACE_MS = 45_000;
 // Wider vision so bots commit to a chase / flee instead of dithering on
 // patrol when an opponent is across a corridor. World half-diagonal is ~56,
 // so 22 covers most short corridors without making bots omniscient.

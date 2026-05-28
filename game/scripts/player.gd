@@ -46,6 +46,15 @@ var frozen: bool = false:
 		frozen = value
 		_update_marker()
 		frozen_changed.emit(frozen)
+		# Seed the Y-ramp used in _process so a remote body tagged mid-jump
+		# visibly drifts from current Y down to HOVER_HEIGHT instead of
+		# the interp's instantaneous snap. Local body uses a separate ramp
+		# in arena.gd::_advance_local_prediction. Cleared on unfreeze so a
+		# subsequent save + re-jump starts fresh.
+		if frozen and not is_local:
+			_frozen_descent_y = global_position.y
+		elif not frozen:
+			_frozen_descent_y = PhysicsScript.HOVER_HEIGHT
 
 @onready var camera: Camera3D = $Camera
 @onready var head: MeshInstance3D = $Head
@@ -101,6 +110,13 @@ var jump_started_at_ms: int = -1
 var _head_squash_scale: Vector3 = Vector3.ONE
 const SQUASH_RECOVER_S := 0.15
 const PhysicsScript := preload("res://scripts/physics.gd")
+
+# Remote body's current Y while drifting down from a mid-jump freeze.
+# Seeded in the `frozen` setter on the false→true transition for non-local
+# bodies; decremented at 5 m/s in _process until it reaches HOVER_HEIGHT.
+# Sits at HOVER_HEIGHT outside the descent window so the if-check in
+# _process is a cheap no-op for grounded frozen bodies.
+var _frozen_descent_y: float = PhysicsScript.HOVER_HEIGHT
 
 func _ready() -> void:
 	if is_local and not bot:
@@ -165,8 +181,28 @@ func _process(delta: float) -> void:
 	# the monitor's actual refresh rate. The local player has always had
 	# this treatment via arena.gd's _advance_local_prediction, which is
 	# why local motion is smooth and remote bodies stuttered.
-	if _remote_armed and not is_local and not frozen:
+	if _remote_armed and not is_local:
 		_drive_remote_interp()
+		# Frozen-mid-jump descent. The server snaps jumpStartedAt to null
+		# and Y to HOVER_HEIGHT in freezePlayer the tick the tag lands,
+		# but the snapshot interpolation would render that as a single
+		# server-tick Y-drop (~120 m/s) - visually instantaneous. Override
+		# Y with a 5 m/s ramp matching the local body's frozen-mid-jump
+		# logic in arena.gd::_advance_local_prediction so the tagged
+		# opponent visibly drifts down to hover instead of teleporting.
+		# Without this override the body sat at peak forever, because
+		# the previous gate skipped _drive_remote_interp entirely once
+		# `frozen` flipped on.
+		if frozen and _frozen_descent_y > PhysicsScript.HOVER_HEIGHT + 0.001:
+			_frozen_descent_y = maxf(
+				PhysicsScript.HOVER_HEIGHT,
+				_frozen_descent_y - 5.0 * delta,
+			)
+			global_position = Vector3(
+				global_position.x,
+				_frozen_descent_y,
+				global_position.z,
+			)
 	# Squash-and-stretch driven by jumpStartedAt. Runs for every body
 	# (local + remote) so jumping reads consistently across all
 	# observers. _delta is the render frame dt, used to ease the

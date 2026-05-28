@@ -26,6 +26,8 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm format:check
       - run: pnpm lint
+      - name: Check shared constants drift
+        run: node scripts/check-shared-constants.mjs
 
   typecheck:
     name: Type check

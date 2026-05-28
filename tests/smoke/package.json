@@ -8,6 +8,9 @@
     "production": "node --import=tsx/esm smoke.ts https://cm-matchmaker.seanreid.workers.dev",
     "typecheck": "tsc --noEmit"
   },
+  "dependencies": {
+    "@cm/shared": "workspace:*"
+  },
   "devDependencies": {
     "@types/node": "22.7.5",
     "@types/ws": "8.5.12",

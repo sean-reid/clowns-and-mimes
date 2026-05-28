@@ -65,6 +65,25 @@ const PING_INTERVAL_S := 5.0
 # the player never sees the menu bounce for those.
 const RECONNECT_BACKOFF_S: Array[float] = [0.5, 1.5, 3.0]
 
+# Environment palettes for the light / dark arena modes. Toggled by the
+# Settings overlay; apply_light_mode swaps between these wholesale.
+# Pulled into named consts so a designer pass on the palette doesn't
+# require fishing through if/else branches.
+const LIGHT_BACKGROUND := Color(0.55, 0.75, 0.95)
+const LIGHT_AMBIENT := Color(0.95, 0.95, 0.92)
+const LIGHT_AMBIENT_ENERGY := 0.6
+const LIGHT_FOG := Color(0.72, 0.82, 0.95)
+const LIGHT_FOG_DENSITY := 0.006
+const LIGHT_SUN_COLOR := Color(1.0, 0.98, 0.92)
+const LIGHT_SUN_ENERGY := 1.0
+const DARK_BACKGROUND := Color(0.04, 0.04, 0.05)
+const DARK_AMBIENT := Color(0.45, 0.4, 0.55)
+const DARK_AMBIENT_ENERGY := 0.18
+const DARK_FOG := Color(0.06, 0.05, 0.09)
+const DARK_FOG_DENSITY := 0.018
+const DARK_SUN_COLOR := Color(1.0, 1.0, 1.0)
+const DARK_SUN_ENERGY := 0.45
+
 const MIME_BATTLE_CRIES := [
 	"MIMES- ATTACK!", "MIMES- STRIKE!", "MIMES- POUNCE!", "MIMES- ENTRAP!",
 	"MIMES- BAFFLE!", "MIMES- SHUSH!", "MIMES- GLARE!", "MIMES- LUNGE!",
@@ -210,21 +229,21 @@ func apply_light_mode(enabled: bool) -> void:
 		return
 	var env: Environment = env_node.environment
 	if enabled:
-		env.background_color = Color(0.55, 0.75, 0.95)
-		env.ambient_light_color = Color(0.95, 0.95, 0.92)
-		env.ambient_light_energy = 0.6
-		env.fog_light_color = Color(0.72, 0.82, 0.95)
-		env.fog_density = 0.006
-		sun.light_energy = 1.0
-		sun.light_color = Color(1.0, 0.98, 0.92)
+		env.background_color = LIGHT_BACKGROUND
+		env.ambient_light_color = LIGHT_AMBIENT
+		env.ambient_light_energy = LIGHT_AMBIENT_ENERGY
+		env.fog_light_color = LIGHT_FOG
+		env.fog_density = LIGHT_FOG_DENSITY
+		sun.light_energy = LIGHT_SUN_ENERGY
+		sun.light_color = LIGHT_SUN_COLOR
 	else:
-		env.background_color = Color(0.04, 0.04, 0.05)
-		env.ambient_light_color = Color(0.45, 0.4, 0.55)
-		env.ambient_light_energy = 0.18
-		env.fog_light_color = Color(0.06, 0.05, 0.09)
-		env.fog_density = 0.018
-		sun.light_energy = 0.45
-		sun.light_color = Color(1.0, 1.0, 1.0)
+		env.background_color = DARK_BACKGROUND
+		env.ambient_light_color = DARK_AMBIENT
+		env.ambient_light_energy = DARK_AMBIENT_ENERGY
+		env.fog_light_color = DARK_FOG
+		env.fog_density = DARK_FOG_DENSITY
+		sun.light_energy = DARK_SUN_ENERGY
+		sun.light_color = DARK_SUN_COLOR
 
 func _unhandled_input(event: InputEvent) -> void:
 	if event.is_action_pressed("ui_pause") and not menu.visible:

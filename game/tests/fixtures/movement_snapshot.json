@@ -1,0 +1,174 @@
+{
+  "schemaVersion": 1,
+  "worldWidth": 80,
+  "hoverHeight": 0.5,
+  "scenarios": [
+    {
+      "name": "walk_plus_x_plane_60_ticks",
+      "topology": "plane",
+      "walls": [],
+      "initial": {
+        "position": {
+          "x": 0,
+          "y": 0.5,
+          "z": 0
+        },
+        "sprintEnergy": 100,
+        "sprinting": false
+      },
+      "input": {
+        "move": {
+          "x": 1,
+          "z": 0
+        },
+        "sprint": false,
+        "dt": 0.016666666666666666
+      },
+      "ticks": 60,
+      "final": {
+        "position": {
+          "x": 3.199999999999996,
+          "y": 0.5,
+          "z": 0
+        },
+        "sprintEnergy": 100,
+        "sprinting": false
+      }
+    },
+    {
+      "name": "sprint_plus_z_to_depletion",
+      "topology": "plane",
+      "walls": [],
+      "initial": {
+        "position": {
+          "x": 0,
+          "y": 0.5,
+          "z": 0
+        },
+        "sprintEnergy": 100,
+        "sprinting": false
+      },
+      "input": {
+        "move": {
+          "x": 0,
+          "z": 1
+        },
+        "sprint": true,
+        "dt": 0.016666666666666666
+      },
+      "ticks": 240,
+      "final": {
+        "position": {
+          "x": 0,
+          "y": 0.5,
+          "z": 22.40000000000007
+        },
+        "sprintEnergy": 0,
+        "sprinting": false
+      }
+    },
+    {
+      "name": "wall_rebound",
+      "topology": "plane",
+      "walls": [
+        {
+          "ax": 0.5,
+          "az": -2,
+          "bx": 0.5,
+          "bz": 2
+        }
+      ],
+      "initial": {
+        "position": {
+          "x": 0,
+          "y": 0.5,
+          "z": 0
+        },
+        "sprintEnergy": 100,
+        "sprinting": false
+      },
+      "input": {
+        "move": {
+          "x": 1,
+          "z": 0
+        },
+        "sprint": false,
+        "dt": 0.016666666666666666
+      },
+      "ticks": 5,
+      "final": {
+        "position": {
+          "x": -0.04,
+          "y": 0.5,
+          "z": 0
+        },
+        "sprintEnergy": 100,
+        "sprinting": false
+      }
+    },
+    {
+      "name": "torus_plus_x_seam_wrap",
+      "topology": "torus",
+      "walls": [],
+      "initial": {
+        "position": {
+          "x": 39,
+          "y": 0.5,
+          "z": 0
+        },
+        "sprintEnergy": 100,
+        "sprinting": false
+      },
+      "input": {
+        "move": {
+          "x": 1,
+          "z": 0
+        },
+        "sprint": true,
+        "dt": 0.016666666666666666
+      },
+      "ticks": 300,
+      "final": {
+        "position": {
+          "x": -15.399999999999409,
+          "y": 0.5,
+          "z": 0
+        },
+        "sprintEnergy": 15,
+        "sprinting": false
+      }
+    },
+    {
+      "name": "idle_sprint_regen",
+      "topology": "plane",
+      "walls": [],
+      "initial": {
+        "position": {
+          "x": 5,
+          "y": 0.5,
+          "z": 5
+        },
+        "sprintEnergy": 80,
+        "sprinting": false
+      },
+      "input": {
+        "move": {
+          "x": 0,
+          "z": 0
+        },
+        "sprint": false,
+        "dt": 0.016666666666666666
+      },
+      "ticks": 60,
+      "final": {
+        "position": {
+          "x": 5,
+          "y": 0.5,
+          "z": 5
+        },
+        "sprintEnergy": 95,
+        "sprinting": false
+      }
+    }
+  ]
+}

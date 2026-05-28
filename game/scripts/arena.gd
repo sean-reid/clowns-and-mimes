@@ -146,6 +146,12 @@ var _ping_accumulator: float = 0.0
 var _reconnect_attempt: int = 0
 var _reconnect_active: bool = false
 var _reconnect_label: Label = null
+# Delays the banner so transient drops the ladder absorbs (CF edge blip,
+# DO migration, brief ISP wobble) don't flash the "Reconnecting..." UI.
+# When the reconnect succeeds before this fires we kill the timer in
+# _hide_reconnect_banner and the player never sees the banner.
+const RECONNECT_BANNER_DELAY_S := 1.0
+var _reconnect_banner_timer: Timer = null
 # Stashed so _show_reconnect_failed_popup can surface the original drop
 # reason in the side log once the ladder has actually given up. We hold
 # the log line back from _on_room_disconnected because the "Reconnecting..."
@@ -385,7 +391,7 @@ func _on_room_disconnected(reason: String) -> void:
 	_reconnect_active = true
 	_reconnect_attempt = 0
 	_last_disconnect_reason = reason
-	_show_reconnect_banner("Reconnecting...")
+	_show_reconnect_banner_delayed("Reconnecting...")
 	# Hold off on the HUD log line. The "Reconnecting..." banner is enough
 	# transient feedback - most drops are CF edge / DO migration blips that
 	# the ladder absorbs invisibly. Only surface "Disconnected: <reason>"
@@ -435,7 +441,26 @@ func _show_reconnect_banner(text: String) -> void:
 	_reconnect_label.text = text
 	_reconnect_label.visible = true
 
+# Schedule the banner to appear after RECONNECT_BANNER_DELAY_S. If the
+# reconnect succeeds inside that window, _hide_reconnect_banner kills
+# the timer and the banner never shows - no flicker for the common
+# case of a brief CF edge blip.
+func _show_reconnect_banner_delayed(text: String) -> void:
+	_cancel_reconnect_banner_timer()
+	_reconnect_banner_timer = Timer.new()
+	_reconnect_banner_timer.one_shot = true
+	_reconnect_banner_timer.wait_time = RECONNECT_BANNER_DELAY_S
+	add_child(_reconnect_banner_timer)
+	_reconnect_banner_timer.timeout.connect(_show_reconnect_banner.bind(text))
+	_reconnect_banner_timer.start()
+
+func _cancel_reconnect_banner_timer() -> void:
+	if _reconnect_banner_timer != null:
+		_reconnect_banner_timer.queue_free()
+		_reconnect_banner_timer = null
+
 func _hide_reconnect_banner() -> void:
+	_cancel_reconnect_banner_timer()
 	if _reconnect_label != null:
 		_reconnect_label.visible = false
 

@@ -787,6 +787,13 @@ func _advance_predicted_tick(
 ) -> void:
 	if local_player == null or labyrinth == null or topology == null:
 		return
+	# Don't advance from uninitialized state. _stream_input can fire after
+	# the WS connects but before the first snapshot arrives, at which point
+	# _pred_current_xz is still Vector2.ZERO and stepping from origin would
+	# pile garbage into pending_inputs. The server has the real spawn; we'll
+	# pick it up from the snapshot and replay the queued inputs from there.
+	if not _pred_armed:
+		return
 	var step := Movement.step(
 		{
 			"position": _pred_current_xz,

@@ -23,7 +23,8 @@
     "build": "pnpm -r --if-present build",
     "dev": "pnpm -r --parallel --if-present dev",
     "gen:movement-fixture": "tsx scripts/gen-movement-fixture.ts",
-    "gen:gridmaze-fixture": "tsx scripts/gen-gridmaze-fixture.ts"
+    "gen:gridmaze-fixture": "tsx scripts/gen-gridmaze-fixture.ts",
+    "gen:topology-fixture": "tsx scripts/gen-topology-fixture.ts"
   },
   "devDependencies": {
     "prettier": "3.3.3",

@@ -4,6 +4,7 @@ import type {
   MatchmakeJoinResponse,
   Topology,
 } from '@cm/shared';
+import { PROTOCOL_VERSION } from '@cm/shared';
 import { MatchmakerDO, VALID_TOPOLOGIES } from './matchmakerDO.ts';
 
 export { MatchmakerDO };
@@ -26,6 +27,18 @@ export default {
     if (req.method === 'GET' && url.pathname === '/healthz') {
       return json({ ok: true, env: env.ENV });
     }
+    // Protocol-version gate for the player-facing endpoints. Worker-to-DO
+    // forwards skip the check; the room-state / room-detach paths are
+    // server-internal. The healthz endpoint is also skipped so monitoring
+    // doesn't have to know about our version scheme.
+    if (
+      url.pathname === '/lobby' ||
+      url.pathname.match(/^\/lobby\/[A-Z0-9]+\/join$/) ||
+      url.pathname === '/open/join'
+    ) {
+      const mismatch = enforceProtocolVersion(req);
+      if (mismatch !== null) return mismatch;
+    }
     if (req.method === 'POST' && url.pathname === '/lobby') {
       return createPrivateLobby(req, env);
     }
@@ -45,6 +58,29 @@ export default {
     return notFound();
   },
 };
+
+/**
+ * Check the client's protocol version against the server. Returns a 426
+ * response when they disagree, or null when the request may proceed.
+ * Missing header is treated as a mismatch - older clients without the
+ * header would have a stale protocol anyway, and the new client always
+ * sends it.
+ */
+function enforceProtocolVersion(req: Request): Response | null {
+  const header = req.headers.get('x-protocol-version');
+  const clientV = header ? Number(header) : NaN;
+  if (!Number.isFinite(clientV) || clientV !== PROTOCOL_VERSION) {
+    return json(
+      {
+        error: 'protocol_mismatch',
+        server_v: PROTOCOL_VERSION,
+        client_v: Number.isFinite(clientV) ? clientV : null,
+      },
+      426,
+    );
+  }
+  return null;
+}
 
 async function createPrivateLobby(req: Request, env: Env): Promise<Response> {
   let body: MatchmakeCreateBody;

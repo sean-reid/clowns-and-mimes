@@ -26,6 +26,23 @@ func test_tag_requires_radius() -> void:
 	rules.phase = GameRulesScript.Phase.TURN_MIME
 	assert_false(rules.try_tag("a", "b"), "tag rejected when out of range")
 
+func test_tag_rejects_jumper_above_threshold() -> void:
+	# Offline parity with the server's vertical-separation rejection.
+	# Attacker at hover, victim at peak jump (HOVER + JUMP_AMP = 2.5) - the
+	# gap is 2.0 m, well past BODY_VERTICAL_EXTENT (1.4 m). The tag should
+	# be rejected with reason `vertical_separation` so the HUD can surface
+	# "out of reach (jumped)".
+	const Physics := preload("res://scripts/physics.gd")
+	var rules: Node = _make_rules()
+	rules.register_player("a", "mime", Vector3(0.0, Physics.HOVER_HEIGHT, 0.0), "A", false)
+	rules.register_player("b", "clown", Vector3(0.5, Physics.HOVER_HEIGHT + Physics.JUMP_AMP, 0.0), "B", false)
+	rules.phase = GameRulesScript.Phase.TURN_MIME
+	var got: Array = []
+	rules.tag_rejected.connect(func(_a, _v, reason): got.append(reason))
+	assert_false(rules.try_tag("a", "b"), "tag rejected when victim is mid-jump")
+	assert_eq(got.size(), 1, "single rejection emitted")
+	assert_eq(got[0], "vertical_separation", "rejection reason is vertical_separation")
+
 func test_unfreeze_requires_same_team_and_proximity() -> void:
 	var rules: Node = _make_rules()
 	rules.register_player("a", "mime", Vector3(0.0, 0.0, 0.0), "A", false)

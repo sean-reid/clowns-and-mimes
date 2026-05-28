@@ -13,8 +13,19 @@ const RESCUE_RADIUS := 22.0
 const CLOSE_RADIUS := 1.4
 const STUCK_SPEED := 0.5
 const STUCK_TIME := 1.0
+# Jump triggers. Mirror the server's bot path in backend/room/src/room.ts
+# so offline bots evade tags, decorner themselves, and add tactical noise
+# on the same predicates online bots use. Constants chosen to match the
+# server's BOT_JUMP_* values; any change should land on both sides.
+const TAG_RADIUS_BOT := 1.4
+const BOT_JUMP_EVADE_BUFFER := 0.5
+const BOT_JUMP_CORNER_THREAT_RADIUS := 4.0
+const BOT_JUMP_NOISE_PER_SECOND := 0.05
+const BOT_JUMP_REFRACTORY_S := 1.5
+const BOT_NO_PROGRESS_WINDOW_S := 0.8
 const TopologyScript := preload("res://scripts/topology/topology.gd")
 const GameRulesScript := preload("res://scripts/game_rules.gd")
+const PhysicsScript := preload("res://scripts/physics.gd")
 
 enum State { PATROL, CHASE, FLEE, RESCUE }
 
@@ -33,6 +44,10 @@ var stuck_clock: float = 0.0
 var last_position: Vector3 = Vector3.ZERO
 var current_path: Array[Vector3] = []
 var path_index: int = 0
+# Seconds since this bot last triggered a jump. Initialised to a value
+# well past the refractory window so the very first eligible tick can
+# jump if the trigger fires.
+var time_since_last_jump: float = 100.0
 
 func _ready() -> void:
 	rng.randomize()
@@ -56,12 +71,14 @@ func _physics_process(delta: float) -> void:
 		player.bot_sprint = false
 		return
 	accumulated += delta
+	time_since_last_jump += delta
 	_update_stuck(delta)
 	if accumulated >= TICK_PERIOD:
 		accumulated = 0.0
 		_choose_state()
 		_choose_target()
 	_drive()
+	_maybe_jump(delta)
 
 func _update_stuck(delta: float) -> void:
 	var moved: float = (player.global_position - last_position).length()
@@ -153,6 +170,57 @@ func _try_close_unfreeze() -> void:
 		return
 	if _dist_to_id(teammate_id) <= CLOSE_RADIUS:
 		rules.try_unfreeze(player_id, teammate_id)
+
+# Three-trigger jump predicate that mirrors the server's botJumpDecision in
+# backend/room/src/room.ts: tag-threat evasion when an active-turn opponent
+# is within tag range plus a buffer, decornering when the stuck timer has
+# tripped near an opponent, and a low-probability tactical-noise jump
+# during an active chase. Cooldown is enforced via time_since_last_jump
+# AND by skipping the eval entirely while the body is mid-arc (the
+# Physics.step_jump call inside _apply_bot_movement would reject the
+# request anyway, but bailing here keeps the predicate clean).
+func _maybe_jump(delta: float) -> void:
+	if player.jump_started_at_ms >= 0:
+		return
+	if time_since_last_jump < BOT_JUMP_REFRACTORY_S:
+		return
+	var active_team: String = rules.active_team()
+	var enemy_id: String = _nearest_enemy_id()
+	var enemy_dist: float = _dist_to_id(enemy_id)
+	var fleeing: bool = state == State.FLEE
+	var chasing: bool = state == State.CHASE
+	var want_jump: bool = false
+	# 1. Tag-threat evasion. Run only when this bot is defending against
+	#    an active-turn opponent within reach. Skipping when the threat is
+	#    already airborne avoids both bodies dancing in sync (which would
+	#    still tag per Option A) and keeps the evasion legible.
+	if fleeing and enemy_id != "":
+		var threat: Dictionary = rules.players.get(enemy_id, {})
+		var threat_pos: Vector3 = threat.get("position", Vector3.ZERO)
+		# rules.update_position copies the body's Y verbatim each frame, so
+		# a Y meaningfully above hover means the threat is mid-arc. Avoids
+		# needing a separate jump_started_at signal in the rules dictionary.
+		var threat_jumping: bool = threat_pos.y > PhysicsScript.HOVER_HEIGHT + 0.05
+		if (
+			not threat.get("frozen", false)
+			and not threat_jumping
+			and enemy_dist <= TAG_RADIUS_BOT + BOT_JUMP_EVADE_BUFFER
+		):
+			want_jump = true
+	# 2. Cornered. The shared stuck detector tells us the bot is grinding
+	#    against geometry; if any opponent is nearby a jump repositions
+	#    the bot via the bounceback that lands after the arc instead of
+	#    letting them be a sitting duck.
+	if not want_jump and stuck_clock >= BOT_NO_PROGRESS_WINDOW_S and enemy_dist <= BOT_JUMP_CORNER_THREAT_RADIUS:
+		want_jump = true
+	# 3. Tactical noise during an active chase. Scaled by delta so it
+	#    stays per-second-stable at any tick rate.
+	if not want_jump and chasing and active_team == _team():
+		if rng.randf() < BOT_JUMP_NOISE_PER_SECOND * delta:
+			want_jump = true
+	if want_jump:
+		player.bot_jump = true
+		time_since_last_jump = 0.0
 
 func _pick_patrol_target() -> void:
 	var radius: float = rng.randf_range(8.0, 32.0)

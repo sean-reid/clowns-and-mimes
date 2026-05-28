@@ -38,6 +38,11 @@ var sprint_energy: float = MAX_SPRINT:
 ## Driven by BotAI for bot players. Direction is in world space, length up to 1.
 var bot_intent: Vector3 = Vector3.ZERO
 var bot_sprint: bool = false
+# Rising-edge jump request for bot bodies in offline mode. bot_ai.gd flips
+# this true on the tick its 3-trigger predicate fires; _apply_bot_movement
+# consumes it (passes to Physics.step_jump) and resets it to false. Online
+# bot jumps are server-driven so this stays unused for online bodies.
+var bot_jump: bool = false
 
 var frozen: bool = false:
 	set(value):
@@ -46,13 +51,22 @@ var frozen: bool = false:
 		frozen = value
 		_update_marker()
 		frozen_changed.emit(frozen)
-		# Seed the Y-ramp used in _process so a remote body tagged mid-jump
-		# visibly drifts from current Y down to HOVER_HEIGHT instead of
-		# the interp's instantaneous snap. Local body uses a separate ramp
-		# in arena.gd::_advance_local_prediction. Cleared on unfreeze so a
-		# subsequent save + re-jump starts fresh.
-		if frozen and not is_local:
-			_frozen_descent_y = global_position.y
+		# Cancel any active jump arc. After this point Physics.jump_arc_y
+		# returns HOVER_HEIGHT, and the smooth descent below interpolates
+		# the rendered Y from where the body was caught down to hover so
+		# the tagged jumper drifts back to the float position instead of
+		# teleporting.
+		if frozen:
+			jump_started_at_ms = -1
+		# Seed the Y-ramp used in _process for any body whose Y the arena's
+		# online predictor doesn't own. That covers offline-local,
+		# offline-bots, AND online remote bodies on this client - all paths
+		# where player.gd writes its own Y. The online local body is gated
+		# out via predicted_externally because arena.gd::_advance_local_prediction
+		# runs its own ramp for it.
+		if frozen and not predicted_externally:
+			if global_position.y > PhysicsScript.HOVER_HEIGHT + 0.001:
+				_frozen_descent_y = global_position.y
 		elif not frozen:
 			_frozen_descent_y = PhysicsScript.HOVER_HEIGHT
 
@@ -103,6 +117,12 @@ var arena: Node = null
 # _apply_jump_squash(), and signals the same arc helper that owns Y
 # position so animation and Y stay in lockstep.
 var jump_started_at_ms: int = -1
+# Rising-edge tracker for the local player's spacebar in offline mode.
+# Online holds the same state in arena.gd::_jump_was_held because the
+# predictor builds the input frame from there; offline-local manages its
+# own copy here so holding Space sends exactly one jump instead of one
+# per physics tick. Unused for online local + remote bodies.
+var _jump_was_held_offline: bool = false
 # Cached scale applied to the head mesh each frame. Lerped back to
 # Vector3.ONE over SQUASH_RECOVER_S when no jump is active so the
 # transition out of a jump doesn't pop. Stored on the node so the
@@ -183,26 +203,24 @@ func _process(delta: float) -> void:
 	# why local motion is smooth and remote bodies stuttered.
 	if _remote_armed and not is_local:
 		_drive_remote_interp()
-		# Frozen-mid-jump descent. The server snaps jumpStartedAt to null
-		# and Y to HOVER_HEIGHT in freezePlayer the tick the tag lands,
-		# but the snapshot interpolation would render that as a single
-		# server-tick Y-drop (~120 m/s) - visually instantaneous. Override
-		# Y with a 5 m/s ramp matching the local body's frozen-mid-jump
-		# logic in arena.gd::_advance_local_prediction so the tagged
-		# opponent visibly drifts down to hover instead of teleporting.
-		# Without this override the body sat at peak forever, because
-		# the previous gate skipped _drive_remote_interp entirely once
-		# `frozen` flipped on.
-		if frozen and _frozen_descent_y > PhysicsScript.HOVER_HEIGHT + 0.001:
-			_frozen_descent_y = maxf(
-				PhysicsScript.HOVER_HEIGHT,
-				_frozen_descent_y - 5.0 * delta,
-			)
-			global_position = Vector3(
-				global_position.x,
-				_frozen_descent_y,
-				global_position.z,
-			)
+	# Frozen-mid-jump descent. Applied to any body whose Y is above hover
+	# and whose Y isn't owned by the online predictor. That covers offline
+	# local + offline bots + online remote bodies on this client. Online
+	# local is gated out via predicted_externally because
+	# arena.gd::_advance_local_prediction runs its own ramp for it.
+	# Without this override the body would sit at peak (remote interp
+	# would write the snapshot Y for ~16 ms then freeze, offline bodies
+	# would never move Y at all).
+	if frozen and not predicted_externally and _frozen_descent_y > PhysicsScript.HOVER_HEIGHT + 0.001:
+		_frozen_descent_y = maxf(
+			PhysicsScript.HOVER_HEIGHT,
+			_frozen_descent_y - 5.0 * delta,
+		)
+		global_position = Vector3(
+			global_position.x,
+			_frozen_descent_y,
+			global_position.z,
+		)
 	# Squash-and-stretch driven by jumpStartedAt. Runs for every body
 	# (local + remote) so jumping reads consistently across all
 	# observers. _delta is the render frame dt, used to ease the
@@ -255,7 +273,21 @@ func _physics_process(delta: float) -> void:
 	var basis_dir := transform.basis * input_dir
 	velocity.x = basis_dir.x * speed
 	velocity.z = basis_dir.z * speed
+	# Rising-edge spacebar so a held key sends one jump, not 60. Online holds
+	# the same edge in arena.gd::_jump_was_held; the predictor builds its
+	# input frame from there. Offline-local runs Physics.step_jump itself
+	# so the arc behaves identically to the online server's authoritative path.
+	var jump_pressed: bool = Input.is_action_pressed("jump")
+	var jump_edge: bool = jump_pressed and not _jump_was_held_offline
+	_jump_was_held_offline = jump_pressed
+	var now_ms: int = int(Time.get_unix_time_from_system() * 1000.0)
+	jump_started_at_ms = PhysicsScript.step_jump(jump_started_at_ms, jump_edge, now_ms)
 	move_and_slide()
+	# Apply arc Y after move_and_slide so the slide pass doesn't shave the
+	# body's altitude. The arc is deterministic - same math as the server
+	# in advanceIdleJumpState - so Y at any moment is purely a function of
+	# jump_started_at_ms and now_ms.
+	global_position.y = PhysicsScript.jump_arc_y(jump_started_at_ms, now_ms)
 	if sprinting:
 		sprint_energy -= SPRINT_DRAIN_PER_S * delta
 	else:
@@ -273,7 +305,16 @@ func _apply_bot_movement(delta: float) -> void:
 	if intent.length() > 0.01:
 		var target_yaw := atan2(-intent.x, -intent.z)
 		rotation.y = lerp_angle(rotation.y, target_yaw, clampf(8.0 * delta, 0.0, 1.0))
+	# Consume the bot's rising-edge jump request. bot_ai.gd flips bot_jump
+	# true for one tick when its 3-trigger predicate fires; resetting here
+	# prevents step_jump from re-firing every physics tick. Same arc math
+	# as the local player and the server's bot path.
+	var jump_request: bool = bot_jump
+	bot_jump = false
+	var now_ms: int = int(Time.get_unix_time_from_system() * 1000.0)
+	jump_started_at_ms = PhysicsScript.step_jump(jump_started_at_ms, jump_request, now_ms)
 	move_and_slide()
+	global_position.y = PhysicsScript.jump_arc_y(jump_started_at_ms, now_ms)
 	if sprinting:
 		sprint_energy -= SPRINT_DRAIN_PER_S * delta
 	else:

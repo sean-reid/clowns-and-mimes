@@ -58,7 +58,9 @@ async function extract(file, name) {
   const expr = m[1].trim();
   const value = parseFloat(expr);
   if (!Number.isFinite(value)) {
-    throw new Error(`${file}: ${name} = "${expr}" is not a literal number; only literals can be shared`);
+    throw new Error(
+      `${file}: ${name} = "${expr}" is not a literal number; only literals can be shared`,
+    );
   }
   return { name, expr, value };
 }
@@ -112,7 +114,9 @@ if (checkOnly) {
   try {
     current = await readFile(OUTPUT, 'utf8');
   } catch {
-    console.error(`${OUTPUT} is missing. Run \`node scripts/gen-shared-constants.mjs\` and commit the result.`);
+    console.error(
+      `${OUTPUT} is missing. Run \`node scripts/gen-shared-constants.mjs\` and commit the result.`,
+    );
     process.exit(1);
   }
   if (current !== next) {

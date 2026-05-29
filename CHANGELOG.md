@@ -6,6 +6,22 @@ When cutting a release: rename the `[Unreleased]` heading below to the version b
 
 ## [Unreleased]
 
+## [0.5.3] - 2026-05-29
+
+Patch release. The headline fix: wrangler deploys to dev/prod no longer bounce active matches into a fresh room. Room Durable Objects now persist their full state (phase, seed, topology, players, session tokens, in-flight grace deadlines) to DO storage and reload it on restart, so a client whose WS drops during a deploy reconnects via its existing session token and resumes the same match — same walls, same teams, same frozen state — instead of landing in an empty fresh room with new walls. The rest is internal: the file-split plan finished (arena.gd 1341 → 824 lines, room.ts 1887 → 852 lines), every open Dependabot bump merged including vitest 4 and astro 6, and a new cross-language fixture covers the Möbius step-aware wrap.
+
+### Fixed
+
+- Wrangler deploys mid-match no longer drop players into a fresh empty room. `Room` now persists `phase`, `seed`, `topology`, `turnEndsAt`, host fields, every `PlayerState` (humans + bots), every session token, and every in-flight reconnect-grace deadline to DO storage on every state-changing event, and reloads on construct inside `blockConcurrencyWhile`. The client's reconnect ladder still triggers (the WS does drop) but `resumeSession` runs cleanly against the persisted state and the match continues. Walls regenerate deterministically from the persisted seed, so the client's labyrinth no longer disagrees with the server's collision (the "walk through walls" symptom from the 2026-05-28 playtest).
+
+### Under the hood
+
+- `arena.gd` is down from 1341 to 824 lines after the four Phase C extractions: `OnlinePredictor` (prediction state + reconcile), `ReconnectController` (ladder + banner + keepalive ping), `ContactInteractions` (tag/save attempts + cooldowns), `OfflineMode` (offline match orchestration). Each shipped behind a playtest gate.
+- `room.ts` is down from 1887 to 852 lines after the Phase B extractions: `BotManager`, `GameSimulation`, `SessionManager`. Phase A1/A2 added regression-net fixtures (Vitest `simulate` harness, GDScript predictor harness scaffolding) before the splits landed.
+- Cross-language fixture for `stepAcrossMobiusBoundary`. The only step-aware wrap in the codebase (Möbius strip rejects motion that crosses its hard z bounds, wraps x modular without a z-flip); the new fixture ensures the GDScript `MobiusTopology.wrap_step` adapter stays in lockstep with the TS reference.
+- Dependency upgrades: vitest 2 → 4 + `@vitest/coverage-v8` (coordinated bump across `backend/{matchmaker,room,shared}`), astro 4 → 6, wrangler 3 → 4, `@types/node` 22 → 25, `actions/setup-node` v4 → v6, `pnpm/action-setup` v4 → v6, `softprops/action-gh-release` v2 → v3, `actions/upload-pages-artifact` v3 → v5, plus the dev-tooling group (prettier, tsx, playwright, ws, etc.).
+- 148 backend tests pass (was 116 at v0.5.2). 87 Godot tests pass (was 85).
+
 ## [0.5.2] - 2026-05-28
 
 Quality-of-life and correctness patch. A churny reconnect no longer flashes the "Reconnecting..." banner for blips the ladder absorbs, tag-rejection reasons beyond "out of reach" now surface in the side log, and a handful of fix-on-disconnect bugs were closed. Under the hood the backend gained runtime WS-message validation, a per-connection rate limit, a matchmaker protocol-version handshake, and a substantial refactor + test pass (cross-language fixtures for movement, grid maze, topology, and physics; tagRules pulled into the shared module; TagManager and SnapshotBroadcaster extracted from `room.ts`). Engine bumped to Godot 4.6.3.

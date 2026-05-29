@@ -6,6 +6,16 @@ When cutting a release: rename the `[Unreleased]` heading below to the version b
 
 ## [Unreleased]
 
+## [0.5.5] - 2026-05-29
+
+Patch release. Fixes the reproducible "start game → quit to menu → Find Match → 4003" loop that left the player unable to connect to any open game until they restarted the client. Two prior fixes in v0.5.4 (matchmaker always-delete on detach; lobby popup routing on close codes) were both correct in spirit but neither could take effect because the room was sending the wrong identifier to the matchmaker.
+
+### Fixed
+
+- Room now reports its logical UUID (parsed from the `/ws/{uuid}` upgrade path) to the matchmaker instead of `state.id.toString()`. The latter returns the 64-character hash Cloudflare computes from `idFromName(uuid)`, not the UUID itself, so every `/roomState` and `/roomDetach` POST looked up the wrong key in `openRooms`. Entries were never updated or deleted; they only expired via the 5-minute `lastSeenAt` cutoff. The reproducible bug was: user joined a match, quit within the 45 s server-side grace window, and Find Match re-routed them to the same room (still in `free_roam`) because the matchmaker had no record of the detach.
+- Matchmaker `/roomState` no longer creates entries from a POST. The previous "defensive create" branch could resurrect entries that `/roomDetach` had just deleted when the two POSTs arrived out of order, and it incidentally added private lobbies (joined via `/lobby/:code/join`) to the open pool because they also call `notifyMatchmaker` from `onJoin`. Entries are created exclusively via `/openJoin` now.
+- Lobby `_on_room_disconnected` parses the close code from the reason string and routes 4002 / 4003 / 4004 to the same popups the error-frame path uses. The server sends `{t: 'error', code}` then closes with a 4xxx code, but Godot's poll-based `WebSocketPeer` sometimes processes the close frame before the error packet. Without this the player saw raw "Disconnected from lobby. (closed by peer: 4003)" status text instead of the "Match already running" popup with a Back-to-menu button.
+
 ## [0.5.4] - 2026-05-29
 
 Patch release. Two reliability fixes that surfaced in playtest.

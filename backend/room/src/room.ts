@@ -176,6 +176,16 @@ export class Room implements DurableObject {
   // restored state. Saved fire-and-forget on every state-changing event
   // via persist(); CF DO storage coalesces writes within an I/O turn.
   private readonly persistence: RoomPersistence;
+  // Logical room id used as the matchmaker's openRooms key. Parsed from
+  // the /ws/{uuid} fetch URL on first upgrade. We can't use
+  // state.id.toString() here because that returns the 64-char hash CF
+  // computes from idFromName(uuid), which doesn't match the UUID the
+  // matchmaker minted in /openJoin. Before this field existed the room
+  // was reporting the hash and the matchmaker's roomState/roomDetach
+  // lookups silently missed every entry - they only ever pruned on the
+  // 5-minute lastSeenAt cutoff. Falls back to state.id.toString() for
+  // safety; never read by the matchmaker fallback path.
+  private matchmakerRoomId: string | null = null;
 
   constructor(
     private readonly state: DurableObjectState,
@@ -388,7 +398,7 @@ export class Room implements DurableObject {
       this.detachMatchmaker();
       return;
     }
-    const roomId = this.state.id.toString();
+    const roomId = this.matchmakerRoomId ?? this.state.id.toString();
     fetch(`${base}/lobby/room-state`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
@@ -402,7 +412,7 @@ export class Room implements DurableObject {
   private detachMatchmaker(): void {
     const base = this.env.MATCHMAKER_URL;
     if (!base) return;
-    const roomId = this.state.id.toString();
+    const roomId = this.matchmakerRoomId ?? this.state.id.toString();
     fetch(`${base}/lobby/room-detach`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
@@ -422,6 +432,15 @@ export class Room implements DurableObject {
     // First fetch wins: subsequent reconnects to the same room keep the
     // topology that was first applied.
     const url = new URL(req.url);
+    // Capture the logical room id (the UUID the matchmaker minted) from
+    // the /ws/{uuid} path. We need this for notifyMatchmaker /
+    // detachMatchmaker to address the correct openRooms entry; using
+    // state.id.toString() instead would send the CF-computed hash and
+    // every matchmaker mutation would silently miss the entry.
+    if (this.matchmakerRoomId === null) {
+      const m = url.pathname.match(/^\/ws\/([0-9a-f-]+)$/i);
+      if (m) this.matchmakerRoomId = m[1]!;
+    }
     const requestedTopology = url.searchParams.get('topology');
     if (requestedTopology && this.players.size === 0 && isValidTopology(requestedTopology)) {
       this.setTopology(requestedTopology);

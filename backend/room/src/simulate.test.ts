@@ -82,7 +82,10 @@ function queueInput(room: Room, playerId: string, input: PlayerInput): void {
 }
 
 function callSimulate(room: Room): void {
-  (room as unknown as { simulate: () => void }).simulate();
+  // After Phase B2, simulate() lives on GameSimulation. The test reaches
+  // through the Room's `sim` field to drive it directly so we exercise
+  // the same code path tick() runs without going through setInterval.
+  (room as unknown as { sim: { simulate: () => void } }).sim.simulate();
 }
 
 function setPhase(room: Room, phase: string): void {

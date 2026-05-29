@@ -165,6 +165,28 @@ describe('MatchmakerDO.fetch', () => {
     expect((second as { roomId: string }).roomId).not.toBe(roomId);
   });
 
+  it('roomState does not resurrect a detached entry', async () => {
+    // Regression for the reproducible "start game -> quit -> Find Match ->
+    // 4003" loop reported 2026-05-29. The room fires two fire-and-forget
+    // POSTs at match start: /roomState from fillTeams, then /roomDetach
+    // from startMatch. If they arrived at the matchmaker in reverse order
+    // and roomState had a defensive-create branch, the entry came back
+    // with a fresh lastSeenAt and the next /openJoin returned it. The
+    // joining client then got close-4003 from a room already in
+    // free_roam. Update-only: a missing entry stays missing.
+    const doInstance = makeDO();
+    const { json: first } = await call(doInstance, '/openJoin');
+    const roomId = (first as { roomId: string }).roomId;
+    await call(doInstance, '/roomDetach', { roomId });
+
+    // A late roomState POST must NOT resurrect the entry.
+    await call(doInstance, '/roomState', { roomId, humans: 1, bots: 6 });
+
+    const { json: second } = await call(doInstance, '/openJoin');
+    expect((second as { created: boolean }).created).toBe(true);
+    expect((second as { roomId: string }).roomId).not.toBe(roomId);
+  });
+
   it('roomState rejects malformed bodies', async () => {
     const doInstance = makeDO();
     const { res } = await call(doInstance, '/roomState', { roomId: 'x' });

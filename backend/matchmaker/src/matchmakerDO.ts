@@ -158,26 +158,25 @@ export class MatchmakerDO {
     }
     const now = Date.now();
     const existing = this.openRooms.get(body.roomId);
+    // Update-only: the previous "defensive create" branch was resurrecting
+    // entries that /roomDetach had just deleted, because the room fires
+    // both /roomState and /roomDetach as fire-and-forget POSTs in the
+    // same tick at match start (fillTeams notify -> startMatch detach)
+    // and the matchmaker doesn't guarantee receive order. End state with
+    // the create branch was: A deleted by detach, then A recreated with
+    // a random topology by the late-arriving roomState. Subsequent
+    // /openJoin handed A back to the next player who got close-4003
+    // because the room's phase was free_roam. It also incidentally
+    // added private lobbies (joined via /lobby/:code/join) to the open
+    // pool, since they call notifyMatchmaker from onJoin too. Entries
+    // are created exclusively via /openJoin now.
     if (existing) {
       existing.humans = Math.max(0, Math.floor(body.humans));
       existing.bots = Math.max(0, Math.floor(body.bots));
       existing.lastSeenAt = now;
       this.openRooms.set(body.roomId, existing);
-    } else {
-      // Room signaled state but the DO never minted it - record it anyway so
-      // future routing can find it. Topology is unknown; default to a random
-      // one. This path is unusual (a room created outside /openJoin) but
-      // staying defensive avoids losing the entry.
-      this.openRooms.set(body.roomId, {
-        roomId: body.roomId,
-        topology: randomTopology(),
-        humans: Math.max(0, Math.floor(body.humans)),
-        bots: Math.max(0, Math.floor(body.bots)),
-        lastSeenAt: now,
-        createdAt: now,
-      });
+      await this.persist();
     }
-    await this.persist();
     return json({ ok: true });
   }
 

@@ -28,8 +28,8 @@
     "gen:physics-fixture": "tsx scripts/gen-physics-fixture.ts"
   },
   "devDependencies": {
-    "prettier": "3.3.3",
-    "tsx": "4.19.1",
+    "prettier": "3.8.3",
+    "tsx": "4.22.3",
     "typescript": "5.6.3"
   }
 }

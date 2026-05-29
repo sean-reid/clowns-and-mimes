@@ -9,8 +9,8 @@ import type {
   Topology,
   Vec3,
 } from '@cm/shared';
-import { BATTLE_CRY_COUNT, PROTOCOL_VERSION } from '@cm/shared';
-import { HOVER_HEIGHT, JUMP_COOLDOWN_S, JUMP_DURATION_S } from '@cm/shared/physics';
+import { PROTOCOL_VERSION } from '@cm/shared';
+import { HOVER_HEIGHT } from '@cm/shared/physics';
 import {
   generateWalls,
   pointBlockedByWall,
@@ -18,15 +18,10 @@ import {
   type WallSegment,
 } from '@cm/shared/labyrinth';
 import { balanceTeamAssignments } from './teamBalance.ts';
-import {
-  bodyYForState,
-  resolvePlayerCollisions,
-  stepJump,
-  stepMovement,
-  MAX_SPRINT,
-} from '@cm/shared/movement';
+import { MAX_SPRINT } from '@cm/shared/movement';
 import { BotManager, type BotManagerHost } from './botManager.ts';
 import { BotPathfinder } from './botPathfinder.ts';
+import { GameSimulation, type GameSimulationHost } from './gameSimulation.ts';
 import { parseClientMessage } from './messageValidator.ts';
 import { RateLimiter } from './rateLimiter.ts';
 import { SnapshotBroadcaster, type SnapshotBroadcasterHost } from './snapshotBroadcaster.ts';
@@ -79,19 +74,6 @@ const MAX_PLAYERS = 16;
 // kept here because onJoin reads it to decide whether to kick a bot when
 // a human arrives after the auto-fill has saturated the team.
 const TEAM_TARGET = 4;
-// Movement constants and stepMovement are imported from @cm/shared/movement
-// so the client predictor can call identical math during reconciliation.
-const TURN_FIRST_MS = 30_000;
-const TURN_STEP_MS = 30_000;
-const TURN_CAP_MS = 5 * 60_000;
-// Maximum drift allowed between the client's stamped input.nowMs and
-// the server's Date.now() when the input lands. Inputs whose nowMs is
-// further out are still honoured but the server re-stamps the jump
-// arc start with its own clock, so a misbehaving (or wildly out of
-// sync) client cannot anchor jumpStartedAt arbitrarily far in the past
-// or future. 500 ms is generous against legitimate network jitter and
-// tight enough that the cheat ceiling is bounded.
-const JUMP_CLIENT_CLOCK_SKEW_MS = 500;
 // Window during which a player whose WS has closed can reconnect with
 // their sessionToken and resume the same PlayerState. Bots keep playing
 // against them in absentia; their input queue stays empty so their body
@@ -121,9 +103,6 @@ const UNFREEZE_GRACE_MS = 1_500;
 // If lag-driven rejections come back in playtest, revisit with per-client
 // RTT estimation off the existing ping/pong stream.
 const LAG_COMP_MS = 0;
-// Cap of how far back we keep positions. Larger means more memory but
-// covers higher-latency clients; 500 ms is plenty for any reasonable RTT.
-const POSITION_HISTORY_KEEP_MS = 500;
 
 interface Connection {
   ws: WebSocket;
@@ -183,13 +162,6 @@ export class Room implements DurableObject {
   private roundNumber = 0;
   private firstTeam: Team = 'mime';
   private tickHandle: ReturnType<typeof setInterval> | null = null;
-  // Date.now() at the moment the world paused because every human went
-  // into the disconnect grace window. Null while at least one human is
-  // active. On resume the first non-paused tick shifts turnEndsAt
-  // forward by the elapsed pause so the phase clock effectively pauses
-  // alongside the simulation (otherwise a 10 s wifi drop would burn
-  // through 10 s of the active turn timer in the player's absence).
-  private pausedSince: number | null = null;
   // Each player's XZ position as of the start of the current tick.
   // resolvePlayerCollisions uses this to derive an approach speed
   // between two bodies (so the bounce-back impulse can scale with
@@ -214,6 +186,7 @@ export class Room implements DurableObject {
   private readonly tagManager: TagManager;
   private readonly broadcaster: SnapshotBroadcaster;
   private readonly bots: BotManager;
+  private readonly sim: GameSimulation;
   // One token bucket per live WebSocket. Created on accept, removed on
   // detach. webSocketMessage rejects with a rate_limited error when the
   // bucket is empty; the connection stays open so a transient burst
@@ -251,7 +224,7 @@ export class Room implements DurableObject {
       setPhase: (p) => {
         this.phase = p;
       },
-      positionAt: (id, atMs) => this.positionAt(id, atMs),
+      positionAt: (id, atMs) => this.sim.positionAt(id, atMs),
       broadcast: (msg) => this.broadcast(msg),
       send: (ws, msg) => this.send(ws, msg),
       stopTick: () => this.stopTick(),
@@ -278,6 +251,33 @@ export class Room implements DurableObject {
       startMatch: () => this.startMatch(),
     };
     this.bots = new BotManager(botsHost);
+    const simHost: GameSimulationHost = {
+      players: this.players,
+      inputQueues: this.inputQueues,
+      lastAppliedSeq: this.lastAppliedSeq,
+      prevTickPositions: this.prevTickPositions,
+      positionHistory: this.positionHistory,
+      getWalls: () => this.walls,
+      getTopology: () => this.topology,
+      getPhase: () => this.phase,
+      setPhase: (p) => {
+        this.phase = p;
+      },
+      getTurnEndsAt: () => this.turnEndsAt,
+      setTurnEndsAt: (ms) => {
+        this.turnEndsAt = ms;
+      },
+      getFirstTeam: () => this.firstTeam,
+      getRoundNumber: () => this.roundNumber,
+      incrementRoundNumber: () => {
+        this.roundNumber += 1;
+      },
+      activeHumans: () => this.activeHumans(),
+      simulateBots: (dt) => this.bots.simulate(dt),
+      broadcast: (msg) => this.broadcast(msg),
+      broadcastDelta: () => this.broadcaster.broadcastDelta(),
+    };
+    this.sim = new GameSimulation(simHost);
   }
 
   private rebuildPathfinder(): void {
@@ -797,7 +797,7 @@ export class Room implements DurableObject {
     this.phase = 'free_roam';
     this.turnEndsAt = Date.now() + FREE_ROAM_MS;
     this.broadcast({ t: 'event', kind: { kind: 'phase', phase: this.phase } });
-    this.tickHandle = setInterval(() => this.tick(), TICK_MS);
+    this.tickHandle = setInterval(() => this.sim.tick(), TICK_MS);
     // Drop ourselves from the matchmaker's open-room pool immediately
     // so strangers stop being routed here. The notifyMatchmaker guard
     // would catch a subsequent call too, but doing it now closes the
@@ -833,208 +833,10 @@ export class Room implements DurableObject {
     }
   }
 
-  private tick(): void {
-    // Pause the world while every human is in the session-token grace
-    // window. Without this, a solo player who briefly drops wifi has
-    // the bots keep attacking their stationary body, the match runs
-    // through turn transitions in their absence, and frequently
-    // checkWin terminates the round before they can reconnect. The
-    // server tick keeps firing (the setInterval handle is still alive)
-    // but turning the body of the work into a no-op preserves player
-    // positions while the turnEndsAt cursor gets shifted forward on
-    // resume. Multi-human matches stay unaffected: as long as one
-    // human is connected, activeHumans > 0 and the tick runs normally.
-    if (this.activeHumans() === 0) {
-      if (this.pausedSince === null) this.pausedSince = Date.now();
-      return;
-    }
-    if (this.pausedSince !== null) {
-      // First tick after a resume - shift the turn clock forward by the
-      // pause duration so a returning player does not find their turn
-      // already half-over.
-      this.turnEndsAt += Date.now() - this.pausedSince;
-      this.pausedSince = null;
-    }
-    const now = Date.now();
-    if (this.phase === 'free_roam' && now >= this.turnEndsAt) {
-      this.beginNextTurn();
-    } else if (
-      (this.phase === 'turn_mime' || this.phase === 'turn_clown') &&
-      now >= this.turnEndsAt
-    ) {
-      this.beginNextTurn();
-    }
-    this.simulate();
-    this.broadcastDelta();
-  }
-
-  private beginNextTurn(): void {
-    this.roundNumber += 1;
-    const next: Team =
-      this.phase === 'turn_mime' ? 'clown' : this.phase === 'turn_clown' ? 'mime' : this.firstTeam;
-    this.phase = `turn_${next}` as RoomPhase;
-    const ms = Math.min(TURN_CAP_MS, TURN_FIRST_MS + (this.roundNumber - 1) * TURN_STEP_MS);
-    this.turnEndsAt = Date.now() + ms;
-    // Pick the cry index once so every client renders the same banner text.
-    // Each team has BATTLE_CRY_COUNT slots in their local cry array.
-    const cryIndex = Math.floor(Math.random() * BATTLE_CRY_COUNT);
-    this.broadcast({ t: 'event', kind: { kind: 'phase', phase: this.phase, cryIndex } });
-  }
-
-  /** Applies player inputs with anti-cheat distance clamping. */
-  private simulate(): void {
-    const dt = TICK_MS / 1000;
-    this.simulateHumans(dt);
-    this.bots.simulate(dt);
-    this.advanceIdleJumpState();
-    // After every player has moved this tick, resolve any overlap +
-    // apply bounceback. Runs once per tick so impulses are bounded.
-    resolvePlayerCollisions(
-      [...this.players.values()],
-      this.prevTickPositions,
-      dt,
-      this.walls,
-      this.topology,
-      WORLD_WIDTH,
-      Date.now(),
-    );
-    // Refresh prev positions AFTER bounceback so next tick's approach
-    // velocity reflects the post-bounce stance, not the pre-bounce
-    // overlap that would otherwise show up as a phantom impulse.
-    this.prevTickPositions.clear();
-    for (const p of this.players.values()) {
-      this.prevTickPositions.set(p.id, { x: p.position.x, z: p.position.z });
-    }
-    this.recordPositionsForLagComp();
-  }
-
-  /**
-   * Refresh Y and clear stale jumpStartedAt for every player whose
-   * stepJump did not run this tick (input queue was empty, or the
-   * player is frozen, or is a bot in PR 2 - PR 5 will give bots their
-   * own jump trigger). Without this pass, a mid-air player whose
-   * inputs stopped landing would have its jumpStartedAt sit at the
-   * takeoff timestamp indefinitely and the broadcast snapshot's
-   * position.y would stay stale; clients would still compute the
-   * correct Y from jumpArcY but the wire would carry the wrong
-   * authoritative value.
-   */
-  private advanceIdleJumpState(): void {
-    const now = Date.now();
-    const lockoutMs = (JUMP_DURATION_S + JUMP_COOLDOWN_S) * 1000;
-    for (const p of this.players.values()) {
-      if (p.jumpStartedAt !== null && now - p.jumpStartedAt >= lockoutMs) {
-        p.jumpStartedAt = null;
-      }
-      p.position = {
-        x: p.position.x,
-        y: bodyYForState({ jumpStartedAt: p.jumpStartedAt }, now),
-        z: p.position.z,
-      };
-    }
-  }
-
-  /**
-   * Append every player's current position to their history ring after each
-   * tick, then drop entries older than POSITION_HISTORY_KEEP_MS. tagRejection
-   * later rewinds the victim by LAG_COMP_MS so the server validates against
-   * the world state the client saw at the moment of the tag.
-   */
-  private recordPositionsForLagComp(): void {
-    const now = Date.now();
-    const cutoff = now - POSITION_HISTORY_KEEP_MS;
-    for (const p of this.players.values()) {
-      let hist = this.positionHistory.get(p.id);
-      if (!hist) {
-        hist = [];
-        this.positionHistory.set(p.id, hist);
-      }
-      hist.push({ t: now, x: p.position.x, z: p.position.z });
-      while (hist.length > 0 && hist[0]!.t < cutoff) hist.shift();
-    }
-  }
-
-  /** Closest historical position at or before atMs, or current if missing. */
-  private positionAt(playerId: string, atMs: number): { x: number; z: number } {
-    const hist = this.positionHistory.get(playerId);
-    if (hist && hist.length > 0) {
-      for (let i = hist.length - 1; i >= 0; i -= 1) {
-        if (hist[i]!.t <= atMs) return { x: hist[i]!.x, z: hist[i]!.z };
-      }
-    }
-    const p = this.players.get(playerId);
-    return p ? { x: p.position.x, z: p.position.z } : { x: 0, z: 0 };
-  }
-
-  private simulateHumans(_dt: number): void {
-    for (const [id, q] of this.inputQueues) {
-      if (q.length === 0) continue;
-      const p = this.players.get(id);
-      if (!p || p.bot || p.frozen) {
-        // Ineligible player: drain the queue so reconnects or thaws start
-        // from a clean slate instead of replaying stale inputs.
-        q.length = 0;
-        continue;
-      }
-      // Consume exactly ONE input per tick (oldest first). The client streams
-      // at TICK_HZ, so steady state is one in / one out. Network jitter that
-      // bunches two inputs into the same socket-read window now lands in the
-      // queue and is processed on consecutive ticks rather than overwritten;
-      // the client predicted both, the server applies both, and reconciliation
-      // never sees the "server is one tick behind" snap that caused the
-      // visible step-back stutter while moving.
-      const input = q.shift()!;
-      const lastSeq = this.lastAppliedSeq.get(id) ?? -1;
-      if (input.seq <= lastSeq) continue;
-      const next = stepMovement(
-        { position: p.position, sprintEnergy: p.sprintEnergy, sprinting: p.sprinting },
-        // Use the dt the client reported with this input, not the server's
-        // tick dt. Reconciliation replay on the client also drives
-        // stepMovement from input.dt; if the two diverged the replayed
-        // position would drift from the server's authoritative result.
-        { move: input.move, sprint: input.sprint, dt: input.dt },
-        this.walls,
-        this.topology,
-        WORLD_WIDTH,
-        // No collision gate here: resolvePlayerCollisions in the
-        // post-step pass handles overlap by pushing bodies apart and
-        // adding the bounceback impulse. A tick-level gate would
-        // suppress the overlap that the bounceback design needs to
-        // see; per-tick max overlap is bounded by walk speed * dt
-        // (~5 cm), which the next tick's resolve fully unwinds.
-        () => false,
-      );
-      // Jump trigger / lockout. The client stamps input.nowMs when it
-      // sends the input; we use that timestamp (clamped to local clock
-      // skew) as the new jumpStartedAt so the client's predicted arc
-      // start matches the authoritative value without a round-trip.
-      // Y is computed authoritatively in advanceIdleJumpState at end
-      // of tick using the server's Date.now().
-      const serverNow = Date.now();
-      const inputNow = input.nowMs ?? serverNow;
-      const skewMs = Math.abs(inputNow - serverNow);
-      const arcNow = skewMs > JUMP_CLIENT_CLOCK_SKEW_MS ? serverNow : inputNow;
-      const jump = stepJump(
-        { jumpStartedAt: p.jumpStartedAt },
-        { jump: input.jump ?? false, nowMs: arcNow },
-      );
-      p.position = next.position;
-      p.jumpStartedAt = jump.jumpStartedAt;
-      p.sprintEnergy = next.sprintEnergy;
-      p.sprinting = next.sprinting;
-      p.yaw = input.lookYaw;
-      this.lastAppliedSeq.set(id, input.seq);
-    }
-  }
-
   private activeTurnTeam(): Team | null {
     if (this.phase === 'turn_mime') return 'mime';
     if (this.phase === 'turn_clown') return 'clown';
     return null;
-  }
-
-  private broadcastDelta(): void {
-    this.broadcaster.broadcastDelta();
   }
 
   private snapshot(): RoomSnapshot {

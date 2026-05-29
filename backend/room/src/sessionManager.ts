@@ -42,11 +42,28 @@ export class SessionManager {
   // teardown.
   private readonly disconnectTimers = new Map<string, ReturnType<typeof setTimeout>>();
 
+  // Wall-clock ms at which each pending grace window is scheduled to
+  // fire. Mirrored alongside the timer handle so RoomPersistence can
+  // serialize the in-flight graces and resume them with the correct
+  // remaining time after a DO restart. Cleared in cancelFinalize /
+  // forget alongside the timer.
+  private readonly disconnectExpiresAt = new Map<string, number>();
+
   /** Mint a fresh session token for a player and return it. */
   mint(playerId: string): string {
     const token = crypto.randomUUID();
     this.sessionTokens.set(playerId, token);
     return token;
+  }
+
+  /**
+   * Re-install a token a previous DO instance had already minted for
+   * `playerId`. Used by RoomPersistence on construct to restore tokens
+   * across a wrangler-deploy DO restart so the client's existing
+   * sessionToken still resolves on the next join.
+   */
+  restore(playerId: string, token: string): void {
+    this.sessionTokens.set(playerId, token);
   }
 
   /** Look up the current token for a player. Empty string when missing. */
@@ -66,20 +83,24 @@ export class SessionManager {
   }
 
   /**
-   * Start the grace window for `playerId`. After `RECONNECT_GRACE_MS`
-   * with no resume, the supplied `onFinalize` callback fires and the
-   * caller does the real teardown. Idempotent: replacing an in-flight
-   * timer clears the previous one first.
+   * Start the grace window for `playerId`. After `delayMs` (default
+   * `RECONNECT_GRACE_MS`) with no resume, the supplied `onFinalize`
+   * callback fires and the caller does the real teardown. Idempotent:
+   * replacing an in-flight timer clears the previous one first. The
+   * `delayMs` override exists for RoomPersistence restore, which resumes
+   * a grace window with the time remaining rather than the full 45 s.
    */
-  scheduleFinalize(playerId: string, onFinalize: () => void): void {
+  scheduleFinalize(playerId: string, onFinalize: () => void, delayMs = RECONNECT_GRACE_MS): void {
     const existing = this.disconnectTimers.get(playerId);
     if (existing !== undefined) clearTimeout(existing);
+    this.disconnectExpiresAt.set(playerId, Date.now() + delayMs);
     this.disconnectTimers.set(
       playerId,
       setTimeout(() => {
         this.disconnectTimers.delete(playerId);
+        this.disconnectExpiresAt.delete(playerId);
         onFinalize();
-      }, RECONNECT_GRACE_MS),
+      }, delayMs),
     );
   }
 
@@ -89,6 +110,7 @@ export class SessionManager {
     if (existing !== undefined) {
       clearTimeout(existing);
       this.disconnectTimers.delete(playerId);
+      this.disconnectExpiresAt.delete(playerId);
     }
   }
 
@@ -110,5 +132,19 @@ export class SessionManager {
    */
   pendingDisconnectCount(): number {
     return this.disconnectTimers.size;
+  }
+
+  /** Snapshot of [playerId, token] pairs for RoomPersistence serialization. */
+  exportSessions(): Array<[string, string]> {
+    return Array.from(this.sessionTokens.entries());
+  }
+
+  /**
+   * Snapshot of [playerId, graceExpiresAtMs] pairs for RoomPersistence
+   * serialization. Restore re-arms timers with `expiresAt - Date.now()`
+   * as the remaining delay.
+   */
+  exportPendingDisconnects(): Array<[string, number]> {
+    return Array.from(this.disconnectExpiresAt.entries());
   }
 }

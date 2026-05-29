@@ -24,6 +24,7 @@ import { BotPathfinder } from './botPathfinder.ts';
 import { GameSimulation, type GameSimulationHost } from './gameSimulation.ts';
 import { parseClientMessage } from './messageValidator.ts';
 import { RateLimiter } from './rateLimiter.ts';
+import { RoomPersistence, type PersistedRoomState } from './roomPersistence.ts';
 import { SessionManager } from './sessionManager.ts';
 import { SnapshotBroadcaster, type SnapshotBroadcasterHost } from './snapshotBroadcaster.ts';
 import { TagManager, type TagManagerHost } from './tagManager.ts';
@@ -169,13 +170,32 @@ export class Room implements DurableObject {
   // bucket is empty; the connection stays open so a transient burst
   // doesn't force a reconnect cycle.
   private readonly rateLimiters = new Map<WebSocket, RateLimiter>();
+  // Persists room state across DO restarts (wrangler deploys, CF
+  // migrations, crashes). Loaded once on construct via
+  // blockConcurrencyWhile so the first incoming WS message sees the
+  // restored state. Saved fire-and-forget on every state-changing event
+  // via persist(); CF DO storage coalesces writes within an I/O turn.
+  private readonly persistence: RoomPersistence;
 
   constructor(
     private readonly state: DurableObjectState,
     private readonly env: RoomEnv = {},
   ) {
-    this.walls = generateWalls(this.seed, this.topology);
-    this.rebuildPathfinder();
+    this.persistence = new RoomPersistence(state.storage);
+    // Restore in-memory state from a prior DO incarnation, if any.
+    // blockConcurrencyWhile guarantees no WS message is dispatched until
+    // this resolves, so the first onJoin sees the full restored snapshot
+    // (players map populated, sessionTokens primed, pending graces armed).
+    // walls + pathfinder are generated INSIDE the block, AFTER any
+    // restore, so they use the persisted (seed, topology) - generating
+    // them outside the block would race with the restore and leave the
+    // pathfinder pointed at the wrong walls.
+    state.blockConcurrencyWhile(async () => {
+      const persisted = await this.persistence.load();
+      if (persisted !== null) this.restoreFromSnapshot(persisted);
+      this.walls = generateWalls(this.seed, this.topology);
+      this.rebuildPathfinder();
+    });
     const broadcasterHost: SnapshotBroadcasterHost = {
       players: this.players,
       connections: this.connections,
@@ -200,6 +220,7 @@ export class Room implements DurableObject {
       getPhase: () => this.phase,
       setPhase: (p) => {
         this.phase = p;
+        this.persist();
       },
       positionAt: (id, atMs) => this.sim.positionAt(id, atMs),
       broadcast: (msg) => this.broadcast(msg),
@@ -239,11 +260,16 @@ export class Room implements DurableObject {
       getPhase: () => this.phase,
       setPhase: (p) => {
         this.phase = p;
+        this.persist();
       },
       getTurnEndsAt: () => this.turnEndsAt,
       setTurnEndsAt: (ms) => {
         this.turnEndsAt = ms;
       },
+      // turnEndsAt updates every tick during simulation (the pause-resume
+      // adjustment in particular). We don't persist on the simulation
+      // tick to avoid 60 writes/sec; turnEndsAt restores to its
+      // last-event-time value, which is good enough to ~1 s.
       getFirstTeam: () => this.firstTeam,
       getRoundNumber: () => this.roundNumber,
       incrementRoundNumber: () => {
@@ -259,6 +285,83 @@ export class Room implements DurableObject {
 
   private rebuildPathfinder(): void {
     this.pathfinder = new BotPathfinder(this.walls, this.topology);
+  }
+
+  /**
+   * Restore the in-memory room from a prior DO incarnation's persisted
+   * snapshot. Called once from the constructor inside
+   * blockConcurrencyWhile so all fields are populated before the first
+   * WS message dispatches.
+   *
+   * Behaviour after a wrangler-deploy DO restart:
+   *  - phase / seed / topology / host fields snap back to the prior
+   *    values, so the resumed client sees the same match.
+   *  - Every player (humans + bots) is restored at their last-persisted
+   *    position. Positions update on events (join/detach/phase/tag),
+   *    not on every tick, so they may be a few seconds stale.
+   *  - sessionTokens are reinstalled, so the client's existing token
+   *    resolves on the next join and resumeSession runs.
+   *  - In-flight grace windows resume with their remaining time, or
+   *    finalize immediately if the wall-clock already ran past the
+   *    deadline while the DO was offline.
+   *  - The tick is re-armed if the room was past the filling phase so
+   *    the simulation continues the moment the first human reconnects
+   *    (it pauses internally while activeHumans === 0).
+   */
+  private restoreFromSnapshot(s: PersistedRoomState): void {
+    this.phase = s.phase;
+    this.turnEndsAt = s.turnEndsAt;
+    this.topology = s.topology;
+    this.seed = s.seed;
+    this.roundNumber = s.roundNumber;
+    this.firstTeam = s.firstTeam;
+    this.expectedHostToken = s.expectedHostToken;
+    this.hostPlayerId = s.hostPlayerId;
+    for (const p of s.players) this.players.set(p.id, p);
+    for (const [id, token] of s.sessions) this.sessions.restore(id, token);
+    const now = Date.now();
+    for (const [id, expiresAt] of s.pendingDisconnects) {
+      const remaining = expiresAt - now;
+      if (remaining <= 0) {
+        // Grace already expired while the DO was offline. Run the
+        // teardown synchronously so the restored room matches what
+        // would have happened had the DO stayed up.
+        this.finalizeDisconnect(id);
+      } else {
+        this.sessions.scheduleFinalize(id, () => this.finalizeDisconnect(id), remaining);
+      }
+    }
+    // Re-arm the tick if the match was running. The sim pauses
+    // internally while activeHumans === 0 (every human is in grace
+    // post-restore), so the first reconnect's resumeSession cancels
+    // that player's grace and the sim resumes from the next tick.
+    if (this.phase !== 'filling' && this.tickHandle === null && this.players.size > 0) {
+      this.tickHandle = setInterval(() => this.sim.tick(), TICK_MS);
+    }
+  }
+
+  /**
+   * Serialize the current room into the persistence schema and write
+   * it. Called at every state-changing event (join, detach, finalize,
+   * resume, phase transition, bot fill, team balance). CF DO storage
+   * coalesces multiple put()s within an I/O turn into one disk write,
+   * so a tick that triggers several persist()s still costs one write.
+   */
+  private persist(): void {
+    this.persistence.save({
+      version: 1,
+      phase: this.phase,
+      turnEndsAt: this.turnEndsAt,
+      topology: this.topology,
+      seed: this.seed,
+      roundNumber: this.roundNumber,
+      firstTeam: this.firstTeam,
+      expectedHostToken: this.expectedHostToken,
+      hostPlayerId: this.hostPlayerId,
+      players: [...this.players.values()],
+      sessions: this.sessions.exportSessions(),
+      pendingDisconnects: this.sessions.exportPendingDisconnects(),
+    });
   }
 
   /**
@@ -512,6 +615,7 @@ export class Room implements DurableObject {
       }
     }
     this.notifyMatchmaker(this.humanPlayers().length, this.botPlayers().length);
+    this.persist();
   }
 
   private onStartMatch(ws: WebSocket): void {
@@ -638,6 +742,7 @@ export class Room implements DurableObject {
     const finalizeId = conn.playerId;
     this.sessions.scheduleFinalize(finalizeId, () => this.finalizeDisconnect(finalizeId));
     this.notifyMatchmaker(this.humanPlayers().length, this.botPlayers().length);
+    this.persist();
   }
 
   private finalizeDisconnect(playerId: string): void {
@@ -653,8 +758,14 @@ export class Room implements DurableObject {
       this.bots.clear();
       this.phase = 'filling';
       this.detachMatchmaker();
+      // Room is empty - drop the persisted snapshot so the next client
+      // who lands on this DO gets a clean room rather than a stale
+      // snapshot. The DO instance can also be evicted by CF at this
+      // point without leaving disk garbage behind.
+      this.persistence.clear();
     } else {
       this.notifyMatchmaker(this.humanPlayers().length, this.botPlayers().length);
+      this.persist();
     }
   }
 
@@ -692,6 +803,7 @@ export class Room implements DurableObject {
     });
     this.broadcast({ t: 'event', kind: { kind: 'phase', phase: this.phase } });
     this.notifyMatchmaker(this.humanPlayers().length, this.botPlayers().length);
+    this.persist();
   }
 
   private onInput(ws: WebSocket, input: PlayerInput): void {
@@ -768,6 +880,10 @@ export class Room implements DurableObject {
     // would catch a subsequent call too, but doing it now closes the
     // window between `phase = free_roam` and the next state push.
     this.detachMatchmaker();
+    // Persist after fillBots (run inside scheduleFill or via balanceHumans
+    // here) and the phase flip so a deploy mid-game restores the match
+    // with bots + first-team + turnEndsAt all set.
+    this.persist();
   }
 
   /**

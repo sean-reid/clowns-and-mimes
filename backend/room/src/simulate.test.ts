@@ -16,10 +16,32 @@ import { describe, expect, it, beforeEach, afterEach, vi } from 'vitest';
 import type { PlayerInput, PlayerState } from '@cm/shared';
 import { Room, type RoomEnv } from './room.ts';
 
+interface MockStorage {
+  get<T>(key: string): Promise<T | undefined>;
+  put(key: string, value: unknown): Promise<void>;
+  delete(key: string): Promise<void>;
+}
+
 interface MockState {
   id: { toString: () => string };
   acceptWebSocket: (ws: WebSocket) => void;
-  storage: Map<string, unknown>;
+  storage: MockStorage;
+  blockConcurrencyWhile: <T>(fn: () => Promise<T>) => Promise<T>;
+}
+
+function makeMockStorage(): MockStorage {
+  const map = new Map<string, unknown>();
+  return {
+    async get<T>(key: string): Promise<T | undefined> {
+      return map.get(key) as T | undefined;
+    },
+    async put(key: string, value: unknown): Promise<void> {
+      map.set(key, value);
+    },
+    async delete(key: string): Promise<void> {
+      map.delete(key);
+    },
+  };
 }
 
 function makeMockState(roomId = 'test-room-0001'): MockState {
@@ -28,7 +50,12 @@ function makeMockState(roomId = 'test-room-0001'): MockState {
     acceptWebSocket: () => {
       // Not used by simulate path; only fetch() calls it.
     },
-    storage: new Map(),
+    storage: makeMockStorage(),
+    // The real DurableObjectState.blockConcurrencyWhile defers WS dispatch
+    // until the promise resolves. Tests don't dispatch through WS so the
+    // fire-and-forget behavior is enough; the constructor's restore await
+    // still runs to completion before the test reads any state.
+    blockConcurrencyWhile: async <T,>(fn: () => Promise<T>): Promise<T> => fn(),
   };
 }
 

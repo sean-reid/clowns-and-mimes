@@ -20,6 +20,9 @@ signal requested_screen(screen: String)
 const MatchmakerClientScript := preload("res://scripts/network/matchmaker_client.gd")
 
 const NETWORK_TIMEOUT := 4.0
+# Subdued grey for the "Waiting..." placeholder name in the roster, so a
+# yet-to-be-named slot reads as inactive vs. a real player line.
+const WAITING_NAME_TINT := Color(0.7, 0.7, 0.72)
 
 @onready var status_label: Label = $Center/Status
 @onready var code_label: Label = $Center/Code
@@ -307,7 +310,7 @@ func _render_roster_from(entries: Array) -> void:
 	if humans.is_empty():
 		var waiting := Label.new()
 		waiting.text = "  waiting for players..."
-		waiting.modulate = Color(0.7, 0.7, 0.72)
+		waiting.modulate = WAITING_NAME_TINT
 		players_box.add_child(waiting)
 		return
 	for entry in humans:
@@ -328,5 +331,5 @@ func _seed_player_list() -> void:
 	players_box.add_child(me)
 	var waiting := Label.new()
 	waiting.text = "  waiting for others..."
-	waiting.modulate = Color(0.7, 0.7, 0.72)
+	waiting.modulate = WAITING_NAME_TINT
 	players_box.add_child(waiting)

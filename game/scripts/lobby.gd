@@ -226,6 +226,14 @@ func _on_room_error(code: String, message: String) -> void:
 	if code == "version_mismatch":
 		_show_version_mismatch_popup(message)
 		return
+	if code == "room_full":
+		# Open-join via the matchmaker filters at humans+bots>=12 so this
+		# is only reachable when a private code is shared widely enough
+		# to saturate the hard 16 cap, or in a burst-join race. Surface
+		# a popup with a clear next step instead of stranding the
+		# player on an inline "Server error: room full" status label.
+		_show_room_full_popup()
+		return
 	status_label.text = "Server error: %s" % message
 
 func _on_room_disconnected(reason: String) -> void:
@@ -237,6 +245,16 @@ func _show_match_in_progress_popup() -> void:
 	var dialog := AcceptDialog.new()
 	dialog.title = "Match in progress"
 	dialog.dialog_text = "This match has already started. Wait for the next round and try again."
+	dialog.ok_button_text = "Back to menu"
+	dialog.unresizable = true
+	dialog.confirmed.connect(func(): requested_screen.emit("menu"))
+	add_child(dialog)
+	dialog.popup_centered()
+
+func _show_room_full_popup() -> void:
+	var dialog := AcceptDialog.new()
+	dialog.title = "Room is full"
+	dialog.dialog_text = "This lobby already has the maximum 16 players. Try Find Match for a fresh room."
 	dialog.ok_button_text = "Back to menu"
 	dialog.unresizable = true
 	dialog.confirmed.connect(func(): requested_screen.emit("menu"))

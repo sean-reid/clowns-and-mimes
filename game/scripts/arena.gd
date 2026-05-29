@@ -32,6 +32,7 @@ const BotAIScript := preload("res://scripts/bot_ai.gd")
 const AssetPaths := preload("res://scripts/asset_paths.gd")
 const RoomClientScript := preload("res://scripts/network/room_client.gd")
 const OnlinePredictorScript := preload("res://scripts/online_predictor.gd")
+const ReconnectControllerScript := preload("res://scripts/reconnect_controller.gd")
 
 # ---------------------------------------------------------------------------
 # Tunables
@@ -54,17 +55,8 @@ const CONTACT_COOLDOWN_S := 0.15
 const INPUT_TICK_HZ := 60.0
 const INPUT_TICK_PERIOD := 1.0 / INPUT_TICK_HZ
 
-# Send a ping every PING_INTERVAL_S so the WebSocket has accidental-keepalive
-# traffic even when the player is idle. Cloudflare Durable Object sockets get
-# torn down with a TLS fatal alert (mbedtls -0x7780) when they sit idle long
-# enough; periodic pings keep the connection warm.
-const PING_INTERVAL_S := 5.0
-
-# When the server-side WS dies, try to reconnect with a short cumulative
-# backoff before showing the player a hard "Reconnect / Quit" choice. Most
-# transient drops (DO migration, brief ISP wobble) resolve inside ~5 s, so
-# the player never sees the menu bounce for those.
-const RECONNECT_BACKOFF_S: Array[float] = [0.5, 1.5, 3.0]
+# Keepalive ping interval + reconnect ladder constants live in
+# game/scripts/reconnect_controller.gd.
 
 # Environment palettes for the light / dark arena modes. Toggled by the
 # Settings overlay; apply_light_mode swaps between these wholesale.
@@ -148,23 +140,9 @@ var local_player_id: String = ""
 var player_nodes: Dictionary = {}
 var contact_cooldowns: Dictionary = {}
 
-# WS keepalive + reconnect state.
-var _ping_accumulator: float = 0.0
-var _reconnect_attempt: int = 0
-var _reconnect_active: bool = false
-var _reconnect_label: Label = null
-# Delays the banner so transient drops the ladder absorbs (CF edge blip,
-# DO migration, brief ISP wobble) don't flash the "Reconnecting..." UI.
-# When the reconnect succeeds before this fires we kill the timer in
-# _hide_reconnect_banner and the player never sees the banner.
-const RECONNECT_BANNER_DELAY_S := 1.0
-var _reconnect_banner_timer: Timer = null
-# Stashed so _show_reconnect_failed_popup can surface the original drop
-# reason in the side log once the ladder has actually given up. We hold
-# the log line back from _on_room_disconnected because the "Reconnecting..."
-# banner is the right transient UI; the log line was noisy and scary on
-# every CF edge blip the ladder absorbed invisibly.
-var _last_disconnect_reason: String = ""
+# Keepalive ping + reconnect ladder + banner + connection-lost popup
+# live in game/scripts/reconnect_controller.gd. Instantiated in _ready.
+var reconnect: Node = null
 
 # Suppress repeat tag-rejection HUD lines closer than this many seconds.
 # Without this, walking into a wall while spamming the contact button
@@ -184,6 +162,9 @@ func _ready() -> void:
 	online_mode = not GameState.server_url.is_empty()
 	apply_light_mode(Settings.light_mode)
 	_setup_menu()
+	reconnect = ReconnectControllerScript.new()
+	add_child(reconnect)
+	reconnect.attach(self)
 	hud.set_sprint(100.0)
 	# Leave the countdown label blank until the first phase update arrives;
 	# seeding "10" was a leftover from the removed pre-match countdown phase
@@ -277,21 +258,7 @@ func _physics_process(delta: float) -> void:
 		# Network send still goes through _physics_process at 60 Hz; the
 		# 20 Hz tick accumulator inside _stream_input owns when to flush.
 		_stream_input(delta)
-		_drive_keepalive(delta)
-
-# Periodic ping while the WS is open. The 60 Hz input stream is implicit
-# keepalive while the player is moving, but an idle player would otherwise
-# leave the socket silent long enough for Cloudflare to retire the Durable
-# Object connection.
-func _drive_keepalive(delta: float) -> void:
-	if room_client == null or not room_client.is_connected_to_server():
-		_ping_accumulator = 0.0
-		return
-	_ping_accumulator += delta
-	if _ping_accumulator < PING_INTERVAL_S:
-		return
-	_ping_accumulator = 0.0
-	room_client.send_ping()
+		reconnect.drive_keepalive(delta)
 
 # ---------------------------------------------------------------------------
 # Offline path
@@ -378,9 +345,7 @@ func _start_online() -> void:
 	# path was skipped (fallback above), wait for `connected` from
 	# connect_to() and `_on_room_connected` will send the join.
 	if room_client.is_connected_to_server():
-		_reconnect_attempt = 0
-		_reconnect_active = false
-		_hide_reconnect_banner()
+		reconnect.handle_connected()
 		if not NetClient.cached_snapshot.is_empty():
 			_on_snapshot(NetClient.cached_snapshot, NetClient.cached_you_are)
 
@@ -390,124 +355,16 @@ func _on_room_connected() -> void:
 	# In the normal lobby path the WS was already connected and join was
 	# sent before this scene loaded.
 	room_client.send_join(GameState.username, "", GameState.host_token)
-	_reconnect_attempt = 0
-	_reconnect_active = false
-	_hide_reconnect_banner()
+	reconnect.handle_connected()
 
 func _on_room_disconnected(reason: String) -> void:
 	# Most disconnects in the wild are transient: Cloudflare Durable Object
 	# migration, brief ISP wobble, or a TLS fatal alert from CF retiring the
-	# socket. Try a short ladder of reconnect attempts before showing the
-	# player a hard choice, instead of force-bouncing back to the menu.
-	if _reconnect_active:
-		return
-	_reconnect_active = true
-	_reconnect_attempt = 0
-	_last_disconnect_reason = reason
-	_show_reconnect_banner_delayed("Reconnecting...")
-	# Hold off on the HUD log line. The "Reconnecting..." banner is enough
-	# transient feedback - most drops are CF edge / DO migration blips that
-	# the ladder absorbs invisibly. Only surface "Disconnected: <reason>"
-	# in the side log if the ladder gives up (see _show_reconnect_failed_popup).
-	_schedule_next_reconnect()
-
-func _schedule_next_reconnect() -> void:
-	if _reconnect_attempt >= RECONNECT_BACKOFF_S.size():
-		_show_reconnect_failed_popup()
-		return
-	var wait_s: float = RECONNECT_BACKOFF_S[_reconnect_attempt]
-	_reconnect_attempt += 1
-	await get_tree().create_timer(wait_s).timeout
-	if not _reconnect_active or room_client == null:
-		return
-	# Clear stale per-session state so reconciliation does not replay inputs
-	# from before the drop. The fresh snapshot from the server's onJoin will
-	# repopulate everything. contact_cooldowns is keyed by player ID; ID reuse
-	# across reconnects is unlikely but possible, and a stale entry would
-	# silently swallow the first tag after resume.
-	pending_inputs.clear()
-	contact_cooldowns.clear()
-	snapshot_received = false
-	room_client.connect_to(GameState.server_url)
-	# If the connect call dispatches another `disconnected` immediately
-	# (handshake failure), _on_room_disconnected re-enters; otherwise wait
-	# for `connected` to flip us out of the reconnect state. As a backstop
-	# in case neither fires (socket stuck pending), schedule the next ladder
-	# step after the same backoff window.
-	await get_tree().create_timer(wait_s + 1.0).timeout
-	# Player may have hit Back to menu (or accepted the failed-reconnect
-	# popup) during the wait, which nulls room_client. Guard before
-	# touching it.
-	if room_client == null or not _reconnect_active:
-		return
-	if not room_client.is_connected_to_server():
-		_schedule_next_reconnect()
-
-func _show_reconnect_banner(text: String) -> void:
-	if _reconnect_label == null:
-		_reconnect_label = Label.new()
-		_reconnect_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-		_reconnect_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-		_reconnect_label.anchor_left = 0.0
-		_reconnect_label.anchor_right = 1.0
-		_reconnect_label.anchor_top = 0.45
-		_reconnect_label.anchor_bottom = 0.55
-		_reconnect_label.add_theme_font_size_override("font_size", 48)
-		hud.add_child(_reconnect_label)
-	_reconnect_label.text = text
-	_reconnect_label.visible = true
-
-# Schedule the banner to appear after RECONNECT_BANNER_DELAY_S. If the
-# reconnect succeeds inside that window, _hide_reconnect_banner kills
-# the timer and the banner never shows - no flicker for the common
-# case of a brief CF edge blip.
-func _show_reconnect_banner_delayed(text: String) -> void:
-	_cancel_reconnect_banner_timer()
-	_reconnect_banner_timer = Timer.new()
-	_reconnect_banner_timer.one_shot = true
-	_reconnect_banner_timer.wait_time = RECONNECT_BANNER_DELAY_S
-	add_child(_reconnect_banner_timer)
-	_reconnect_banner_timer.timeout.connect(_show_reconnect_banner.bind(text))
-	_reconnect_banner_timer.start()
-
-func _cancel_reconnect_banner_timer() -> void:
-	if _reconnect_banner_timer != null:
-		_reconnect_banner_timer.queue_free()
-		_reconnect_banner_timer = null
-
-func _hide_reconnect_banner() -> void:
-	_cancel_reconnect_banner_timer()
-	if _reconnect_label != null:
-		_reconnect_label.visible = false
-
-func _show_reconnect_failed_popup() -> void:
-	_hide_reconnect_banner()
-	# Surface the last disconnect reason now that the ladder gave up. Held
-	# back from _on_room_disconnected so the side log isn't spammed with
-	# "Disconnected: closed by peer: -1" on every transient blip that the
-	# ladder absorbs invisibly.
-	if _last_disconnect_reason != "":
-		hud.append_log("Disconnected: %s" % _last_disconnect_reason)
-	var dialog := AcceptDialog.new()
-	dialog.title = "Connection lost"
-	dialog.dialog_text = "Could not reach the server. Try again or back out to the main menu."
-	dialog.ok_button_text = "Back to menu"
-	dialog.unresizable = true
-	var retry_button := dialog.add_button("Reconnect", true, "retry")
-	retry_button.pressed.connect(_on_reconnect_retry_pressed.bind(dialog))
-	dialog.confirmed.connect(_on_reconnect_give_up)
-	_attach_dialog_lifecycle(dialog)
-	dialog.popup_centered()
-
-func _on_reconnect_retry_pressed(dialog: AcceptDialog) -> void:
-	dialog.queue_free()
-	_reconnect_attempt = 0
-	_show_reconnect_banner("Reconnecting...")
-	_schedule_next_reconnect()
-
-func _on_reconnect_give_up() -> void:
-	_reconnect_active = false
-	_on_back_to_menu()
+	# socket. The reconnect controller runs a short ladder before showing
+	# the player a hard "Reconnect / Quit" choice. The HUD log line is held
+	# back to the ladder-gives-up moment so transient blips don't surface
+	# scary text the ladder absorbs invisibly.
+	reconnect.handle_disconnected(reason)
 
 func _on_snapshot(snapshot: Dictionary, you_are: String) -> void:
 	local_player_id = you_are
@@ -629,8 +486,8 @@ func _on_room_error(code: String, message: String) -> void:
 func _show_match_in_progress_popup() -> void:
 	# Stop the reconnect ladder so it doesn't keep retrying into the same
 	# rejection.
-	_reconnect_active = false
-	_hide_reconnect_banner()
+	reconnect.stop()
+	reconnect.hide_banner()
 	var dialog := AcceptDialog.new()
 	dialog.title = "Match ended"
 	dialog.dialog_text = "You were disconnected for too long. Returning to the menu."
@@ -671,7 +528,7 @@ func _attach_dialog_lifecycle(dialog: AcceptDialog) -> void:
 func _drive_online_hud() -> void:
 	if not snapshot_received:
 		return
-	if _reconnect_active:
+	if reconnect.is_active():
 		# While the reconnect ladder is running, the server-side tick is
 		# paused (no active humans) so turnEndsAt is held in place, but
 		# the local clock keeps advancing. Without this gate the visible

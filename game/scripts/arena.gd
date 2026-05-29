@@ -24,22 +24,26 @@ const LABYRINTH := preload("res://scenes/labyrinth.tscn")
 const Movement := preload("res://scripts/movement.gd")
 const Physics := preload("res://scripts/physics.gd")
 const IN_GAME_MENU := preload("res://scenes/in_game_menu.tscn")
+# Preload kept here only for the `var rules: GameRulesScript` field
+# type annotation - OfflineMode (offline_mode.gd) is the actual lifecycle
+# owner and instantiates the GameRulesScript; contact_interactions.gd
+# then reads arena.rules without needing to know about OfflineMode.
 const GameRulesScript := preload("res://scripts/game_rules.gd")
 const PlayerScript := preload("res://scripts/player.gd")
 const TopologyScript := preload("res://scripts/topology/topology.gd")
 const TopologyFactory := preload("res://scripts/topology/topology_factory.gd")
-const BotAIScript := preload("res://scripts/bot_ai.gd")
 const AssetPaths := preload("res://scripts/asset_paths.gd")
 const RoomClientScript := preload("res://scripts/network/room_client.gd")
 const OnlinePredictorScript := preload("res://scripts/online_predictor.gd")
 const ReconnectControllerScript := preload("res://scripts/reconnect_controller.gd")
 const ContactInteractionsScript := preload("res://scripts/contact_interactions.gd")
+const OfflineModeScript := preload("res://scripts/offline_mode.gd")
 
 # ---------------------------------------------------------------------------
 # Tunables
 # ---------------------------------------------------------------------------
 
-const BOT_COUNT_PER_TEAM := 3
+# BOT_COUNT_PER_TEAM moved into offline_mode.gd (only consumer).
 const SPAWN_RADIUS := 2.5
 # CONTACT_RADIUS / CONTACT_COOLDOWN_S + tag/save logic live in
 # game/scripts/contact_interactions.gd.
@@ -135,6 +139,11 @@ var local_player: PlayerScript = null
 var local_player_id: String = ""
 var player_nodes: Dictionary = {}
 var contacts: ContactInteractionsScript = null
+# OfflineMode owns the offline match lifecycle: rules wiring, bot
+# spawning + AI, rule event handlers, team-status renders. Lives in
+# game/scripts/offline_mode.gd. Instantiated in _ready as a child Node
+# regardless of online_mode (idle when online; start() is the gate).
+var offline: OfflineModeScript = null
 
 # Keepalive ping + reconnect ladder + banner + connection-lost popup
 # live in game/scripts/reconnect_controller.gd. Instantiated in _ready.
@@ -162,6 +171,9 @@ func _ready() -> void:
 	add_child(reconnect)
 	reconnect.attach(self)
 	contacts = ContactInteractionsScript.new(self)
+	offline = OfflineModeScript.new()
+	add_child(offline)
+	offline.attach(self)
 	hud.set_sprint(100.0)
 	# Leave the countdown label blank until the first phase update arrives;
 	# seeding "10" was a leftover from the removed pre-match countdown phase
@@ -175,7 +187,7 @@ func _ready() -> void:
 	if online_mode:
 		_start_online()
 	else:
-		_start_offline()
+		offline.start()
 
 func _setup_menu() -> void:
 	menu = IN_GAME_MENU.instantiate()
@@ -237,7 +249,7 @@ func _process(delta: float) -> void:
 		if snapshot_received and local_player != null:
 			predictor.advance_local_prediction(delta)
 	else:
-		_drive_offline_hud()
+		offline.drive_hud()
 
 func _physics_process(delta: float) -> void:
 	if local_player == null or topology == null:
@@ -257,55 +269,8 @@ func _physics_process(delta: float) -> void:
 		_stream_input(delta)
 		reconnect.drive_keepalive(delta)
 
-# ---------------------------------------------------------------------------
-# Offline path
-# ---------------------------------------------------------------------------
-
-func _start_offline() -> void:
-	topology = TopologyFactory.from_string(GameState.topology_as_string())
-	hud.set_topology(topology.name())
-	_build_labyrinth(_derive_offline_seed())
-	_setup_rules()
-	_spawn_offline_players()
-	rules.start(topology)
-
-func _setup_rules() -> void:
-	rules = GameRulesScript.new()
-	add_child(rules)
-	rules.topology = topology
-	rules.tagged.connect(_on_offline_tagged)
-	rules.tag_rejected.connect(_on_offline_tag_rejected)
-	rules.saved.connect(_on_offline_saved)
-	rules.won.connect(_on_offline_won)
-	rules.phase_changed.connect(_on_offline_phase_changed)
-
-func _spawn_offline_players() -> void:
-	GameState.ensure_username()
-	local_player_id = "local"
-	_spawn_player(local_player_id, GameState.username, "mime", false, true)
-	for i in BOT_COUNT_PER_TEAM - 1:
-		_spawn_player("mime_bot_%d" % i, UsernameGenerator.generate(), "mime", true, false)
-	for i in BOT_COUNT_PER_TEAM:
-		_spawn_player("clown_bot_%d" % i, UsernameGenerator.generate(), "clown", true, false)
-	for id in player_nodes.keys():
-		var node: Node = player_nodes[id]
-		rules.register_player(id, node.team, node.global_position, node.display_name, node.bot)
-		if node.bot:
-			_attach_bot_ai(node, id)
-	_render_team_status_offline()
-
-func _attach_bot_ai(node: Node, id: String) -> void:
-	var ai := BotAIScript.new()
-	node.add_child(ai)
-	ai.attach(node, id, rules, topology, labyrinth)
-
-func _drive_offline_hud() -> void:
-	if rules == null:
-		return
-	for id in player_nodes.keys():
-		rules.update_position(id, player_nodes[id].global_position)
-	rules.tick(Time.get_unix_time_from_system())
-	hud.set_countdown_seconds(rules.phase_time_remaining(Time.get_unix_time_from_system()))
+# Offline path lives in game/scripts/offline_mode.gd. arena instantiates
+# the OfflineMode node in _ready when GameState.server_url is empty.
 
 # ---------------------------------------------------------------------------
 # Online path
@@ -724,11 +689,6 @@ func _build_labyrinth(seed_value: int) -> void:
 	labyrinth = node
 	labyrinth.build(seed_value, topology)
 
-func _derive_offline_seed() -> int:
-	if GameState.lobby_code.is_empty():
-		return randi()
-	return GameState.lobby_code.hash() & 0x7fffffff
-
 func _spawn_player(id: String, p_name: String, team: String, is_bot: bool, is_local: bool) -> void:
 	var p: Node = PLAYER.instantiate()
 	p.team = team
@@ -776,54 +736,10 @@ func _team_spawn_offset(team: String) -> Vector3:
 		return Vector3(-12.0, 0.0, 4.0)
 	return Vector3(12.0, 0.0, 4.0)
 
-# ---------------------------------------------------------------------------
-# Offline event handlers
-# ---------------------------------------------------------------------------
-
-func _on_offline_tagged(victim_id: String, attacker_id: String, team: String) -> void:
-	var victim: Node = player_nodes.get(victim_id)
-	if victim != null:
-		victim.frozen = true
-	var attacker_info: Dictionary = rules.players.get(attacker_id, {})
-	var victim_info: Dictionary = rules.players.get(victim_id, {})
-	var verb: String = "mimed" if team == "mime" else "clowned"
-	hud.append_log("%s was %s by %s" % [victim_info.get("name", "?"), verb, attacker_info.get("name", "?")])
-	if victim_id == local_player_id:
-		hud.flash_frozen(team, attacker_info.get("name", "?"))
-	_render_team_status_offline()
-
-func _on_offline_tag_rejected(attacker_id: String, _victim_id: String, reason: String) -> void:
-	# Offline mirror of the online tag_result handler. Only the local
-	# player gets feedback; remote-on-server bots don't have anyone to
-	# message and the verbose log would be noisy with bot misses.
-	if attacker_id != local_player_id:
-		return
-	_surface_tag_reject(reason)
-
-func _on_offline_saved(victim_id: String, savior_id: String) -> void:
-	var victim: Node = player_nodes.get(victim_id)
-	if victim != null:
-		victim.frozen = false
-	var savior_info: Dictionary = rules.players.get(savior_id, {})
-	var victim_info: Dictionary = rules.players.get(victim_id, {})
-	hud.append_log("%s saved %s" % [savior_info.get("name", "?"), victim_info.get("name", "?")])
-	if victim_id == local_player_id:
-		hud.clear_frozen_overlay()
-	_render_team_status_offline()
-
-func _on_offline_won(team: String) -> void:
-	var victory: bool = team == local_player.team
-	hud.show_end(victory)
-	_play_stinger(victory)
-
-func _on_offline_phase_changed(phase: int) -> void:
-	match phase:
-		GameRulesScript.Phase.FREE_ROAM:
-			hud.flash_disperse()
-		GameRulesScript.Phase.TURN_MIME:
-			hud.flash_battle_cry(MIME_BATTLE_CRIES[randi() % MIME_BATTLE_CRIES.size()], "mime")
-		GameRulesScript.Phase.TURN_CLOWN:
-			hud.flash_battle_cry(CLOWN_BATTLE_CRIES[randi() % CLOWN_BATTLE_CRIES.size()], "clown")
+# Offline rules-event handlers + team-status render live in
+# game/scripts/offline_mode.gd. The shared MIME_BATTLE_CRIES /
+# CLOWN_BATTLE_CRIES constants below stay here because the online
+# phase-event handler also uses them.
 
 # ---------------------------------------------------------------------------
 # HUD helpers
@@ -832,12 +748,6 @@ func _on_offline_phase_changed(phase: int) -> void:
 func _on_local_frozen_changed(is_frozen: bool) -> void:
 	if not is_frozen:
 		hud.clear_frozen_overlay()
-
-func _render_team_status_offline() -> void:
-	var list: Array = []
-	for player in rules.players.values():
-		list.append(player)
-	hud.render_team_status(list)
 
 func _render_team_status_online(entries: Array) -> void:
 	hud.render_team_status(entries)

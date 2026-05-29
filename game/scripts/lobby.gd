@@ -239,7 +239,33 @@ func _on_room_error(code: String, message: String) -> void:
 func _on_room_disconnected(reason: String) -> void:
 	if transition_started:
 		return
+	# The server sends `{t: 'error', code: ...}` AND closes with a 4xxx
+	# code on the same rejection. Godot's WebSocketPeer polls; if the
+	# close frame is processed before the error packet (or the error
+	# packet is lost), only the close code arrives. Treat the close code
+	# as authoritative for the known rejection family so the player gets
+	# a friendly popup instead of "Disconnected from lobby. (closed by
+	# peer: 4003)" raw status text.
+	var code: int = _parse_close_code(reason)
+	if code == 4003:
+		_show_match_in_progress_popup()
+		return
+	if code == 4004:
+		_show_session_expired_popup()
+		return
+	if code == 4002:
+		_show_room_full_popup()
+		return
 	status_label.text = "Disconnected from lobby. (%s)" % reason
+
+func _parse_close_code(reason: String) -> int:
+	# room_client.gd formats the reason as "closed by peer: %d". Anything
+	# else (connect failed, send buffer full) returns -1.
+	var prefix := "closed by peer: "
+	if not reason.begins_with(prefix):
+		return -1
+	var tail: String = reason.substr(prefix.length())
+	return tail.to_int()
 
 func _show_match_in_progress_popup() -> void:
 	var dialog := AcceptDialog.new()
@@ -255,6 +281,19 @@ func _show_room_full_popup() -> void:
 	var dialog := AcceptDialog.new()
 	dialog.title = "Room is full"
 	dialog.dialog_text = "This lobby already has the maximum 16 players. Try Find Match for a fresh room."
+	dialog.ok_button_text = "Back to menu"
+	dialog.unresizable = true
+	dialog.confirmed.connect(func(): requested_screen.emit("menu"))
+	add_child(dialog)
+	dialog.popup_centered()
+
+func _show_session_expired_popup() -> void:
+	# Reached when an arena reconnect attempt fails because the grace
+	# window has expired. Routed through the lobby's _on_room_disconnected
+	# only when the close frame arrives without the matching error frame.
+	var dialog := AcceptDialog.new()
+	dialog.title = "Match ended"
+	dialog.dialog_text = "You were disconnected for too long. Returning to the menu."
 	dialog.ok_button_text = "Back to menu"
 	dialog.unresizable = true
 	dialog.confirmed.connect(func(): requested_screen.emit("menu"))

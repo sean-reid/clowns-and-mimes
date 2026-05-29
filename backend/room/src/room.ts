@@ -526,8 +526,16 @@ export class Room implements DurableObject {
     // carry over so the player resumes mid-match rather than starting
     // fresh in `filling`. This is what closes the "round resets back to
     // disperse after a transient WS drop" bug.
-    if (sessionToken) {
-      const existingId = this.resumePlayerId(sessionToken);
+    // Track whether the client presented a sessionToken so the failure
+    // path below can distinguish "your resume slot is gone" (token was
+    // presented but invalid - grace expired) from "you joined a running
+    // match fresh" (no token, never had a slot in this room). The client
+    // surfaces these as different popups since the user-actionable next
+    // step is different (one returns to menu, the other suggests a new
+    // Find Match).
+    const presentedToken = typeof sessionToken === 'string' && sessionToken !== '';
+    if (presentedToken) {
+      const existingId = this.resumePlayerId(sessionToken!);
       if (existingId !== null) {
         this.resumeSession(ws, existingId);
         return;
@@ -539,12 +547,15 @@ export class Room implements DurableObject {
       // who left mid-match can't come back as a fresh PlayerState. They
       // can only resume the slot they already held (via sessionToken)
       // for the grace window.
-      this.send(ws, {
-        t: 'error',
-        code: 'match_in_progress',
-        message: 'this match has already started',
-      });
-      ws.close(4003, 'match_in_progress');
+      const code = presentedToken ? 'session_expired' : 'match_in_progress';
+      const message = presentedToken
+        ? 'your reconnect window expired'
+        : 'this match has already started';
+      // session_expired closes with 4004; match_in_progress stays on
+      // 4003 for backwards compatibility with older client builds that
+      // only know that code.
+      this.send(ws, { t: 'error', code, message });
+      ws.close(presentedToken ? 4004 : 4003, code);
       return;
     }
     if (this.humanPlayers().length >= MAX_PLAYERS - this.botPlayers().length) {

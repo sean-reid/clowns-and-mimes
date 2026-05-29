@@ -189,15 +189,16 @@ export class MatchmakerDO {
       return json({ error: 'invalid_json' }, 400);
     }
     if (typeof body.roomId !== 'string') return json({ error: 'invalid_body' }, 400);
-    const entry = this.openRooms.get(body.roomId);
-    if (entry) {
-      if (entry.humans + entry.bots === 0) {
-        this.openRooms.delete(body.roomId);
-      } else {
-        entry.lastSeenAt = Date.now();
-        this.openRooms.set(body.roomId, entry);
-      }
-    }
+    // Always remove the entry. Rooms call detach precisely when they
+    // are no longer eligible to receive new joiners (phase moved past
+    // 'filling' in the Room's notifyMatchmaker gate). Previously this
+    // path bumped lastSeenAt but kept the entry whenever humans+bots>0
+    // - which is exactly the case when the room is mid-match - so the
+    // next /openJoin happily handed the same room back to a new player,
+    // who got a close-4003 'match_in_progress' from the room. If the
+    // room later drops back to filling it can re-attach via the next
+    // notifyMatchmaker -> /roomState call, which auto-creates the entry.
+    this.openRooms.delete(body.roomId);
     await this.persist();
     return json({ ok: true });
   }

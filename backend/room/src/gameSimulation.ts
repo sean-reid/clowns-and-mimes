@@ -226,7 +226,20 @@ export class GameSimulation {
       const p = this.host.players.get(id);
       if (!p || p.bot || p.frozen) {
         // Ineligible player: drain the queue so reconnects or thaws start
-        // from a clean slate instead of replaying stale inputs.
+        // from a clean slate instead of replaying stale inputs. Still
+        // advance lastAppliedSeq to the highest seq we drained so the
+        // next delta's ackSeq lets the client prune its pending_inputs
+        // buffer. Without this, a frozen player's client keeps streaming
+        // ~60 inputs/s with no ACK, the buffer grows unboundedly, and
+        // every delta's reconcile() replays N inputs through stepMovement
+        // - process time hit 195ms (5fps) in a playtest with N=3800.
+        const highestQueued = q[q.length - 1]?.seq;
+        if (highestQueued !== undefined) {
+          const lastSeq = this.host.lastAppliedSeq.get(id) ?? -1;
+          if (highestQueued > lastSeq) {
+            this.host.lastAppliedSeq.set(id, highestQueued);
+          }
+        }
         q.length = 0;
         continue;
       }

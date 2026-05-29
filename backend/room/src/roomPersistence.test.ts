@@ -42,7 +42,7 @@ function makeRoomAgainst(storage: MockStorage): { room: Room; done: Promise<void
       // Unused on the persistence path.
     },
     storage,
-    blockConcurrencyWhile: <T,>(fn: () => Promise<T>): Promise<T> => {
+    blockConcurrencyWhile: <T>(fn: () => Promise<T>): Promise<T> => {
       const p = fn();
       restorePromise = p.then(() => undefined);
       return p;

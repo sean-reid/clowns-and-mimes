@@ -55,7 +55,7 @@ function makeMockState(roomId = 'test-room-0001'): MockState {
     // until the promise resolves. Tests don't dispatch through WS so the
     // fire-and-forget behavior is enough; the constructor's restore await
     // still runs to completion before the test reads any state.
-    blockConcurrencyWhile: async <T,>(fn: () => Promise<T>): Promise<T> => fn(),
+    blockConcurrencyWhile: async <T>(fn: () => Promise<T>): Promise<T> => fn(),
   };
 }
 

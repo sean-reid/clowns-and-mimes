@@ -300,13 +300,13 @@ jobs:
           fi
       - name: Publish release with CHANGELOG body
         if: steps.notes.outputs.has_notes == 'true'
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           files: dist/**/*
           body_path: /tmp/release-notes.md
       - name: Publish release with auto-generated notes
         if: steps.notes.outputs.has_notes != 'true'
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           files: dist/**/*
           generate_release_notes: true

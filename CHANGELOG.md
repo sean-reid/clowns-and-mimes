@@ -6,6 +6,17 @@ When cutting a release: rename the `[Unreleased]` heading below to the version b
 
 ## [Unreleased]
 
+## [0.5.4] - 2026-05-29
+
+Patch release. Two reliability fixes that surfaced in playtest.
+
+### Fixed
+
+- Client no longer freezes when a player sits frozen for ~90+ seconds. The server's `simulateHumans` was draining a frozen player's input queue without advancing `lastAppliedSeq`, so every delta's `ackSeq` stayed stuck and the client's `pending_inputs` buffer grew unboundedly at ~60/s. `reconcile()` replayed every buffered input through `stepMovement` on every delta — process time climbed from 70 ms to 195 ms over ~95 seconds (5 fps) in a captured trace. Drain now advances `lastAppliedSeq` to the highest seq it saw so the client can prune.
+- Leaving a strangers game and clicking Find Match again no longer bounces the new join with close-4003 `match_in_progress`. The matchmaker was keeping the old room in its open pool whenever `humans + bots > 0` on `/roomDetach`, which is exactly when a room transitions out of `filling`. Detach now always deletes the entry; the room re-attaches via the next `/roomState` call if it ever drops back to `filling`.
+- Rejoin-rejection UX split into two distinct cases the user can act on. `match_in_progress` (close 4003) means "you joined a running match cold" — popup now reads "Match already running" / "Try Find Match again for a new one." A new `session_expired` code (close 4004) is used when a session token is presented but no longer resolves (grace expired or DO rebuilt without the slot) — popup reads "Match ended" / "You were disconnected for too long." Previously both surfaced the same misleading message.
+- Lobby now shows a "Room is full" popup with a clear next step instead of inline "Server error: room full" status text. Reachable only via shared private code at the 16-player hard cap (matchmaker filters open joins at the soft cap of 12), but the existing UX dead-ended the player with no recovery.
+
 ## [0.5.3] - 2026-05-29
 
 Patch release. The headline fix: wrangler deploys to dev/prod no longer bounce active matches into a fresh room. Room Durable Objects now persist their full state (phase, seed, topology, players, session tokens, in-flight grace deadlines) to DO storage and reload it on restart, so a client whose WS drops during a deploy reconnects via its existing session token and resumes the same match — same walls, same teams, same frozen state — instead of landing in an empty fresh room with new walls. The rest is internal: the file-split plan finished (arena.gd 1341 → 824 lines, room.ts 1887 → 852 lines), every open Dependabot bump merged including vitest 4 and astro 6, and a new cross-language fixture covers the Möbius step-aware wrap.

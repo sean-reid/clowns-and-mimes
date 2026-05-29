@@ -11,8 +11,8 @@
     "test": "echo \"website tests run in tests/e2e\" && exit 0"
   },
   "devDependencies": {
-    "@astrojs/check": "0.9.4",
-    "astro": "4.16.18",
+    "@astrojs/check": "0.9.9",
+    "astro": "6.4.2",
     "typescript": "5.6.3"
   }
 }

@@ -7,34 +7,25 @@ import type {
   ServerToClient,
   Team,
   Topology,
-  Vec2,
   Vec3,
 } from '@cm/shared';
-import { BATTLE_CRY_COUNT, PROTOCOL_VERSION } from '@cm/shared';
-import { HOVER_HEIGHT, JUMP_COOLDOWN_S, JUMP_DURATION_S } from '@cm/shared/physics';
-import { topologyDistance, wrapPosition, wrappedUnitDelta } from '@cm/shared/topology';
+import { PROTOCOL_VERSION } from '@cm/shared';
+import { HOVER_HEIGHT } from '@cm/shared/physics';
 import {
   generateWalls,
-  pathCrossesWall,
   pointBlockedByWall,
   PLAYER_RADIUS,
   type WallSegment,
 } from '@cm/shared/labyrinth';
 import { balanceTeamAssignments } from './teamBalance.ts';
-import {
-  bodyYForState,
-  resolvePlayerCollisions,
-  stepJump,
-  stepMovement,
-  WALK_SPEED,
-  SPRINT_SPEED,
-  MAX_SPRINT,
-  SPRINT_DRAIN_PER_S,
-  SPRINT_REGEN_PER_S,
-} from '@cm/shared/movement';
+import { MAX_SPRINT } from '@cm/shared/movement';
+import { BotManager, type BotManagerHost } from './botManager.ts';
 import { BotPathfinder } from './botPathfinder.ts';
+import { GameSimulation, type GameSimulationHost } from './gameSimulation.ts';
 import { parseClientMessage } from './messageValidator.ts';
 import { RateLimiter } from './rateLimiter.ts';
+import { RoomPersistence, type PersistedRoomState } from './roomPersistence.ts';
+import { SessionManager } from './sessionManager.ts';
 import { SnapshotBroadcaster, type SnapshotBroadcasterHost } from './snapshotBroadcaster.ts';
 import { TagManager, type TagManagerHost } from './tagManager.ts';
 
@@ -77,52 +68,14 @@ const FREE_ROAM_MS = 30_000;
 // worst case the dev backend has shown. True bilateral lag compensation
 // (rewind both sides to the client's tick from a trusted timestamp) is
 // the right long-term fix but requires protocol work.
-const TAG_RADIUS_BOT = 1.4;
 const TAG_RADIUS_CLIENT = 3.0;
-const UNFREEZE_RADIUS_BOT = 1.4;
 const UNFREEZE_RADIUS_CLIENT = 3.0;
 const WORLD_WIDTH = 80;
 const MAX_PLAYERS = 16;
+// Per-team bot fill target. Matches the TEAM_TARGET inside BotManager;
+// kept here because onJoin reads it to decide whether to kick a bot when
+// a human arrives after the auto-fill has saturated the team.
 const TEAM_TARGET = 4;
-// Movement constants and stepMovement are imported from @cm/shared/movement
-// so the client predictor can call identical math during reconciliation.
-const TURN_FIRST_MS = 30_000;
-const TURN_STEP_MS = 30_000;
-const TURN_CAP_MS = 5 * 60_000;
-const BOT_FILL_DELAY_MS = 3_000;
-// Maximum drift allowed between the client's stamped input.nowMs and
-// the server's Date.now() when the input lands. Inputs whose nowMs is
-// further out are still honoured but the server re-stamps the jump
-// arc start with its own clock, so a misbehaving (or wildly out of
-// sync) client cannot anchor jumpStartedAt arbitrarily far in the past
-// or future. 500 ms is generous against legitimate network jitter and
-// tight enough that the cheat ceiling is bounded.
-const JUMP_CLIENT_CLOCK_SKEW_MS = 500;
-// Window during which a player whose WS has closed can reconnect with
-// their sessionToken and resume the same PlayerState. Bots keep playing
-// against them in absentia; their input queue stays empty so their body
-// stands still (and is vulnerable to tags) until the WS is back. After
-// the window expires their PlayerState is torn down for real and the
-// usual humans-zero match-state cleanup runs.
-//
-// 45 s is sized to outrun the worst-case client reconnect ladder. The
-// arena schedules 3 attempts with backoffs [0.5, 1.5, 3.0] and each
-// step waits `wait_s + 1` for the connection result, so the ladder
-// itself can take ~13 s. The disconnect also takes a moment to surface
-// on the client (TCP retries, Godot's STATE_CLOSED detection). 15 s
-// left only ~2 s of margin and lost the race in the wild: finalize
-// ran first, the player slot was nuked, and the reconnect arrived as
-// a fresh join in a bot-empty room.
-const RECONNECT_GRACE_MS = 45_000;
-// Wider vision so bots commit to a chase / flee instead of dithering on
-// patrol when an opponent is across a corridor. World half-diagonal is ~56,
-// so 22 covers most short corridors without making bots omniscient.
-const BOT_VISION_RADIUS = 22;
-const BOT_PATROL_RETARGET_MS = 4_000;
-// Bots sprint when within this multiple of TAG_RADIUS of an engaged enemy
-// (chase) or when fleeing and the threat is closing. Without sprint they
-// were always walking and could never close on or escape a sprinting human.
-const BOT_SPRINT_TRIGGER_RADIUS = 10;
 // Grace window after an unfreeze where the saved player cannot be re-tagged.
 // Without this, two opponents adjacent to a saved teammate could re-freeze
 // them on the very next tick and trigger an endless freeze/save chain.
@@ -136,107 +89,6 @@ const UNFREEZE_GRACE_MS = 1_500;
 // If lag-driven rejections come back in playtest, revisit with per-client
 // RTT estimation off the existing ping/pong stream.
 const LAG_COMP_MS = 0;
-// Cap of how far back we keep positions. Larger means more memory but
-// covers higher-latency clients; 500 ms is plenty for any reasonable RTT.
-const POSITION_HISTORY_KEEP_MS = 500;
-// Bot "no-progress" detector. simulateBots reports moved=true whenever any
-// axis-slide candidate succeeds, but a bot grinding x-only against a
-// horizontal wall will pass the check every tick while making no headway
-// toward its target. If the world-space distance covered in
-// BOT_NO_PROGRESS_WINDOW_MS stays below BOT_NO_PROGRESS_MIN_DIST, force a
-// retarget: pick a new patrol point, drop the engaged enemy target so the
-// chase BFS re-runs, and zero the direction-smoothing carry-over so the
-// new heading takes effect immediately.
-const BOT_NO_PROGRESS_WINDOW_MS = 800;
-const BOT_NO_PROGRESS_MIN_DIST = 0.5;
-// World units to project ahead of the bot when fleeing. The unit-delta
-// "away" vector is fed into the BFS pathfinder against this projected
-// target so the route bends around walls instead of crashing straight back
-// into a corner. 12 units is enough to cross one or two grid cells in any
-// topology.
-const BOT_FLEE_PROJECTION = 12;
-// "Last-known position" investigation window. When a target the bot had
-// engaged with becomes occluded behind a wall, the bot doesn't drop them
-// instantly - it routes toward the last position it could see them and
-// holds the chase for BOT_INVESTIGATE_MS. If the target reappears in that
-// window the chase resumes; if not, engagedTargetId clears and the bot
-// returns to patrol. Same pattern Half-Life HECU grunts and Halo grunts
-// use to keep "lost the player around a corner" play readable rather
-// than instantly omniscient.
-const BOT_INVESTIGATE_MS = 3_000;
-// Each bot remembers the last BOT_RECENT_TARGETS_KEEP patrol points it
-// committed to. A new patrol candidate within BOT_RECENT_TARGET_RADIUS of
-// any of them is rejected, so the bot doesn't pace back and forth between
-// the same two or three spots. After BOT_PATROL_CANDIDATE_ATTEMPTS tries
-// we accept whatever the next random draw gives - on a dense maze with
-// many bots the entire reachable space may be in the memory window.
-const BOT_RECENT_TARGETS_KEEP = 6;
-const BOT_RECENT_TARGET_RADIUS = 10;
-const BOT_PATROL_CANDIDATE_ATTEMPTS = 8;
-
-interface BotMind {
-  patrolTarget: { x: number; z: number };
-  patrolUntil: number;
-  // Sticky chase/flee target. Without this, simulateBots picked the closest
-  // enemy every tick - if two opponents were near-equidistant, the bot would
-  // oscillate between them and the rendered motion looked like jitter. Once
-  // a target is engaged we stay with it unless it disappears, becomes
-  // invalid, or a different enemy is significantly closer.
-  engagedTargetId: string | null;
-  // Cached unit-direction vector for movement smoothing. Each tick lerps
-  // toward the freshly-computed direction by SMOOTHING so abrupt
-  // reversals (e.g. two opponents straddling the bot) don't translate into
-  // visible flicker.
-  lastDir: { x: number; z: number };
-  // Most recent yaw the bot rendered. Body yaw is interpolated toward the
-  // movement direction with a cap on radians-per-tick so cardinal slide
-  // fallbacks don't snap the avatar 90 degrees in one frame.
-  lastYaw: number;
-  // Progress tracking for "is this bot pinned against geometry?" detection.
-  // The slide-fallback in simulateBots happily reports moved=true when only
-  // an x-only or z-only candidate succeeded, even when the bot is grinding
-  // straight into a wall every tick. Sample position every
-  // BOT_NO_PROGRESS_WINDOW_MS and force a retarget if the distance covered
-  // in that window stays below BOT_NO_PROGRESS_MIN_DIST.
-  progressSampleAt: number;
-  progressSamplePos: { x: number; z: number };
-  // Last position the bot could actually see the engaged target at, and the
-  // deadline by which the bot must reacquire line-of-sight before giving up.
-  // Set when nearestVisibleEnemy returns null but the previously-engaged
-  // target still exists (occluded). While investigating, the bot routes to
-  // lastKnownPos via BFS as if it were a patrol point. Both null when not
-  // actively investigating.
-  lastKnownPos: { x: number; z: number } | null;
-  investigateUntil: number;
-  // Recent patrol targets the bot has committed to. randomPatrolPoint
-  // rejects candidates near any of these so a wandering bot explores
-  // different parts of the map instead of pacing between the same spots.
-  // Newest at the end; capped at BOT_RECENT_TARGETS_KEEP.
-  recentTargets: Array<{ x: number; z: number }>;
-  // Wall-clock of the bot's last jump takeoff (Unix ms). Used to debounce
-  // the three jump triggers (tag-threat, stuck-in-corner, tactical noise)
-  // so a bot doesn't bunny-hop every tick the predicate fires. 0 means
-  // "never jumped this match".
-  lastJumpedAt: number;
-}
-
-// Minimum gap between bot jumps so a sustained threat doesn't make the
-// bot hop on every tick. The natural JUMP_DURATION_S + JUMP_COOLDOWN_S
-// lockout in stepJump would already prevent it, but enforcing a longer
-// gap here keeps the rhythm reading as deliberate rather than spammy.
-const BOT_JUMP_REFRACTORY_MS = 1500;
-// Per-tick probability of a tactical-noise jump during an active chase.
-// 5% per second at 60 Hz simulate; gives ~3 noise jumps per minute,
-// enough to keep bots from being read trivially without spamming.
-const BOT_JUMP_NOISE_PER_SECOND = 0.05;
-// Extra reach added to TAG_RADIUS_BOT when evaluating the tag-threat
-// jump trigger. A bot inside (tag_radius + this) starts evading before
-// the attacker has actually reached tag range.
-const BOT_JUMP_EVADE_BUFFER = 0.5;
-// Maximum opponent distance for the corner-jump trigger. If a bot has
-// made no progress for BOT_NO_PROGRESS_WINDOW_MS AND an opponent is
-// within this range, jump to reposition.
-const BOT_JUMP_CORNER_THREAT_RADIUS = 4.0;
 
 interface Connection {
   ws: WebSocket;
@@ -268,17 +120,9 @@ export class Room implements DurableObject {
   // Player id of the host once they have completed the `join` handshake.
   // Used to gate `start_match` to that one player.
   private hostPlayerId: string | null = null;
-  // Per-player resumption secrets. Handed to the client in their snapshot
-  // and presented back on the next `join` so a transient WS drop is
-  // resumed against the same PlayerState (team, position, frozen) rather
-  // than treated as a fresh join. Map is human-only; bots never reconnect.
-  private readonly sessionTokens = new Map<string, string>();
-  // Player ids whose WS has dropped but who are still inside the
-  // RECONNECT_GRACE_MS window. Their PlayerState stays in `players` so
-  // the match can keep ticking; if they reconnect with the right
-  // sessionToken we rebind their WS and resume. After the window expires
-  // we run the real teardown via finalizeDisconnect.
-  private readonly disconnectTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  // Session tokens + disconnect-grace timers live in SessionManager.
+  // See backend/room/src/sessionManager.ts.
+  private readonly sessions = new SessionManager();
   // One queue per player. Inputs arrive at 60 Hz from the client and are
   // drained one-per-tick by simulateHumans (matching the canonical Quake /
   // Source / Overwatch model). The cap (MAX_INPUT_QUEUE) bounds memory if a
@@ -296,13 +140,6 @@ export class Room implements DurableObject {
   private roundNumber = 0;
   private firstTeam: Team = 'mime';
   private tickHandle: ReturnType<typeof setInterval> | null = null;
-  // Date.now() at the moment the world paused because every human went
-  // into the disconnect grace window. Null while at least one human is
-  // active. On resume the first non-paused tick shifts turnEndsAt
-  // forward by the elapsed pause so the phase clock effectively pauses
-  // alongside the simulation (otherwise a 10 s wifi drop would burn
-  // through 10 s of the active turn timer in the player's absence).
-  private pausedSince: number | null = null;
   // Each player's XZ position as of the start of the current tick.
   // resolvePlayerCollisions uses this to derive an approach speed
   // between two bodies (so the bounce-back impulse can scale with
@@ -310,8 +147,6 @@ export class Room implements DurableObject {
   // from the post-tick positions, so the NEXT tick's collision pass
   // sees the right "where each player was".
   private readonly prevTickPositions = new Map<string, { x: number; z: number }>();
-  private botFillHandle: ReturnType<typeof setTimeout> | null = null;
-  private readonly botMinds = new Map<string, BotMind>();
   // Wall-clock ms when each player was last unfrozen. Used by canTag to
   // refuse a re-tag inside UNFREEZE_GRACE_MS so adjacent attackers can't
   // start an immediate freeze/save oscillation.
@@ -328,18 +163,39 @@ export class Room implements DurableObject {
   private pathfinder: BotPathfinder | null = null;
   private readonly tagManager: TagManager;
   private readonly broadcaster: SnapshotBroadcaster;
+  private readonly bots: BotManager;
+  private readonly sim: GameSimulation;
   // One token bucket per live WebSocket. Created on accept, removed on
   // detach. webSocketMessage rejects with a rate_limited error when the
   // bucket is empty; the connection stays open so a transient burst
   // doesn't force a reconnect cycle.
   private readonly rateLimiters = new Map<WebSocket, RateLimiter>();
+  // Persists room state across DO restarts (wrangler deploys, CF
+  // migrations, crashes). Loaded once on construct via
+  // blockConcurrencyWhile so the first incoming WS message sees the
+  // restored state. Saved fire-and-forget on every state-changing event
+  // via persist(); CF DO storage coalesces writes within an I/O turn.
+  private readonly persistence: RoomPersistence;
 
   constructor(
     private readonly state: DurableObjectState,
     private readonly env: RoomEnv = {},
   ) {
-    this.walls = generateWalls(this.seed, this.topology);
-    this.rebuildPathfinder();
+    this.persistence = new RoomPersistence(state.storage);
+    // Restore in-memory state from a prior DO incarnation, if any.
+    // blockConcurrencyWhile guarantees no WS message is dispatched until
+    // this resolves, so the first onJoin sees the full restored snapshot
+    // (players map populated, sessionTokens primed, pending graces armed).
+    // walls + pathfinder are generated INSIDE the block, AFTER any
+    // restore, so they use the persisted (seed, topology) - generating
+    // them outside the block would race with the restore and leave the
+    // pathfinder pointed at the wrong walls.
+    state.blockConcurrencyWhile(async () => {
+      const persisted = await this.persistence.load();
+      if (persisted !== null) this.restoreFromSnapshot(persisted);
+      this.walls = generateWalls(this.seed, this.topology);
+      this.rebuildPathfinder();
+    });
     const broadcasterHost: SnapshotBroadcasterHost = {
       players: this.players,
       connections: this.connections,
@@ -364,17 +220,148 @@ export class Room implements DurableObject {
       getPhase: () => this.phase,
       setPhase: (p) => {
         this.phase = p;
+        this.persist();
       },
-      positionAt: (id, atMs) => this.positionAt(id, atMs),
+      positionAt: (id, atMs) => this.sim.positionAt(id, atMs),
       broadcast: (msg) => this.broadcast(msg),
       send: (ws, msg) => this.send(ws, msg),
       stopTick: () => this.stopTick(),
     };
     this.tagManager = new TagManager(host);
+    const botsHost: BotManagerHost = {
+      players: this.players,
+      lastSavedAt: this.lastSavedAt,
+      getWalls: () => this.walls,
+      getTopology: () => this.topology,
+      getPathfinder: () => this.pathfinder,
+      getActiveTurnTeam: () => this.activeTurnTeam(),
+      getPhase: () => this.phase,
+      getTickHandle: () => this.tickHandle,
+      pickSpawnPosition: (team) => this.pickSpawnPosition(team),
+      tally: (team) => this.tally(team),
+      humanCount: () => this.humanPlayers().length,
+      botCount: () => this.botPlayers().length,
+      notifyMatchmaker: (humans, bots) => this.notifyMatchmaker(humans, bots),
+      broadcast: (msg) => this.broadcast(msg),
+      canTag: (a, v, r) => this.tagManager.canTag(a, v, r),
+      freezePlayer: (p) => this.tagManager.freezePlayer(p),
+      checkWin: () => this.tagManager.checkWin(),
+      startMatch: () => this.startMatch(),
+    };
+    this.bots = new BotManager(botsHost);
+    const simHost: GameSimulationHost = {
+      players: this.players,
+      inputQueues: this.inputQueues,
+      lastAppliedSeq: this.lastAppliedSeq,
+      prevTickPositions: this.prevTickPositions,
+      positionHistory: this.positionHistory,
+      getWalls: () => this.walls,
+      getTopology: () => this.topology,
+      getPhase: () => this.phase,
+      setPhase: (p) => {
+        this.phase = p;
+        this.persist();
+      },
+      getTurnEndsAt: () => this.turnEndsAt,
+      setTurnEndsAt: (ms) => {
+        this.turnEndsAt = ms;
+      },
+      // turnEndsAt updates every tick during simulation (the pause-resume
+      // adjustment in particular). We don't persist on the simulation
+      // tick to avoid 60 writes/sec; turnEndsAt restores to its
+      // last-event-time value, which is good enough to ~1 s.
+      getFirstTeam: () => this.firstTeam,
+      getRoundNumber: () => this.roundNumber,
+      incrementRoundNumber: () => {
+        this.roundNumber += 1;
+      },
+      activeHumans: () => this.activeHumans(),
+      simulateBots: (dt) => this.bots.simulate(dt),
+      broadcast: (msg) => this.broadcast(msg),
+      broadcastDelta: () => this.broadcaster.broadcastDelta(),
+    };
+    this.sim = new GameSimulation(simHost);
   }
 
   private rebuildPathfinder(): void {
     this.pathfinder = new BotPathfinder(this.walls, this.topology);
+  }
+
+  /**
+   * Restore the in-memory room from a prior DO incarnation's persisted
+   * snapshot. Called once from the constructor inside
+   * blockConcurrencyWhile so all fields are populated before the first
+   * WS message dispatches.
+   *
+   * Behaviour after a wrangler-deploy DO restart:
+   *  - phase / seed / topology / host fields snap back to the prior
+   *    values, so the resumed client sees the same match.
+   *  - Every player (humans + bots) is restored at their last-persisted
+   *    position. Positions update on events (join/detach/phase/tag),
+   *    not on every tick, so they may be a few seconds stale.
+   *  - sessionTokens are reinstalled, so the client's existing token
+   *    resolves on the next join and resumeSession runs.
+   *  - In-flight grace windows resume with their remaining time, or
+   *    finalize immediately if the wall-clock already ran past the
+   *    deadline while the DO was offline.
+   *  - The tick is re-armed if the room was past the filling phase so
+   *    the simulation continues the moment the first human reconnects
+   *    (it pauses internally while activeHumans === 0).
+   */
+  private restoreFromSnapshot(s: PersistedRoomState): void {
+    this.phase = s.phase;
+    this.turnEndsAt = s.turnEndsAt;
+    this.topology = s.topology;
+    this.seed = s.seed;
+    this.roundNumber = s.roundNumber;
+    this.firstTeam = s.firstTeam;
+    this.expectedHostToken = s.expectedHostToken;
+    this.hostPlayerId = s.hostPlayerId;
+    for (const p of s.players) this.players.set(p.id, p);
+    for (const [id, token] of s.sessions) this.sessions.restore(id, token);
+    const now = Date.now();
+    for (const [id, expiresAt] of s.pendingDisconnects) {
+      const remaining = expiresAt - now;
+      if (remaining <= 0) {
+        // Grace already expired while the DO was offline. Run the
+        // teardown synchronously so the restored room matches what
+        // would have happened had the DO stayed up.
+        this.finalizeDisconnect(id);
+      } else {
+        this.sessions.scheduleFinalize(id, () => this.finalizeDisconnect(id), remaining);
+      }
+    }
+    // Re-arm the tick if the match was running. The sim pauses
+    // internally while activeHumans === 0 (every human is in grace
+    // post-restore), so the first reconnect's resumeSession cancels
+    // that player's grace and the sim resumes from the next tick.
+    if (this.phase !== 'filling' && this.tickHandle === null && this.players.size > 0) {
+      this.tickHandle = setInterval(() => this.sim.tick(), TICK_MS);
+    }
+  }
+
+  /**
+   * Serialize the current room into the persistence schema and write
+   * it. Called at every state-changing event (join, detach, finalize,
+   * resume, phase transition, bot fill, team balance). CF DO storage
+   * coalesces multiple put()s within an I/O turn into one disk write,
+   * so a tick that triggers several persist()s still costs one write.
+   */
+  private persist(): void {
+    this.persistence.save({
+      version: 1,
+      phase: this.phase,
+      turnEndsAt: this.turnEndsAt,
+      topology: this.topology,
+      seed: this.seed,
+      roundNumber: this.roundNumber,
+      firstTeam: this.firstTeam,
+      expectedHostToken: this.expectedHostToken,
+      hostPlayerId: this.hostPlayerId,
+      players: [...this.players.values()],
+      sessions: this.sessions.exportSessions(),
+      pendingDisconnects: this.sessions.exportPendingDisconnects(),
+    });
   }
 
   /**
@@ -573,7 +560,7 @@ export class Room implements DurableObject {
     // saturates with humans instead of staying bot-heavy when there are
     // people waiting to play.
     if (this.tally(team) >= TEAM_TARGET) {
-      this.kickOneBotFromTeam(team);
+      this.bots.kickOneFromTeam(team);
     }
     const player: PlayerState = {
       id,
@@ -590,10 +577,9 @@ export class Room implements DurableObject {
     this.players.set(id, player);
     this.connections.set(ws, { ws, playerId: id });
     // Mint the resumption secret now so the snapshot below can carry it
-    // back to the client. Kept server-side in sessionTokens; never sent
+    // back to the client. Kept server-side in SessionManager; never sent
     // to other clients.
-    const newSessionToken = crypto.randomUUID();
-    this.sessionTokens.set(id, newSessionToken);
+    const newSessionToken = this.sessions.mint(id);
     // Host detection: the matchmaker stamped the room's expectedHostToken
     // on the host's WS URL. Compare both the per-WS token (from the URL
     // we saw on upgrade) and the optional payload token (belt and braces
@@ -624,11 +610,12 @@ export class Room implements DurableObject {
     if (!hasHost) {
       if (this.phase === 'filling' && this.humanPlayers().length >= 2 && !this.tickHandle) {
         this.startMatch();
-      } else if (this.phase === 'filling' && this.botFillHandle === null && !this.tickHandle) {
-        this.scheduleBotFill();
+      } else if (this.phase === 'filling' && !this.tickHandle) {
+        this.bots.scheduleFill();
       }
     }
     this.notifyMatchmaker(this.humanPlayers().length, this.botPlayers().length);
+    this.persist();
   }
 
   private onStartMatch(ws: WebSocket): void {
@@ -649,132 +636,12 @@ export class Room implements DurableObject {
     // not normally fire for a hosted room, but the matchmaker may have
     // changed mid-room or the room may have been promoted; safer to be
     // defensive). Then fill bots and transition into free roam.
-    if (this.botFillHandle !== null) {
-      clearTimeout(this.botFillHandle);
-      this.botFillHandle = null;
-    }
-    this.fillBots();
+    this.bots.cancelFill();
+    this.bots.fillTeams();
     this.startMatch();
   }
 
   /** Schedule a one-shot bot fill so a solo joiner gets opponents within a few seconds. */
-  private scheduleBotFill(): void {
-    this.botFillHandle = setTimeout(() => {
-      this.botFillHandle = null;
-      if (this.phase !== 'filling' || this.tickHandle) return;
-      this.fillBots();
-      this.startMatch();
-    }, BOT_FILL_DELAY_MS);
-  }
-
-  /** Fill empty slots with bots up to TEAM_TARGET per team. Idempotent. */
-  fillBots(): void {
-    for (const team of ['mime', 'clown'] as const) {
-      while (this.tally(team) < TEAM_TARGET) {
-        const id = crypto.randomUUID();
-        const spawn = this.pickSpawnPosition(team);
-        this.players.set(id, {
-          id,
-          name: generateBotName(),
-          team,
-          bot: true,
-          position: spawn,
-          yaw: 0,
-          frozen: false,
-          sprintEnergy: MAX_SPRINT,
-          sprinting: false,
-          jumpStartedAt: null,
-        });
-        this.botMinds.set(id, {
-          patrolTarget: this.randomPatrolPoint(),
-          patrolUntil: 0,
-          engagedTargetId: null,
-          lastDir: { x: 0, z: 0 },
-          lastYaw: 0,
-          progressSampleAt: Date.now(),
-          progressSamplePos: { x: spawn.x, z: spawn.z },
-          lastKnownPos: null,
-          investigateUntil: 0,
-          recentTargets: [],
-          lastJumpedAt: 0,
-        });
-      }
-    }
-    this.notifyMatchmaker(this.humanPlayers().length, this.botPlayers().length);
-  }
-
-  private randomPatrolPoint(): { x: number; z: number } {
-    const half = WORLD_WIDTH / 2;
-    return {
-      x: (Math.random() - 0.5) * 2 * (half - 4),
-      z: (Math.random() - 0.5) * 2 * (half - 4),
-    };
-  }
-
-  // Pick a patrol point that (a) is not inside a wall's clearance band and
-  // (b) is at least BOT_RECENT_TARGET_RADIUS from every point on the bot's
-  // recent-targets ring. Rejecting wall-clipped candidates keeps the bot
-  // exploring open corridors instead of pathfinding toward a coordinate
-  // inside a wall; rejecting near-recent candidates stops the pacing /
-  // backtracking pattern that pure random sampling produces. After
-  // BOT_PATROL_CANDIDATE_ATTEMPTS rejections we accept whatever the next
-  // draw returns - a maze packed full of bots may eventually fill the
-  // memory window with the entire reachable space.
-  private pickExplorationPatrolPoint(recentTargets: ReadonlyArray<{ x: number; z: number }>): {
-    x: number;
-    z: number;
-  } {
-    let last = this.randomPatrolPoint();
-    for (let attempt = 0; attempt < BOT_PATROL_CANDIDATE_ATTEMPTS; attempt += 1) {
-      const candidate = this.randomPatrolPoint();
-      last = candidate;
-      if (this.walls.length > 0 && pointBlockedByWall(this.walls, candidate.x, candidate.z)) {
-        continue;
-      }
-      let tooClose = false;
-      for (const recent of recentTargets) {
-        const dx = candidate.x - recent.x;
-        const dz = candidate.z - recent.z;
-        if (dx * dx + dz * dz < BOT_RECENT_TARGET_RADIUS * BOT_RECENT_TARGET_RADIUS) {
-          tooClose = true;
-          break;
-        }
-      }
-      if (tooClose) continue;
-      return candidate;
-    }
-    return last;
-  }
-
-  // Commit a fresh patrol point to the bot's mind, updating the
-  // recent-targets ring buffer so future picks can avoid the area.
-  private commitPatrolTarget(mind: BotMind): void {
-    mind.patrolTarget = this.pickExplorationPatrolPoint(mind.recentTargets);
-    mind.recentTargets.push({ x: mind.patrolTarget.x, z: mind.patrolTarget.z });
-    while (mind.recentTargets.length > BOT_RECENT_TARGETS_KEEP) {
-      mind.recentTargets.shift();
-    }
-  }
-
-  /**
-   * Cells the bot should treat as solid for this tick's BFS. Used to route
-   * chase / rescue paths around stationary bodies that would otherwise pin
-   * the bot in a corridor (the slide-fallback can't side-step a body that
-   * sits exactly across the desired axis). Excludes the bot itself and the
-   * preserveId target so the destination cell remains walkable. Returns an
-   * empty set when the pathfinder is missing.
-   */
-  private avoidCellsForBot(self: PlayerState, preserve: PlayerState | null): Set<number> {
-    const out = new Set<number>();
-    if (!this.pathfinder) return out;
-    const preserveId = preserve ? preserve.id : null;
-    for (const other of this.players.values()) {
-      if (other.id === self.id) continue;
-      if (other.id === preserveId) continue;
-      out.add(this.pathfinder.cellAt(other.position));
-    }
-    return out;
-  }
 
   /**
    * Returns true if landing at (x, z) would put this player inside another
@@ -872,49 +739,46 @@ export class Room implements DurableObject {
     // Drop any queued inputs so the still-present body does not keep
     // moving by replaying stale inputs while the player is gone.
     this.inputQueues.delete(conn.playerId);
-    const existing = this.disconnectTimers.get(conn.playerId);
-    if (existing !== undefined) clearTimeout(existing);
-    this.disconnectTimers.set(
-      conn.playerId,
-      setTimeout(() => {
-        this.disconnectTimers.delete(conn.playerId);
-        this.finalizeDisconnect(conn.playerId);
-      }, RECONNECT_GRACE_MS),
-    );
+    const finalizeId = conn.playerId;
+    this.sessions.scheduleFinalize(finalizeId, () => this.finalizeDisconnect(finalizeId));
     this.notifyMatchmaker(this.humanPlayers().length, this.botPlayers().length);
+    this.persist();
   }
 
   private finalizeDisconnect(playerId: string): void {
     this.players.delete(playerId);
-    this.sessionTokens.delete(playerId);
+    this.sessions.forget(playerId);
     this.inputQueues.delete(playerId);
     this.lastAppliedSeq.delete(playerId);
     this.lastSavedAt.delete(playerId);
     this.positionHistory.delete(playerId);
     if (this.humanPlayers().length === 0) {
       this.stopTick();
-      this.cancelBotFill();
-      this.clearBots();
+      this.bots.cancelFill();
+      this.bots.clear();
       this.phase = 'filling';
       this.detachMatchmaker();
+      // Room is empty - drop the persisted snapshot so the next client
+      // who lands on this DO gets a clean room rather than a stale
+      // snapshot. The DO instance can also be evicted by CF at this
+      // point without leaving disk garbage behind.
+      this.persistence.clear();
     } else {
       this.notifyMatchmaker(this.humanPlayers().length, this.botPlayers().length);
+      this.persist();
     }
   }
 
   private resumePlayerId(sessionToken: string): string | null {
-    for (const [id, token] of this.sessionTokens) {
-      if (token === sessionToken && this.players.has(id)) return id;
-    }
-    return null;
+    const id = this.sessions.resumePlayerId(sessionToken);
+    // Verify the player slot is still alive: a session token can outlive
+    // its player if finalizeDisconnect ran in the gap between detach and
+    // the client's resume attempt.
+    return id !== null && this.players.has(id) ? id : null;
   }
 
   private resumeSession(ws: WebSocket, playerId: string): void {
-    const pending = this.disconnectTimers.get(playerId);
-    if (pending !== undefined) {
-      clearTimeout(pending);
-      this.disconnectTimers.delete(playerId);
-    }
+    this.sessions.cancelFinalize(playerId);
     // Replace any stale connection record bound to this playerId. The
     // old WS object is dead at this point (close fired), but the entry
     // would otherwise sit in this.connections forever.
@@ -931,29 +795,15 @@ export class Room implements DurableObject {
         this.hostPlayerId = playerId;
       }
     }
-    const token = this.sessionTokens.get(playerId) ?? '';
     this.send(ws, {
       t: 'snapshot',
       snapshot: this.snapshot(),
       youAre: playerId,
-      sessionToken: token,
+      sessionToken: this.sessions.tokenFor(playerId),
     });
     this.broadcast({ t: 'event', kind: { kind: 'phase', phase: this.phase } });
     this.notifyMatchmaker(this.humanPlayers().length, this.botPlayers().length);
-  }
-
-  private cancelBotFill(): void {
-    if (this.botFillHandle !== null) {
-      clearTimeout(this.botFillHandle);
-      this.botFillHandle = null;
-    }
-  }
-
-  private clearBots(): void {
-    for (const id of [...this.botMinds.keys()]) {
-      this.players.delete(id);
-    }
-    this.botMinds.clear();
+    this.persist();
   }
 
   private onInput(ws: WebSocket, input: PlayerInput): void {
@@ -980,14 +830,6 @@ export class Room implements DurableObject {
     this.tagManager.onUnfreeze(ws, targetId);
   }
 
-  private canTag(attacker: PlayerState, victim: PlayerState, radius: number): boolean {
-    return this.tagManager.canTag(attacker, victim, radius);
-  }
-
-  private freezePlayer(p: PlayerState): void {
-    this.tagManager.freezePlayer(p);
-  }
-
   private tally(team: Team): number {
     let n = 0;
     for (const p of this.players.values()) if (p.team === team) n += 1;
@@ -1001,18 +843,6 @@ export class Room implements DurableObject {
    * human in. The next broadcast delta carries the implicit removal, so
    * clients reap the bot's Player node via _sync_players_from_snapshot.
    */
-  private kickOneBotFromTeam(team: Team): void {
-    for (const [id, p] of this.players) {
-      if (p.team === team && p.bot) {
-        this.players.delete(id);
-        this.botMinds.delete(id);
-        this.lastSavedAt.delete(id);
-        this.notifyMatchmaker(this.humanPlayers().length, this.botPlayers().length);
-        return;
-      }
-    }
-  }
-
   private humanPlayers(): PlayerState[] {
     return [...this.players.values()].filter((p) => !p.bot);
   }
@@ -1023,7 +853,7 @@ export class Room implements DurableObject {
   // so a solo player who briefly drops wifi does not return to a
   // partially-collapsed match.
   private activeHumans(): number {
-    return this.humanPlayers().length - this.disconnectTimers.size;
+    return this.humanPlayers().length - this.sessions.pendingDisconnectCount();
   }
 
   private botPlayers(): PlayerState[] {
@@ -1038,22 +868,22 @@ export class Room implements DurableObject {
     return name.replace(/[^\w \-.]/g, '').slice(0, 24) || 'Player';
   }
 
-  private checkWin(): void {
-    this.tagManager.checkWin();
-  }
-
   private startMatch(): void {
     this.balanceHumansForMatchStart();
     this.firstTeam = Math.random() < 0.5 ? 'mime' : 'clown';
     this.phase = 'free_roam';
     this.turnEndsAt = Date.now() + FREE_ROAM_MS;
     this.broadcast({ t: 'event', kind: { kind: 'phase', phase: this.phase } });
-    this.tickHandle = setInterval(() => this.tick(), TICK_MS);
+    this.tickHandle = setInterval(() => this.sim.tick(), TICK_MS);
     // Drop ourselves from the matchmaker's open-room pool immediately
     // so strangers stop being routed here. The notifyMatchmaker guard
     // would catch a subsequent call too, but doing it now closes the
     // window between `phase = free_roam` and the next state push.
     this.detachMatchmaker();
+    // Persist after fillBots (run inside scheduleFill or via balanceHumans
+    // here) and the phase flip so a deploy mid-game restores the match
+    // with bots + first-team + turnEndsAt all set.
+    this.persist();
   }
 
   /**
@@ -1084,676 +914,10 @@ export class Room implements DurableObject {
     }
   }
 
-  private tick(): void {
-    // Pause the world while every human is in the session-token grace
-    // window. Without this, a solo player who briefly drops wifi has
-    // the bots keep attacking their stationary body, the match runs
-    // through turn transitions in their absence, and frequently
-    // checkWin terminates the round before they can reconnect. The
-    // server tick keeps firing (the setInterval handle is still alive)
-    // but turning the body of the work into a no-op preserves player
-    // positions while the turnEndsAt cursor gets shifted forward on
-    // resume. Multi-human matches stay unaffected: as long as one
-    // human is connected, activeHumans > 0 and the tick runs normally.
-    if (this.activeHumans() === 0) {
-      if (this.pausedSince === null) this.pausedSince = Date.now();
-      return;
-    }
-    if (this.pausedSince !== null) {
-      // First tick after a resume - shift the turn clock forward by the
-      // pause duration so a returning player does not find their turn
-      // already half-over.
-      this.turnEndsAt += Date.now() - this.pausedSince;
-      this.pausedSince = null;
-    }
-    const now = Date.now();
-    if (this.phase === 'free_roam' && now >= this.turnEndsAt) {
-      this.beginNextTurn();
-    } else if (
-      (this.phase === 'turn_mime' || this.phase === 'turn_clown') &&
-      now >= this.turnEndsAt
-    ) {
-      this.beginNextTurn();
-    }
-    this.simulate();
-    this.broadcastDelta();
-  }
-
-  private beginNextTurn(): void {
-    this.roundNumber += 1;
-    const next: Team =
-      this.phase === 'turn_mime' ? 'clown' : this.phase === 'turn_clown' ? 'mime' : this.firstTeam;
-    this.phase = `turn_${next}` as RoomPhase;
-    const ms = Math.min(TURN_CAP_MS, TURN_FIRST_MS + (this.roundNumber - 1) * TURN_STEP_MS);
-    this.turnEndsAt = Date.now() + ms;
-    // Pick the cry index once so every client renders the same banner text.
-    // Each team has BATTLE_CRY_COUNT slots in their local cry array.
-    const cryIndex = Math.floor(Math.random() * BATTLE_CRY_COUNT);
-    this.broadcast({ t: 'event', kind: { kind: 'phase', phase: this.phase, cryIndex } });
-  }
-
-  /** Applies player inputs with anti-cheat distance clamping. */
-  private simulate(): void {
-    const dt = TICK_MS / 1000;
-    this.simulateHumans(dt);
-    this.simulateBots(dt);
-    this.advanceIdleJumpState();
-    // After every player has moved this tick, resolve any overlap +
-    // apply bounceback. Runs once per tick so impulses are bounded.
-    resolvePlayerCollisions(
-      [...this.players.values()],
-      this.prevTickPositions,
-      dt,
-      this.walls,
-      this.topology,
-      WORLD_WIDTH,
-      Date.now(),
-    );
-    // Refresh prev positions AFTER bounceback so next tick's approach
-    // velocity reflects the post-bounce stance, not the pre-bounce
-    // overlap that would otherwise show up as a phantom impulse.
-    this.prevTickPositions.clear();
-    for (const p of this.players.values()) {
-      this.prevTickPositions.set(p.id, { x: p.position.x, z: p.position.z });
-    }
-    this.recordPositionsForLagComp();
-  }
-
-  /**
-   * Refresh Y and clear stale jumpStartedAt for every player whose
-   * stepJump did not run this tick (input queue was empty, or the
-   * player is frozen, or is a bot in PR 2 - PR 5 will give bots their
-   * own jump trigger). Without this pass, a mid-air player whose
-   * inputs stopped landing would have its jumpStartedAt sit at the
-   * takeoff timestamp indefinitely and the broadcast snapshot's
-   * position.y would stay stale; clients would still compute the
-   * correct Y from jumpArcY but the wire would carry the wrong
-   * authoritative value.
-   */
-  private advanceIdleJumpState(): void {
-    const now = Date.now();
-    const lockoutMs = (JUMP_DURATION_S + JUMP_COOLDOWN_S) * 1000;
-    for (const p of this.players.values()) {
-      if (p.jumpStartedAt !== null && now - p.jumpStartedAt >= lockoutMs) {
-        p.jumpStartedAt = null;
-      }
-      p.position = {
-        x: p.position.x,
-        y: bodyYForState({ jumpStartedAt: p.jumpStartedAt }, now),
-        z: p.position.z,
-      };
-    }
-  }
-
-  /**
-   * Append every player's current position to their history ring after each
-   * tick, then drop entries older than POSITION_HISTORY_KEEP_MS. tagRejection
-   * later rewinds the victim by LAG_COMP_MS so the server validates against
-   * the world state the client saw at the moment of the tag.
-   */
-  private recordPositionsForLagComp(): void {
-    const now = Date.now();
-    const cutoff = now - POSITION_HISTORY_KEEP_MS;
-    for (const p of this.players.values()) {
-      let hist = this.positionHistory.get(p.id);
-      if (!hist) {
-        hist = [];
-        this.positionHistory.set(p.id, hist);
-      }
-      hist.push({ t: now, x: p.position.x, z: p.position.z });
-      while (hist.length > 0 && hist[0]!.t < cutoff) hist.shift();
-    }
-  }
-
-  /** Closest historical position at or before atMs, or current if missing. */
-  private positionAt(playerId: string, atMs: number): { x: number; z: number } {
-    const hist = this.positionHistory.get(playerId);
-    if (hist && hist.length > 0) {
-      for (let i = hist.length - 1; i >= 0; i -= 1) {
-        if (hist[i]!.t <= atMs) return { x: hist[i]!.x, z: hist[i]!.z };
-      }
-    }
-    const p = this.players.get(playerId);
-    return p ? { x: p.position.x, z: p.position.z } : { x: 0, z: 0 };
-  }
-
-  private simulateHumans(_dt: number): void {
-    for (const [id, q] of this.inputQueues) {
-      if (q.length === 0) continue;
-      const p = this.players.get(id);
-      if (!p || p.bot || p.frozen) {
-        // Ineligible player: drain the queue so reconnects or thaws start
-        // from a clean slate instead of replaying stale inputs.
-        q.length = 0;
-        continue;
-      }
-      // Consume exactly ONE input per tick (oldest first). The client streams
-      // at TICK_HZ, so steady state is one in / one out. Network jitter that
-      // bunches two inputs into the same socket-read window now lands in the
-      // queue and is processed on consecutive ticks rather than overwritten;
-      // the client predicted both, the server applies both, and reconciliation
-      // never sees the "server is one tick behind" snap that caused the
-      // visible step-back stutter while moving.
-      const input = q.shift()!;
-      const lastSeq = this.lastAppliedSeq.get(id) ?? -1;
-      if (input.seq <= lastSeq) continue;
-      const next = stepMovement(
-        { position: p.position, sprintEnergy: p.sprintEnergy, sprinting: p.sprinting },
-        // Use the dt the client reported with this input, not the server's
-        // tick dt. Reconciliation replay on the client also drives
-        // stepMovement from input.dt; if the two diverged the replayed
-        // position would drift from the server's authoritative result.
-        { move: input.move, sprint: input.sprint, dt: input.dt },
-        this.walls,
-        this.topology,
-        WORLD_WIDTH,
-        // No collision gate here: resolvePlayerCollisions in the
-        // post-step pass handles overlap by pushing bodies apart and
-        // adding the bounceback impulse. A tick-level gate would
-        // suppress the overlap that the bounceback design needs to
-        // see; per-tick max overlap is bounded by walk speed * dt
-        // (~5 cm), which the next tick's resolve fully unwinds.
-        () => false,
-      );
-      // Jump trigger / lockout. The client stamps input.nowMs when it
-      // sends the input; we use that timestamp (clamped to local clock
-      // skew) as the new jumpStartedAt so the client's predicted arc
-      // start matches the authoritative value without a round-trip.
-      // Y is computed authoritatively in advanceIdleJumpState at end
-      // of tick using the server's Date.now().
-      const serverNow = Date.now();
-      const inputNow = input.nowMs ?? serverNow;
-      const skewMs = Math.abs(inputNow - serverNow);
-      const arcNow = skewMs > JUMP_CLIENT_CLOCK_SKEW_MS ? serverNow : inputNow;
-      const jump = stepJump(
-        { jumpStartedAt: p.jumpStartedAt },
-        { jump: input.jump ?? false, nowMs: arcNow },
-      );
-      p.position = next.position;
-      p.jumpStartedAt = jump.jumpStartedAt;
-      p.sprintEnergy = next.sprintEnergy;
-      p.sprinting = next.sprinting;
-      p.yaw = input.lookYaw;
-      this.lastAppliedSeq.set(id, input.seq);
-    }
-  }
-
-  private simulateBots(dt: number): void {
-    const active = this.activeTurnTeam();
-    const now = Date.now();
-    // Direction smoothing: 0.5 of the previous heading carries forward each
-    // tick. A new heading is fully reached in ~3 ticks (50 ms at 60 Hz),
-    // which reads as alert rather than the previous ~10-tick laggy turn.
-    // Genuine indecision (e.g., two equidistant targets) is still caught by
-    // the no-progress detector forcing a retarget within 800 ms.
-    const DIR_SMOOTHING = 0.5;
-    // Cap on body rotation per second. 9 rad/s clears a 90 deg turn in
-    // ~175 ms - agile enough to read as reactive without being twitchy.
-    // Slide-fallback axis flips are still smoothed by DIR_SMOOTHING above
-    // so the body never snaps a full quarter-turn in a single tick.
-    const MAX_YAW_RATE = 9.0;
-    const RETARGET_HYSTERESIS = 0.75; // new target must be this fraction of current distance to swap
-    for (const bot of this.botPlayers()) {
-      if (bot.frozen) continue;
-      const mind = this.botMinds.get(bot.id) ?? {
-        patrolTarget: this.randomPatrolPoint(),
-        patrolUntil: 0,
-        engagedTargetId: null,
-        lastDir: { x: 0, z: 0 },
-        lastYaw: bot.yaw,
-        progressSampleAt: now,
-        progressSamplePos: { x: bot.position.x, z: bot.position.z },
-        lastKnownPos: null,
-        investigateUntil: 0,
-        recentTargets: [],
-        lastJumpedAt: 0,
-      };
-      this.botMinds.set(bot.id, mind);
-
-      // Sticky target with line-of-sight gating. nearestVisibleEnemy already
-      // filters by pathCrossesWall, so candidate is null when no enemy is
-      // both within range AND has clear sight. Keep the previously-engaged
-      // target only if they are still visible. When LOS to the engaged
-      // target is lost, hold onto engagedTargetId and stamp lastKnownPos /
-      // investigateUntil so the bot routes toward where the target was last
-      // seen for BOT_INVESTIGATE_MS before giving up.
-      const candidate = this.nearestVisibleEnemy(bot);
-      const candidateDist = candidate
-        ? topologyDistance(bot.position, candidate.position, this.topology, WORLD_WIDTH)
-        : Infinity;
-      let target: PlayerState | null = candidate;
-      let enemyDist = candidateDist;
-      if (mind.engagedTargetId) {
-        const existing = this.players.get(mind.engagedTargetId);
-        if (existing && !existing.frozen && existing.team !== bot.team) {
-          const existingVisible = this.botCanSee(bot.position, existing.position);
-          const existingDist = topologyDistance(
-            bot.position,
-            existing.position,
-            this.topology,
-            WORLD_WIDTH,
-          );
-          if (
-            existingVisible &&
-            existingDist < BOT_VISION_RADIUS &&
-            candidateDist >= existingDist * RETARGET_HYSTERESIS
-          ) {
-            target = existing;
-            enemyDist = existingDist;
-          } else if (!existingVisible && existingDist < BOT_VISION_RADIUS) {
-            // Target ducked behind cover. Investigate the last-seen
-            // position only when the bot is the active hunter; if our turn
-            // is the defender we'd just be walking back into the threat,
-            // so clear and let the flee branch (which gates on target
-            // visibility) decide what to do once they reappear.
-            if (active === bot.team) {
-              if (!mind.lastKnownPos) {
-                mind.lastKnownPos = { x: existing.position.x, z: existing.position.z };
-                mind.investigateUntil = now + BOT_INVESTIGATE_MS;
-              }
-            } else {
-              mind.engagedTargetId = null;
-              mind.lastKnownPos = null;
-              mind.investigateUntil = 0;
-            }
-          }
-        } else {
-          // Engaged target left the room or joined our team; abandon them.
-          mind.engagedTargetId = null;
-          mind.lastKnownPos = null;
-          mind.investigateUntil = 0;
-        }
-      }
-      if (target) {
-        // Fresh sighting (or re-sighting) clears any in-flight investigation.
-        mind.engagedTargetId = target.id;
-        mind.lastKnownPos = { x: target.position.x, z: target.position.z };
-        mind.investigateUntil = 0;
-      } else if (mind.investigateUntil > 0 && now >= mind.investigateUntil) {
-        // Investigation window expired without re-acquiring sight. Drop the
-        // engaged target and fall back to patrol.
-        mind.engagedTargetId = null;
-        mind.lastKnownPos = null;
-        mind.investigateUntil = 0;
-      }
-      const investigating =
-        target === null && mind.lastKnownPos !== null && now < mind.investigateUntil;
-
-      // Scan for a frozen teammate to rescue. Rescue is allowed in any phase
-      // (unlike tagging) so we always consider it. Priority later: flee >
-      // rescue > chase > patrol.
-      let rescueTarget: PlayerState | null = null;
-      let rescueDist = Infinity;
-      for (const other of this.players.values()) {
-        if (other.id === bot.id) continue;
-        if (other.team !== bot.team) continue;
-        if (!other.frozen) continue;
-        const d = topologyDistance(bot.position, other.position, this.topology, WORLD_WIDTH);
-        if (d < BOT_VISION_RADIUS && d < rescueDist) {
-          rescueDist = d;
-          rescueTarget = other;
-        }
-      }
-
-      const chasing = target !== null && enemyDist < BOT_VISION_RADIUS && active === bot.team;
-      const fleeing =
-        target !== null && enemyDist < BOT_VISION_RADIUS && active && active !== bot.team;
-      const rescuing = rescueTarget !== null;
-
-      // Jump triggers. Three predicates share one refractory gate; any
-      // firing one re-anchors `bot.jumpStartedAt` (the simulate loop's
-      // advanceIdleJumpState then handles arc Y and lockout clearance).
-      // Skipped if the bot is already mid-arc or just landed - the
-      // refractory window outlasts the arc + cooldown so the next eval
-      // happens at a clean rest position.
-      const sinceLastJump = now - mind.lastJumpedAt;
-      const jumpEligible = bot.jumpStartedAt === null && sinceLastJump >= BOT_JUMP_REFRACTORY_MS;
-      let wantJump = false;
-      if (jumpEligible) {
-        // 1. Tag-threat evasion. Bot is on the defending team and an
-        //    unfrozen, non-jumping opponent is within tag range plus a
-        //    small reaction buffer. Skipping the trigger when the
-        //    threat is already airborne avoids both bodies dancing in
-        //    sync (which would still tag per Option A).
-        if (
-          fleeing &&
-          target !== null &&
-          !target.frozen &&
-          target.jumpStartedAt === null &&
-          enemyDist <= TAG_RADIUS_BOT + BOT_JUMP_EVADE_BUFFER
-        ) {
-          wantJump = true;
-        }
-        // 2. Cornered. The existing no-progress detector tells us the
-        //    bot is grinding into geometry; if any opponent is nearby
-        //    the jump repositions the bot via the bounceback that lands
-        //    after the arc rather than letting them be a sitting duck.
-        if (!wantJump) {
-          const noProgressDur = now - mind.progressSampleAt;
-          if (
-            noProgressDur >= BOT_NO_PROGRESS_WINDOW_MS &&
-            enemyDist <= BOT_JUMP_CORNER_THREAT_RADIUS
-          ) {
-            wantJump = true;
-          }
-        }
-        // 3. Tactical noise during active chase. Keeps the bots from
-        //    being readable trivially. Probability is scaled by the
-        //    tick duration so it stays per-second-stable regardless of
-        //    tick rate changes.
-        if (!wantJump && chasing) {
-          if (Math.random() < BOT_JUMP_NOISE_PER_SECOND * dt) {
-            wantJump = true;
-          }
-        }
-      }
-      if (wantJump) {
-        bot.jumpStartedAt = now;
-        mind.lastJumpedAt = now;
-      }
-
-      let dir = { x: 0, z: 0 };
-      if (fleeing && target) {
-        // Survival first. A bot chased by an active-turn enemy runs even if
-        // a teammate is frozen nearby. Route the flee through the BFS
-        // pathfinder: project a synthetic flee target BOT_FLEE_PROJECTION
-        // units along the unit-away vector and ask the pathfinder for the
-        // next waypoint to it. Without this the raw away-vector bee-lines
-        // the bot into the closest corner because no wall lookahead is in
-        // the loop. The avoid set keeps the bot off frozen-teammate cells
-        // for the same reason chase does.
-        const away = wrappedUnitDelta(target.position, bot.position, this.topology, WORLD_WIDTH);
-        const fleeTarget = wrapPosition(
-          {
-            x: bot.position.x + away.x * BOT_FLEE_PROJECTION,
-            z: bot.position.z + away.z * BOT_FLEE_PROJECTION,
-          },
-          this.topology,
-          WORLD_WIDTH,
-        );
-        const avoid = this.avoidCellsForBot(bot, null);
-        const waypoint = this.pathfinder
-          ? this.pathfinder.nextWaypointAvoiding(bot.position, fleeTarget, avoid)
-          : fleeTarget;
-        dir = wrappedUnitDelta(bot.position, waypoint, this.topology, WORLD_WIDTH);
-      } else if (rescuing && rescueTarget) {
-        // BFS-route around walls toward the frozen teammate. The pathfinder
-        // returns the world-space center of the next cell along the shortest
-        // path; if from/to share a cell or are directly adjacent it returns
-        // the destination unchanged, so the slide-fallback below still does
-        // the final approach. Build an avoid set of every OTHER player's
-        // cell (excluding the rescue target itself) so a frozen enemy
-        // standing in the corridor between the bot and the teammate is
-        // routed around instead of crashing into it - that case used to
-        // leave the bot stuck in place, with the slide-fallback retrying
-        // every tick.
-        const avoid = this.avoidCellsForBot(bot, rescueTarget);
-        const waypoint = this.pathfinder
-          ? this.pathfinder.nextWaypointAvoiding(bot.position, rescueTarget.position, avoid)
-          : rescueTarget.position;
-        dir = wrappedUnitDelta(bot.position, waypoint, this.topology, WORLD_WIDTH);
-      } else if (chasing && target) {
-        // Same BFS routing for chase, with the same other-player avoidance:
-        // a frozen teammate in the chase lane should be routed around
-        // instead of pinning the bot. The chase target stays walkable.
-        const avoid = this.avoidCellsForBot(bot, target);
-        const waypoint = this.pathfinder
-          ? this.pathfinder.nextWaypointAvoiding(bot.position, target.position, avoid)
-          : target.position;
-        dir = wrappedUnitDelta(bot.position, waypoint, this.topology, WORLD_WIDTH);
-      } else if (investigating && mind.lastKnownPos) {
-        // Target ducked behind cover within the last BOT_INVESTIGATE_MS.
-        // Route to where they were last seen via BFS. If they reappear at
-        // any point during the window, the target acquisition block above
-        // will pick them up again and the investigation flag clears on the
-        // next tick. If we reach lastKnownPos without re-acquiring sight,
-        // hold position there until investigateUntil expires.
-        const avoid = this.avoidCellsForBot(bot, null);
-        const waypoint = this.pathfinder
-          ? this.pathfinder.nextWaypointAvoiding(bot.position, mind.lastKnownPos, avoid)
-          : mind.lastKnownPos;
-        dir = wrappedUnitDelta(bot.position, waypoint, this.topology, WORLD_WIDTH);
-      } else {
-        if (now >= mind.patrolUntil || nearTarget(bot.position, mind.patrolTarget)) {
-          this.commitPatrolTarget(mind);
-          mind.patrolUntil = now + BOT_PATROL_RETARGET_MS;
-        }
-        // Route patrol through the BFS pathfinder the same way chase /
-        // rescue / flee / investigate do. Without this, a patrol target on
-        // the far side of a wall has the bot bee-lining straight at the
-        // geometry, relying on the per-tick axis-slide + no-progress
-        // retarget to bounce off. With BFS routing the bot follows
-        // corridors and reads as deliberately exploring rather than
-        // ricocheting off walls.
-        const avoid = this.avoidCellsForBot(bot, null);
-        const waypoint = this.pathfinder
-          ? this.pathfinder.nextWaypointAvoiding(bot.position, mind.patrolTarget, avoid)
-          : mind.patrolTarget;
-        dir = wrappedUnitDelta(bot.position, waypoint, this.topology, WORLD_WIDTH);
-      }
-      // Smooth direction toward the freshly-computed dir. Stops the bot from
-      // snapping to a new heading every tick when the AI is indecisive.
-      dir = {
-        x: mind.lastDir.x * DIR_SMOOTHING + dir.x * (1 - DIR_SMOOTHING),
-        z: mind.lastDir.z * DIR_SMOOTHING + dir.z * (1 - DIR_SMOOTHING),
-      };
-      const dirLen = Math.hypot(dir.x, dir.z);
-      if (dirLen > 1e-3) {
-        dir = { x: dir.x / dirLen, z: dir.z / dirLen };
-      } else {
-        dir = { x: 0, z: 0 };
-      }
-      mind.lastDir = dir;
-
-      // Bots sprint when engaged and the target is within striking distance,
-      // assuming they have energy. Without this they only ever walked and a
-      // sprinting human could never be caught or escape from. Rescues also
-      // trigger sprint when close to a frozen teammate so saves don't take
-      // forever.
-      const closeEnemyOrRescue =
-        (chasing && enemyDist < BOT_SPRINT_TRIGGER_RADIUS) ||
-        (fleeing && enemyDist < BOT_SPRINT_TRIGGER_RADIUS) ||
-        (rescuing && rescueDist < BOT_SPRINT_TRIGGER_RADIUS);
-      const wantSprint = closeEnemyOrRescue && bot.sprintEnergy > MAX_SPRINT * 0.15;
-      const speed = wantSprint ? SPRINT_SPEED : WALK_SPEED;
-      const step = speed * dt;
-      // Try the straight-ahead move first. If a wall blocks it, try sliding
-      // along each axis (X-only, then Z-only). A bot chasing through a maze
-      // corridor used to dance in place because the direct line to the
-      // target ran into a wall every tick.
-      const candidates: Array<{ x: number; z: number; chosen: { x: number; z: number } }> = [
-        {
-          x: bot.position.x + dir.x * step,
-          z: bot.position.z + dir.z * step,
-          chosen: dir,
-        },
-        {
-          x: bot.position.x + Math.sign(dir.x) * step,
-          z: bot.position.z,
-          chosen: { x: Math.sign(dir.x), z: 0 },
-        },
-        {
-          x: bot.position.x,
-          z: bot.position.z + Math.sign(dir.z) * step,
-          chosen: { x: 0, z: Math.sign(dir.z) },
-        },
-      ];
-      let moved = false;
-      for (const candidate of candidates) {
-        if (candidate.chosen.x === 0 && candidate.chosen.z === 0) continue;
-        const wallBlocked =
-          this.walls.length > 0 &&
-          pathCrossesWall(this.walls, bot.position.x, bot.position.z, candidate.x, candidate.z);
-        if (wallBlocked) continue;
-        // Bot-vs-other collisions are handled by resolvePlayerCollisions
-        // in the post-step pass (same as humans). A per-tick gate here
-        // would block the brief overlap that the bounceback needs to
-        // see, leaving bots dead-stopped against each other instead of
-        // ricocheting.
-        const wrapped = wrapPosition(
-          { x: candidate.x, z: candidate.z },
-          this.topology,
-          WORLD_WIDTH,
-        );
-        // Preserve Y across the wrap. Topology wrapping is XZ-only;
-        // jump-arc Y will be driven separately once PR 2 lands.
-        bot.position = { x: wrapped.x, y: bot.position.y, z: wrapped.z };
-        moved = true;
-        break;
-      }
-      // Body yaw follows the smoothed movement direction, capped by
-      // MAX_YAW_RATE so a slide-fallback that mostly moves on z (when the
-      // straight-ahead candidate is wall-blocked) doesn't snap the avatar
-      // 90 degrees in a single tick.
-      if (dir.x !== 0 || dir.z !== 0) {
-        const desiredYaw = Math.atan2(-dir.x, -dir.z);
-        let delta = desiredYaw - mind.lastYaw;
-        while (delta > Math.PI) delta -= 2 * Math.PI;
-        while (delta < -Math.PI) delta += 2 * Math.PI;
-        const maxStep = MAX_YAW_RATE * dt;
-        const clamped = Math.max(-maxStep, Math.min(maxStep, delta));
-        mind.lastYaw += clamped;
-        bot.yaw = mind.lastYaw;
-      } else {
-        mind.lastYaw = bot.yaw;
-      }
-      if (!moved) {
-        // Pinned on every axis. Two cases: the bot is in a tight corner
-        // bounded by walls on all sides, or it has somehow ended up with
-        // its center inside a wall (in which case every candidate stays
-        // inside the wall too). Detect the second case with a zero-length
-        // pathCrossesWall against the current position - if the bot's
-        // center is already within clearance of a wall, no nudge will get
-        // it out. Teleport it back to a known-safe spawn cell.
-        if (
-          this.walls.length > 0 &&
-          pathCrossesWall(
-            this.walls,
-            bot.position.x,
-            bot.position.z,
-            bot.position.x,
-            bot.position.z,
-          )
-        ) {
-          bot.position = this.pickSpawnPosition(bot.team);
-        }
-        this.commitPatrolTarget(mind);
-        mind.patrolUntil = now + BOT_PATROL_RETARGET_MS;
-      }
-
-      // No-progress detector. moved=true is satisfied as long as ANY axis
-      // candidate succeeds, so a bot grinding x-only into a horizontal wall
-      // passes the check every tick while making no headway. Sample the
-      // bot's position every BOT_NO_PROGRESS_WINDOW_MS and force a retarget
-      // when the distance covered in that window stays below
-      // BOT_NO_PROGRESS_MIN_DIST: pick a fresh patrol point, drop the
-      // engaged enemy so the chase BFS re-runs, and zero the smoothing
-      // carry-over so the new heading takes effect on the next tick.
-      if (now - mind.progressSampleAt >= BOT_NO_PROGRESS_WINDOW_MS) {
-        const covered = topologyDistance(
-          mind.progressSamplePos,
-          bot.position,
-          this.topology,
-          WORLD_WIDTH,
-        );
-        if (covered < BOT_NO_PROGRESS_MIN_DIST) {
-          this.commitPatrolTarget(mind);
-          mind.patrolUntil = now + BOT_PATROL_RETARGET_MS;
-          mind.engagedTargetId = null;
-          mind.lastDir = { x: 0, z: 0 };
-        }
-        mind.progressSampleAt = now;
-        mind.progressSamplePos = { x: bot.position.x, z: bot.position.z };
-      }
-
-      // Bot tag: strict radius, no lag to compensate for. canTag also blocks
-      // through-wall tags so a bot can't freeze someone on the other side of
-      // a maze segment.
-      if (
-        chasing &&
-        target &&
-        enemyDist <= TAG_RADIUS_BOT &&
-        this.canTag(bot, target, TAG_RADIUS_BOT)
-      ) {
-        this.freezePlayer(target);
-        this.broadcast({
-          t: 'event',
-          kind: { kind: 'tagged', attackerId: bot.id, victimId: target.id, team: bot.team },
-        });
-        this.checkWin();
-      }
-
-      // Bot rescue: when a frozen teammate is within UNFREEZE_RADIUS_BOT and
-      // not blocked by a wall, unfreeze them. Mirrors what a human would do
-      // via the onUnfreeze handler.
-      if (
-        rescuing &&
-        rescueTarget &&
-        rescueDist <= UNFREEZE_RADIUS_BOT &&
-        (this.walls.length === 0 ||
-          !pathCrossesWall(
-            this.walls,
-            bot.position.x,
-            bot.position.z,
-            rescueTarget.position.x,
-            rescueTarget.position.z,
-          ))
-      ) {
-        rescueTarget.frozen = false;
-        this.lastSavedAt.set(rescueTarget.id, Date.now());
-        this.broadcast({
-          t: 'event',
-          kind: { kind: 'saved', saviorId: bot.id, victimId: rescueTarget.id },
-        });
-      }
-
-      // Mirror the human sprint energy model so a bot that just sprinted has
-      // to recover before sprinting again. Otherwise the bot would sprint
-      // forever and never catch its breath.
-      bot.sprintEnergy = clamp(
-        bot.sprintEnergy + (wantSprint && moved ? -SPRINT_DRAIN_PER_S : SPRINT_REGEN_PER_S) * dt,
-        0,
-        MAX_SPRINT,
-      );
-    }
-  }
-
-  private nearestVisibleEnemy(bot: PlayerState): PlayerState | null {
-    let best: PlayerState | null = null;
-    let bestDist = Infinity;
-    for (const other of this.players.values()) {
-      if (other.id === bot.id) continue;
-      if (other.team === bot.team) continue;
-      if (other.frozen) continue;
-      if (!this.botCanSee(bot.position, other.position)) continue;
-      const d = topologyDistance(bot.position, other.position, this.topology, WORLD_WIDTH);
-      if (d < bestDist) {
-        bestDist = d;
-        best = other;
-      }
-    }
-    return best;
-  }
-
-  // Line-of-sight test between two world-space points. A wall in the way
-  // means the bot cannot see the target, which gates the entry into chase
-  // (and flee) and triggers the last-known-position investigation when an
-  // engaged target ducks behind cover. Uses the same pathCrossesWall the
-  // movement system uses so "can the bot see them" and "could the bot move
-  // there" stay in lockstep.
-  private botCanSee(from: Vec2, to: Vec2): boolean {
-    if (this.walls.length === 0) return true;
-    return !pathCrossesWall(this.walls, from.x, from.z, to.x, to.z);
-  }
-
   private activeTurnTeam(): Team | null {
     if (this.phase === 'turn_mime') return 'mime';
     if (this.phase === 'turn_clown') return 'clown';
     return null;
-  }
-
-  private broadcastDelta(): void {
-    this.broadcaster.broadcastDelta();
   }
 
   private snapshot(): RoomSnapshot {
@@ -1776,20 +940,8 @@ export class Room implements DurableObject {
   }
 }
 
-function clamp(v: number, lo: number, hi: number): number {
-  return Math.min(hi, Math.max(lo, v));
-}
-
 function isValidTopology(value: string): value is Topology {
   return value === 'plane' || value === 'torus' || value === 'mobius' || value === 'klein';
-}
-
-function nearTarget(
-  from: { x: number; z: number },
-  to: { x: number; z: number },
-  threshold = 1.4,
-): boolean {
-  return Math.hypot(to.x - from.x, to.z - from.z) <= threshold;
 }
 
 // Team spawn centers sit in the interior of a grid-maze cell so the jitter
@@ -1814,74 +966,3 @@ function jitteredSpawn(team: Team): { x: number; z: number } {
 // silly name human players generate locally, so the team status row reads as
 // a cast of characters instead of "Bot-1a2b / Bot-3c4d". The lists are kept
 // short (28 each) so a single file stays a reasonable size; the full client
-// lists are not required for parity since bot names are server-authored only.
-const BOT_NAME_ADJECTIVES = [
-  'Silent',
-  'Painted',
-  'Loud',
-  'Floppy',
-  'Crooked',
-  'Bashful',
-  'Velvet',
-  'Hushed',
-  'Ruffled',
-  'Striped',
-  'Glossy',
-  'Pale',
-  'Sneaky',
-  'Whiskered',
-  'Brittle',
-  'Tipsy',
-  'Polka',
-  'Wobbly',
-  'Crinkled',
-  'Powdered',
-  'Squeaky',
-  'Tufted',
-  'Knobbly',
-  'Frilly',
-  'Wonky',
-  'Boggled',
-  'Plucky',
-  'Drooping',
-];
-
-const BOT_NAME_NOUNS = [
-  'Bozo',
-  'Coulrophobe',
-  'Pierrot',
-  'Harlequin',
-  'Buffoon',
-  'Jester',
-  'Marceau',
-  'Tramp',
-  'Auguste',
-  'Whiteface',
-  'Carnie',
-  'Pagliacci',
-  'Punchinello',
-  'Hopo',
-  'Cake',
-  'Honk',
-  'Greasepaint',
-  'Stripes',
-  'Tear',
-  'Glove',
-  'Wig',
-  'Nose',
-  'Shoe',
-  'Banana',
-  'Pinwheel',
-  'Smile',
-  'Frown',
-  'Lapel',
-];
-
-function generateBotName(): string {
-  const adj = BOT_NAME_ADJECTIVES[Math.floor(Math.random() * BOT_NAME_ADJECTIVES.length)]!;
-  const noun = BOT_NAME_NOUNS[Math.floor(Math.random() * BOT_NAME_NOUNS.length)]!;
-  const num = Math.floor(Math.random() * 1000)
-    .toString()
-    .padStart(3, '0');
-  return `${adj}${noun}${num}`;
-}

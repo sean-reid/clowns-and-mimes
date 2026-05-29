@@ -1,0 +1,157 @@
+{
+  "schemaVersion": 1,
+  "mobiusHalfX": 80,
+  "mobiusHalfZ": 20,
+  "stepTests": [
+    {
+      "name": "interior motion passes through",
+      "prev": {
+        "x": 0,
+        "z": 0
+      },
+      "next": {
+        "x": 5,
+        "z": -3
+      },
+      "expected": {
+        "x": 5,
+        "z": -3
+      }
+    },
+    {
+      "name": "+x seam wrap, z mid-strip",
+      "prev": {
+        "x": 79.5,
+        "z": 4
+      },
+      "next": {
+        "x": 80.5,
+        "z": 4
+      },
+      "expected": {
+        "x": -79.5,
+        "z": 4
+      }
+    },
+    {
+      "name": "-x seam wrap, z mid-strip",
+      "prev": {
+        "x": -79.5,
+        "z": -7
+      },
+      "next": {
+        "x": -80.5,
+        "z": -7
+      },
+      "expected": {
+        "x": 79.5,
+        "z": -7
+      }
+    },
+    {
+      "name": "past +z bound, motion rejected",
+      "prev": {
+        "x": 10,
+        "z": 19.9
+      },
+      "next": {
+        "x": 12,
+        "z": 20.5
+      },
+      "expected": {
+        "x": 10,
+        "z": 19.9
+      }
+    },
+    {
+      "name": "past -z bound, motion rejected",
+      "prev": {
+        "x": -10,
+        "z": -19.9
+      },
+      "next": {
+        "x": -12,
+        "z": -20.5
+      },
+      "expected": {
+        "x": -10,
+        "z": -19.9
+      }
+    },
+    {
+      "name": "at +z bound within tolerance, accepted",
+      "prev": {
+        "x": 0,
+        "z": 19.8
+      },
+      "next": {
+        "x": 1,
+        "z": 20
+      },
+      "expected": {
+        "x": 1,
+        "z": 20
+      }
+    },
+    {
+      "name": "at -z bound within tolerance, accepted",
+      "prev": {
+        "x": 0,
+        "z": -19.8
+      },
+      "next": {
+        "x": -1,
+        "z": -20
+      },
+      "expected": {
+        "x": -1,
+        "z": -20
+      }
+    },
+    {
+      "name": "+x seam wrap with negative z",
+      "prev": {
+        "x": 79.75,
+        "z": -15
+      },
+      "next": {
+        "x": 80.25,
+        "z": -15
+      },
+      "expected": {
+        "x": -79.75,
+        "z": -15
+      }
+    },
+    {
+      "name": "large jump past the seam, multi-wrap",
+      "prev": {
+        "x": 0,
+        "z": 0
+      },
+      "next": {
+        "x": 165,
+        "z": 0
+      },
+      "expected": {
+        "x": 5,
+        "z": 0
+      }
+    },
+    {
+      "name": "sub-pixel motion near the seam",
+      "prev": {
+        "x": 79.999,
+        "z": 0
+      },
+      "next": {
+        "x": 80.001,
+        "z": 0
+      },
+      "expected": {
+        "x": -79.999,
+        "z": 0
+      }
+    }
+  ]
+}

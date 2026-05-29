@@ -25,11 +25,12 @@
     "gen:movement-fixture": "tsx scripts/gen-movement-fixture.ts",
     "gen:gridmaze-fixture": "tsx scripts/gen-gridmaze-fixture.ts",
     "gen:topology-fixture": "tsx scripts/gen-topology-fixture.ts",
-    "gen:physics-fixture": "tsx scripts/gen-physics-fixture.ts"
+    "gen:physics-fixture": "tsx scripts/gen-physics-fixture.ts",
+    "gen:mobius-fixture": "tsx scripts/gen-mobius-fixture.ts"
   },
   "devDependencies": {
-    "prettier": "3.3.3",
-    "tsx": "4.19.1",
+    "prettier": "3.8.3",
+    "tsx": "4.22.3",
     "typescript": "5.6.3"
   }
 }

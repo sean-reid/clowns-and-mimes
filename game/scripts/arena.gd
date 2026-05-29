@@ -24,27 +24,29 @@ const LABYRINTH := preload("res://scenes/labyrinth.tscn")
 const Movement := preload("res://scripts/movement.gd")
 const Physics := preload("res://scripts/physics.gd")
 const IN_GAME_MENU := preload("res://scenes/in_game_menu.tscn")
+# Preload kept here only for the `var rules: GameRulesScript` field
+# type annotation - OfflineMode (offline_mode.gd) is the actual lifecycle
+# owner and instantiates the GameRulesScript; contact_interactions.gd
+# then reads arena.rules without needing to know about OfflineMode.
 const GameRulesScript := preload("res://scripts/game_rules.gd")
 const PlayerScript := preload("res://scripts/player.gd")
 const TopologyScript := preload("res://scripts/topology/topology.gd")
 const TopologyFactory := preload("res://scripts/topology/topology_factory.gd")
-const BotAIScript := preload("res://scripts/bot_ai.gd")
 const AssetPaths := preload("res://scripts/asset_paths.gd")
 const RoomClientScript := preload("res://scripts/network/room_client.gd")
+const OnlinePredictorScript := preload("res://scripts/online_predictor.gd")
+const ReconnectControllerScript := preload("res://scripts/reconnect_controller.gd")
+const ContactInteractionsScript := preload("res://scripts/contact_interactions.gd")
+const OfflineModeScript := preload("res://scripts/offline_mode.gd")
 
 # ---------------------------------------------------------------------------
 # Tunables
 # ---------------------------------------------------------------------------
 
-const BOT_COUNT_PER_TEAM := 3
+# BOT_COUNT_PER_TEAM moved into offline_mode.gd (only consumer).
 const SPAWN_RADIUS := 2.5
-const CONTACT_RADIUS := 1.4
-# Short cooldown only to keep one physics frame from firing the same tag
-# repeatedly. The server already de-dupes via its own cooldown / frozen state
-# checks, so we don't need a long client-side gate that would suppress
-# legitimate retries when the first attempt fell just outside the server's
-# tag radius due to interpolation lag.
-const CONTACT_COOLDOWN_S := 0.15
+# CONTACT_RADIUS / CONTACT_COOLDOWN_S + tag/save logic live in
+# game/scripts/contact_interactions.gd.
 ## Client input cadence. Matches the server's TICK_HZ in
 ## backend/room/src/room.ts so each server tick consumes exactly one input
 ## (one stepMovement call) on average. Going lower would queue inputs on the
@@ -53,17 +55,8 @@ const CONTACT_COOLDOWN_S := 0.15
 const INPUT_TICK_HZ := 60.0
 const INPUT_TICK_PERIOD := 1.0 / INPUT_TICK_HZ
 
-# Send a ping every PING_INTERVAL_S so the WebSocket has accidental-keepalive
-# traffic even when the player is idle. Cloudflare Durable Object sockets get
-# torn down with a TLS fatal alert (mbedtls -0x7780) when they sit idle long
-# enough; periodic pings keep the connection warm.
-const PING_INTERVAL_S := 5.0
-
-# When the server-side WS dies, try to reconnect with a short cumulative
-# backoff before showing the player a hard "Reconnect / Quit" choice. Most
-# transient drops (DO migration, brief ISP wobble) resolve inside ~5 s, so
-# the player never sees the menu bounce for those.
-const RECONNECT_BACKOFF_S: Array[float] = [0.5, 1.5, 3.0]
+# Keepalive ping interval + reconnect ladder constants live in
+# game/scripts/reconnect_controller.gd.
 
 # Environment palettes for the light / dark arena modes. Toggled by the
 # Settings overlay; apply_light_mode swaps between these wholesale.
@@ -130,54 +123,31 @@ var local_sprint_energy: float = 100.0
 # replay loop from it.
 var local_sprinting: bool = false
 
-# Tick-bound prediction with render-rate visual interpolation. The authoritative
-# predicted XZ advances once per physics tick inside _advance_predicted_tick,
-# matching what the server applies. _process interpolates the rendered body
-# transform between the previous and current tick positions so a >60 Hz monitor
-# still gets smooth motion. Reconciliation rewrites _pred_current_xz to the
-# replayed authoritative value and re-anchors _pred_prev_xz to where the body
-# is rendered right now, which spreads the correction over the next tick instead
-# of producing a visible snap.
-var _pred_prev_xz: Vector2 = Vector2.ZERO
-var _pred_current_xz: Vector2 = Vector2.ZERO
-var _pred_tick_start_t: float = 0.0
-var _pred_armed: bool = false
+# Online local-player predictor. Owns _pred_* state + the three
+# advance_tick / reconcile / advance_local_prediction methods. See
+# game/scripts/online_predictor.gd for the full surface.
+var predictor: OnlinePredictorScript = null
 
-# Predicted jumpStartedAt (Unix ms). -1 means "not in lockout"; matches
-# the GDScript null sentinel convention from Physics.step_jump. Y is a
-# deterministic function of this value + current wall-clock so the
-# render loop just samples Physics.jump_arc_y each frame; no parallel
-# lerp state is needed for Y. Reconcile pulls the server's authoritative
-# value out of each delta and replays pending inputs through step_jump
-# so the predictor stays in sync.
-var _pred_jump_started_at_ms: int = -1
 # Rising-edge tracker for the spacebar so holding the key sends exactly
-# one jump=true input per press. Reset when the player lets go.
+# one jump=true input per press. Stays on arena because it's part of
+# the input sampling pipeline, not predictor state. Reset when the
+# player lets go.
 var _jump_was_held: bool = false
 
 # Shared.
 var local_player: PlayerScript = null
 var local_player_id: String = ""
 var player_nodes: Dictionary = {}
-var contact_cooldowns: Dictionary = {}
+var contacts: ContactInteractionsScript = null
+# OfflineMode owns the offline match lifecycle: rules wiring, bot
+# spawning + AI, rule event handlers, team-status renders. Lives in
+# game/scripts/offline_mode.gd. Instantiated in _ready as a child Node
+# regardless of online_mode (idle when online; start() is the gate).
+var offline: OfflineModeScript = null
 
-# WS keepalive + reconnect state.
-var _ping_accumulator: float = 0.0
-var _reconnect_attempt: int = 0
-var _reconnect_active: bool = false
-var _reconnect_label: Label = null
-# Delays the banner so transient drops the ladder absorbs (CF edge blip,
-# DO migration, brief ISP wobble) don't flash the "Reconnecting..." UI.
-# When the reconnect succeeds before this fires we kill the timer in
-# _hide_reconnect_banner and the player never sees the banner.
-const RECONNECT_BANNER_DELAY_S := 1.0
-var _reconnect_banner_timer: Timer = null
-# Stashed so _show_reconnect_failed_popup can surface the original drop
-# reason in the side log once the ladder has actually given up. We hold
-# the log line back from _on_room_disconnected because the "Reconnecting..."
-# banner is the right transient UI; the log line was noisy and scary on
-# every CF edge blip the ladder absorbed invisibly.
-var _last_disconnect_reason: String = ""
+# Keepalive ping + reconnect ladder + banner + connection-lost popup
+# live in game/scripts/reconnect_controller.gd. Instantiated in _ready.
+var reconnect: Node = null
 
 # Suppress repeat tag-rejection HUD lines closer than this many seconds.
 # Without this, walking into a wall while spamming the contact button
@@ -197,6 +167,13 @@ func _ready() -> void:
 	online_mode = not GameState.server_url.is_empty()
 	apply_light_mode(Settings.light_mode)
 	_setup_menu()
+	reconnect = ReconnectControllerScript.new()
+	add_child(reconnect)
+	reconnect.attach(self)
+	contacts = ContactInteractionsScript.new(self)
+	offline = OfflineModeScript.new()
+	add_child(offline)
+	offline.attach(self)
 	hud.set_sprint(100.0)
 	# Leave the countdown label blank until the first phase update arrives;
 	# seeding "10" was a leftover from the removed pre-match countdown phase
@@ -210,7 +187,7 @@ func _ready() -> void:
 	if online_mode:
 		_start_online()
 	else:
-		_start_offline()
+		offline.start()
 
 func _setup_menu() -> void:
 	menu = IN_GAME_MENU.instantiate()
@@ -270,9 +247,9 @@ func _process(delta: float) -> void:
 		# and _pred_current_xz stop advancing - rendering re-applies the
 		# same XZ each frame.
 		if snapshot_received and local_player != null:
-			_advance_local_prediction(delta)
+			predictor.advance_local_prediction(delta)
 	else:
-		_drive_offline_hud()
+		offline.drive_hud()
 
 func _physics_process(delta: float) -> void:
 	if local_player == null or topology == null:
@@ -285,76 +262,15 @@ func _physics_process(delta: float) -> void:
 		local_player.global_position = wrapped
 		local_player.settle_into_world()
 	if not local_player.frozen:
-		_check_contact_interactions()
+		contacts.check()
 	if online_mode and snapshot_received:
 		# Network send still goes through _physics_process at 60 Hz; the
 		# 20 Hz tick accumulator inside _stream_input owns when to flush.
 		_stream_input(delta)
-		_drive_keepalive(delta)
+		reconnect.drive_keepalive(delta)
 
-# Periodic ping while the WS is open. The 60 Hz input stream is implicit
-# keepalive while the player is moving, but an idle player would otherwise
-# leave the socket silent long enough for Cloudflare to retire the Durable
-# Object connection.
-func _drive_keepalive(delta: float) -> void:
-	if room_client == null or not room_client.is_connected_to_server():
-		_ping_accumulator = 0.0
-		return
-	_ping_accumulator += delta
-	if _ping_accumulator < PING_INTERVAL_S:
-		return
-	_ping_accumulator = 0.0
-	room_client.send_ping()
-
-# ---------------------------------------------------------------------------
-# Offline path
-# ---------------------------------------------------------------------------
-
-func _start_offline() -> void:
-	topology = TopologyFactory.from_string(GameState.topology_as_string())
-	hud.set_topology(topology.name())
-	_build_labyrinth(_derive_offline_seed())
-	_setup_rules()
-	_spawn_offline_players()
-	rules.start(topology)
-
-func _setup_rules() -> void:
-	rules = GameRulesScript.new()
-	add_child(rules)
-	rules.topology = topology
-	rules.tagged.connect(_on_offline_tagged)
-	rules.tag_rejected.connect(_on_offline_tag_rejected)
-	rules.saved.connect(_on_offline_saved)
-	rules.won.connect(_on_offline_won)
-	rules.phase_changed.connect(_on_offline_phase_changed)
-
-func _spawn_offline_players() -> void:
-	GameState.ensure_username()
-	local_player_id = "local"
-	_spawn_player(local_player_id, GameState.username, "mime", false, true)
-	for i in BOT_COUNT_PER_TEAM - 1:
-		_spawn_player("mime_bot_%d" % i, UsernameGenerator.generate(), "mime", true, false)
-	for i in BOT_COUNT_PER_TEAM:
-		_spawn_player("clown_bot_%d" % i, UsernameGenerator.generate(), "clown", true, false)
-	for id in player_nodes.keys():
-		var node: Node = player_nodes[id]
-		rules.register_player(id, node.team, node.global_position, node.display_name, node.bot)
-		if node.bot:
-			_attach_bot_ai(node, id)
-	_render_team_status_offline()
-
-func _attach_bot_ai(node: Node, id: String) -> void:
-	var ai := BotAIScript.new()
-	node.add_child(ai)
-	ai.attach(node, id, rules, topology, labyrinth)
-
-func _drive_offline_hud() -> void:
-	if rules == null:
-		return
-	for id in player_nodes.keys():
-		rules.update_position(id, player_nodes[id].global_position)
-	rules.tick(Time.get_unix_time_from_system())
-	hud.set_countdown_seconds(rules.phase_time_remaining(Time.get_unix_time_from_system()))
+# Offline path lives in game/scripts/offline_mode.gd. arena instantiates
+# the OfflineMode node in _ready when GameState.server_url is empty.
 
 # ---------------------------------------------------------------------------
 # Online path
@@ -391,9 +307,7 @@ func _start_online() -> void:
 	# path was skipped (fallback above), wait for `connected` from
 	# connect_to() and `_on_room_connected` will send the join.
 	if room_client.is_connected_to_server():
-		_reconnect_attempt = 0
-		_reconnect_active = false
-		_hide_reconnect_banner()
+		reconnect.handle_connected()
 		if not NetClient.cached_snapshot.is_empty():
 			_on_snapshot(NetClient.cached_snapshot, NetClient.cached_you_are)
 
@@ -403,124 +317,16 @@ func _on_room_connected() -> void:
 	# In the normal lobby path the WS was already connected and join was
 	# sent before this scene loaded.
 	room_client.send_join(GameState.username, "", GameState.host_token)
-	_reconnect_attempt = 0
-	_reconnect_active = false
-	_hide_reconnect_banner()
+	reconnect.handle_connected()
 
 func _on_room_disconnected(reason: String) -> void:
 	# Most disconnects in the wild are transient: Cloudflare Durable Object
 	# migration, brief ISP wobble, or a TLS fatal alert from CF retiring the
-	# socket. Try a short ladder of reconnect attempts before showing the
-	# player a hard choice, instead of force-bouncing back to the menu.
-	if _reconnect_active:
-		return
-	_reconnect_active = true
-	_reconnect_attempt = 0
-	_last_disconnect_reason = reason
-	_show_reconnect_banner_delayed("Reconnecting...")
-	# Hold off on the HUD log line. The "Reconnecting..." banner is enough
-	# transient feedback - most drops are CF edge / DO migration blips that
-	# the ladder absorbs invisibly. Only surface "Disconnected: <reason>"
-	# in the side log if the ladder gives up (see _show_reconnect_failed_popup).
-	_schedule_next_reconnect()
-
-func _schedule_next_reconnect() -> void:
-	if _reconnect_attempt >= RECONNECT_BACKOFF_S.size():
-		_show_reconnect_failed_popup()
-		return
-	var wait_s: float = RECONNECT_BACKOFF_S[_reconnect_attempt]
-	_reconnect_attempt += 1
-	await get_tree().create_timer(wait_s).timeout
-	if not _reconnect_active or room_client == null:
-		return
-	# Clear stale per-session state so reconciliation does not replay inputs
-	# from before the drop. The fresh snapshot from the server's onJoin will
-	# repopulate everything. contact_cooldowns is keyed by player ID; ID reuse
-	# across reconnects is unlikely but possible, and a stale entry would
-	# silently swallow the first tag after resume.
-	pending_inputs.clear()
-	contact_cooldowns.clear()
-	snapshot_received = false
-	room_client.connect_to(GameState.server_url)
-	# If the connect call dispatches another `disconnected` immediately
-	# (handshake failure), _on_room_disconnected re-enters; otherwise wait
-	# for `connected` to flip us out of the reconnect state. As a backstop
-	# in case neither fires (socket stuck pending), schedule the next ladder
-	# step after the same backoff window.
-	await get_tree().create_timer(wait_s + 1.0).timeout
-	# Player may have hit Back to menu (or accepted the failed-reconnect
-	# popup) during the wait, which nulls room_client. Guard before
-	# touching it.
-	if room_client == null or not _reconnect_active:
-		return
-	if not room_client.is_connected_to_server():
-		_schedule_next_reconnect()
-
-func _show_reconnect_banner(text: String) -> void:
-	if _reconnect_label == null:
-		_reconnect_label = Label.new()
-		_reconnect_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-		_reconnect_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-		_reconnect_label.anchor_left = 0.0
-		_reconnect_label.anchor_right = 1.0
-		_reconnect_label.anchor_top = 0.45
-		_reconnect_label.anchor_bottom = 0.55
-		_reconnect_label.add_theme_font_size_override("font_size", 48)
-		hud.add_child(_reconnect_label)
-	_reconnect_label.text = text
-	_reconnect_label.visible = true
-
-# Schedule the banner to appear after RECONNECT_BANNER_DELAY_S. If the
-# reconnect succeeds inside that window, _hide_reconnect_banner kills
-# the timer and the banner never shows - no flicker for the common
-# case of a brief CF edge blip.
-func _show_reconnect_banner_delayed(text: String) -> void:
-	_cancel_reconnect_banner_timer()
-	_reconnect_banner_timer = Timer.new()
-	_reconnect_banner_timer.one_shot = true
-	_reconnect_banner_timer.wait_time = RECONNECT_BANNER_DELAY_S
-	add_child(_reconnect_banner_timer)
-	_reconnect_banner_timer.timeout.connect(_show_reconnect_banner.bind(text))
-	_reconnect_banner_timer.start()
-
-func _cancel_reconnect_banner_timer() -> void:
-	if _reconnect_banner_timer != null:
-		_reconnect_banner_timer.queue_free()
-		_reconnect_banner_timer = null
-
-func _hide_reconnect_banner() -> void:
-	_cancel_reconnect_banner_timer()
-	if _reconnect_label != null:
-		_reconnect_label.visible = false
-
-func _show_reconnect_failed_popup() -> void:
-	_hide_reconnect_banner()
-	# Surface the last disconnect reason now that the ladder gave up. Held
-	# back from _on_room_disconnected so the side log isn't spammed with
-	# "Disconnected: closed by peer: -1" on every transient blip that the
-	# ladder absorbs invisibly.
-	if _last_disconnect_reason != "":
-		hud.append_log("Disconnected: %s" % _last_disconnect_reason)
-	var dialog := AcceptDialog.new()
-	dialog.title = "Connection lost"
-	dialog.dialog_text = "Could not reach the server. Try again or back out to the main menu."
-	dialog.ok_button_text = "Back to menu"
-	dialog.unresizable = true
-	var retry_button := dialog.add_button("Reconnect", true, "retry")
-	retry_button.pressed.connect(_on_reconnect_retry_pressed.bind(dialog))
-	dialog.confirmed.connect(_on_reconnect_give_up)
-	_attach_dialog_lifecycle(dialog)
-	dialog.popup_centered()
-
-func _on_reconnect_retry_pressed(dialog: AcceptDialog) -> void:
-	dialog.queue_free()
-	_reconnect_attempt = 0
-	_show_reconnect_banner("Reconnecting...")
-	_schedule_next_reconnect()
-
-func _on_reconnect_give_up() -> void:
-	_reconnect_active = false
-	_on_back_to_menu()
+	# socket. The reconnect controller runs a short ladder before showing
+	# the player a hard "Reconnect / Quit" choice. The HUD log line is held
+	# back to the ladder-gives-up moment so transient blips don't surface
+	# scary text the ladder absorbs invisibly.
+	reconnect.handle_disconnected(reason)
 
 func _on_snapshot(snapshot: Dictionary, you_are: String) -> void:
 	local_player_id = you_are
@@ -541,7 +347,7 @@ func _on_snapshot(snapshot: Dictionary, you_are: String) -> void:
 	# inputs sent before the snapshot arrived describe motion from a
 	# different origin and replaying them would compound the offset.
 	pending_inputs.clear()
-	contact_cooldowns.clear()
+	contacts.reset_cooldowns()
 	for entry in snapshot.get("players", []):
 		if entry.get("id", "") == local_player_id and local_player != null:
 			var pos: Dictionary = entry.get("position", {"x": 0.0, "z": 0.0})
@@ -550,17 +356,15 @@ func _on_snapshot(snapshot: Dictionary, you_are: String) -> void:
 			local_player.global_position = Vector3(spawn_xz.x, spawn_y, spawn_xz.y)
 			local_sprint_energy = float(entry.get("sprintEnergy", 100.0))
 			local_sprinting = bool(entry.get("sprinting", false))
-			_pred_prev_xz = spawn_xz
-			_pred_current_xz = spawn_xz
-			_pred_tick_start_t = Time.get_unix_time_from_system()
 			# Pull the server's authoritative jumpStartedAt (null on the
-			# wire arrives as Variant null; treat as -1). On a fresh
-			# snapshot the player typically isn't mid-jump anyway.
+			# wire arrives as Variant null; treat as -1).
 			var server_jump_started: Variant = entry.get("jumpStartedAt", null)
-			_pred_jump_started_at_ms = (
+			var jump_started_at_ms: int = (
 				int(server_jump_started) if server_jump_started != null else -1
 			)
-			_pred_armed = true
+			if predictor == null:
+				predictor = OnlinePredictorScript.new(self, INPUT_TICK_PERIOD)
+			predictor.arm(spawn_xz, jump_started_at_ms)
 			break
 
 func _on_delta(delta: Dictionary) -> void:
@@ -573,115 +377,8 @@ func _on_delta(delta: Dictionary) -> void:
 	# (otherwise _apply_player_state silently skips them and the lobby looks
 	# empty until someone else joins).
 	_sync_players_from_snapshot(delta.get("players", []))
-	_reconcile_local_player(delta)
-
-func _reconcile_local_player(delta: Dictionary) -> void:
-	# Snap to the server's authoritative position for the local player, then
-	# replay every input the server has not yet acknowledged so the rendered
-	# position matches what we predict the server will compute next tick.
-	# Without this the client-only prediction (this file's _stream_input loop
-	# and the server's simulateHumans) drift apart whenever wall slides or
-	# wrap behavior diverges, and tag distance checks fail with distances of
-	# 30+ units because attacker.position is stale on the server side.
-	if local_player == null or labyrinth == null or topology == null:
-		return
-	var ack_seq: int = int(delta.get("ackSeq", 0))
-	var server_local: Dictionary = {}
-	for entry in delta.get("players", []):
-		if entry.get("id", "") == local_player_id:
-			server_local = entry
-			break
-	if server_local.is_empty():
-		return
-	var pos_dict: Dictionary = server_local.get("position", {"x": 0.0, "z": 0.0})
-	var server_pos_raw := Vector2(float(pos_dict.get("x", 0.0)), float(pos_dict.get("z", 0.0)))
-	# Defensive wrap: an older server build (or any future regression) that
-	# leaves a position outside the canonical domain would otherwise pin
-	# _pred_current_xz at an extended value forever, and the body would
-	# flick between extended-rendered and canonical-wrapped each frame.
-	# Server's resolvePlayerCollisions now wraps post-push but mirror the
-	# guard here so a stale build can't reproduce the seam flicker.
-	var server_pos_wrapped: Vector3 = topology.wrap(Vector3(server_pos_raw.x, 0.0, server_pos_raw.y))
-	var server_pos := Vector2(server_pos_wrapped.x, server_pos_wrapped.z)
-	# Drop inputs the server has applied; replay the rest.
-	while pending_inputs.size() > 0 and int(pending_inputs[0]["seq"]) <= ack_seq:
-		pending_inputs.pop_front()
-	var server_sprint: float = float(server_local.get("sprintEnergy", local_sprint_energy))
-	local_sprint_energy = server_sprint
-	local_sprinting = bool(server_local.get("sprinting", local_sprinting))
-	var walls: Array = labyrinth.wall_endpoints()
-	var replayed_pos: Vector2 = server_pos
-	# Pull the server's authoritative jumpStartedAt and walk it forward
-	# through the same step_jump the server runs. Each pending input's
-	# now_ms was stamped at send time, so feeding the same value into
-	# Physics.step_jump produces the identical jumpStartedAt the server
-	# stored - the predicted arc Y will then match the authoritative Y
-	# at every tick.
-	var server_jump_started: Variant = server_local.get("jumpStartedAt", null)
-	var replayed_jump_started_at_ms: int = (
-		int(server_jump_started) if server_jump_started != null else -1
-	)
-	# Snapshot other bodies' XZ once outside the loop; they don't change
-	# during replay so the resolve step uses the same set every input.
-	var others_xz: Array = _collect_other_xz_positions()
-	for entry in pending_inputs:
-		var step := Movement.step(
-			{
-				"position": replayed_pos,
-				"sprint_energy": local_sprint_energy,
-				"sprinting": local_sprinting,
-			},
-			{
-				"move": entry["world_move"],
-				"sprint": entry["sprint"],
-				"dt": entry["dt"],
-			},
-			walls,
-			topology,
-		)
-		replayed_pos = step["position"]
-		# Resolve overlap so reconcile replays match the server's
-		# resolvePlayerCollisions pass. Without this, the reconcile loop
-		# can land on a position that's inside another body even though
-		# the server already pushed apart - one tick later the next
-		# reconcile snap creates the oscillation the camera flicker
-		# report describes.
-		replayed_pos = Movement.resolve_overlap(replayed_pos, others_xz, walls, topology)
-		local_sprint_energy = step["sprint_energy"]
-		local_sprinting = bool(step["sprinting"])
-		replayed_jump_started_at_ms = Physics.step_jump(
-			replayed_jump_started_at_ms,
-			bool(entry.get("jump", false)),
-			int(entry.get("now_ms", 0)),
-		)
-	_pred_jump_started_at_ms = replayed_jump_started_at_ms
-	# In steady state the predictor's _pred_current_xz already equals
-	# replayed_pos (both sides run the same stepMovement deterministically),
-	# so reconcile has nothing to correct. The previous design always
-	# re-anchored _pred_prev_xz to the body's rendered position and reset
-	# the lerp's tick-start anyway - and that anchoring was the actual bug.
-	# Because reconciles fire at 60 Hz and re-anchor prev to "where body is
-	# right now," any lag between the rendered position and _pred_current_xz
-	# was held in place across reconciles instead of being absorbed by the
-	# natural predict-tick cycle (which rotates _pred_current_xz into
-	# _pred_prev_xz every 16.7 ms). The lag compounded until it crossed the
-	# 1 m wrap-snap threshold in _advance_local_prediction and the body
-	# teleported forward visibly. That was the "humans choppy, bots smooth"
-	# regression after the NetClient autoload changed the per-frame process
-	# order (reconcile now runs before _advance_local_prediction).
-	#
-	# Only re-anchor when there is a real correction to absorb. A 5 cm
-	# threshold catches genuine drift (wall-slide divergence, wrap edge
-	# cases, server-side displacement) while letting the 60 Hz no-op
-	# reconciles pass through unobstructed. The threshold lives below
-	# the 1 m wrap-detection so big corrections still trip the wrap snap
-	# in _advance_local_prediction.
-	const CORRECTION_THRESHOLD := 0.05
-	if (replayed_pos - _pred_current_xz).length() > CORRECTION_THRESHOLD:
-		_pred_prev_xz = Vector2(local_player.global_position.x, local_player.global_position.z)
-		_pred_tick_start_t = Time.get_unix_time_from_system()
-	_pred_current_xz = replayed_pos
-	_pred_armed = true
+	if predictor != null:
+		predictor.reconcile(delta)
 
 func _on_room_event(event: Dictionary) -> void:
 	match event.get("kind", event.get("t", "")):
@@ -751,8 +448,8 @@ func _on_room_error(code: String, message: String) -> void:
 func _show_match_in_progress_popup() -> void:
 	# Stop the reconnect ladder so it doesn't keep retrying into the same
 	# rejection.
-	_reconnect_active = false
-	_hide_reconnect_banner()
+	reconnect.stop()
+	reconnect.hide_banner()
 	var dialog := AcceptDialog.new()
 	dialog.title = "Match ended"
 	dialog.dialog_text = "You were disconnected for too long. Returning to the menu."
@@ -793,7 +490,7 @@ func _attach_dialog_lifecycle(dialog: AcceptDialog) -> void:
 func _drive_online_hud() -> void:
 	if not snapshot_received:
 		return
-	if _reconnect_active:
+	if reconnect.is_active():
 		# While the reconnect ladder is running, the server-side tick is
 		# paused (no active humans) so turnEndsAt is held in place, but
 		# the local clock keeps advancing. Without this gate the visible
@@ -805,111 +502,6 @@ func _drive_online_hud() -> void:
 	var now_ms: float = Time.get_unix_time_from_system() * 1000.0
 	var remaining_s: float = max(0.0, (turn_ends_at_ms - now_ms) / 1000.0)
 	hud.set_countdown_seconds(remaining_s)
-
-## Render-frame visual interpolation between consecutive tick-bound predictions.
-## The authoritative XZ advances once per physics tick inside
-## _advance_predicted_tick; this function only smooths the rendered body
-## transform between those samples so a >60 Hz monitor stays fluid without
-## diverging from what the server sees. Y is sampled directly from the jump
-## arc helper (no parallel lerp); the frozen-mid-jump descent uses _delta.
-func _advance_local_prediction(_delta: float) -> void:
-	if local_player == null or not _pred_armed:
-		return
-	var alpha: float = clampf(
-		(Time.get_unix_time_from_system() - _pred_tick_start_t) / INPUT_TICK_PERIOD,
-		0.0,
-		1.0,
-	)
-	# Topology wraps land prev and current on opposite ends of the playfield;
-	# lerping across them would shoot the body through the world. Detect the
-	# discontinuity by step size: a single physics tick at sprint speed travels
-	# ~0.1 m, so anything past 1 m means the step wrapped (or reconciliation
-	# placed the new authoritative position far from the rendered one).
-	var rendered_xz: Vector2
-	if (_pred_current_xz - _pred_prev_xz).length() > 1.0:
-		rendered_xz = _pred_current_xz
-	else:
-		rendered_xz = _pred_prev_xz.lerp(_pred_current_xz, alpha)
-	# Y is a deterministic function of jumpStartedAt + wall-clock, so
-	# sample directly at render time. No parallel prev/current lerp
-	# needed - the arc itself is continuous. Frozen-mid-jump produces
-	# the one exception: the server clears jumpStartedAt and snaps Y
-	# to HOVER, but the local body would otherwise jump straight down
-	# in a single frame. Detect that case (predictor says not jumping
-	# but body is still above hover) and lerp Y at ~5 m/s instead.
-	var now_ms: int = int(Time.get_unix_time_from_system() * 1000.0)
-	var rendered_y: float = Physics.jump_arc_y(_pred_jump_started_at_ms, now_ms)
-	var body_y: float = rendered_y
-	if _pred_jump_started_at_ms < 0:
-		var current_y: float = local_player.global_position.y
-		if current_y - Physics.HOVER_HEIGHT > 0.1:
-			body_y = maxf(Physics.HOVER_HEIGHT, current_y - 5.0 * _delta)
-	local_player.global_position = Vector3(rendered_xz.x, body_y, rendered_xz.y)
-	# Push the predicted jumpStartedAt onto the body so its
-	# _apply_jump_squash runs from the same source the predictor uses.
-	# The local player rarely sees their own head (camera is inside it)
-	# but the third-person follow / spectator view also reads this.
-	local_player.jump_started_at_ms = _pred_jump_started_at_ms
-
-## Advance the authoritative predicted position by one server-tick worth of
-## motion. Called once per physics tick from _stream_input, matching the
-## cadence the server uses to apply inputs. _process visually interpolates
-## between consecutive samples for XZ and samples the arc directly for Y.
-func _advance_predicted_tick(
-	world_move: Vector2,
-	sprint_held: bool,
-	jump_pressed: bool,
-	input_now_ms: int,
-) -> void:
-	if local_player == null or labyrinth == null or topology == null:
-		return
-	# Don't advance from uninitialized state. _stream_input can fire after
-	# the WS connects but before the first snapshot arrives, at which point
-	# _pred_current_xz is still Vector2.ZERO and stepping from origin would
-	# pile garbage into pending_inputs. The server has the real spawn; we'll
-	# pick it up from the snapshot and replay the queued inputs from there.
-	if not _pred_armed:
-		return
-	var step := Movement.step(
-		{
-			"position": _pred_current_xz,
-			"sprint_energy": local_sprint_energy,
-			"sprinting": local_sprinting,
-		},
-		{"move": world_move, "sprint": sprint_held, "dt": INPUT_TICK_PERIOD},
-		labyrinth.wall_endpoints(),
-		topology,
-	)
-	_pred_prev_xz = _pred_current_xz
-	_pred_current_xz = step["position"]
-	# Push out of overlap with any other body's rendered position. The
-	# server's resolvePlayerCollisions does the same on its side; without
-	# this, the local predictor advances INTO another body each tick and
-	# reconcile snaps back to the server's pushed-apart position - the
-	# round trip oscillates and the camera flickers between two angles.
-	# Approximation: we use the current rendered positions of other
-	# bodies (which lag the server by ~100 ms via remote interp), not
-	# their position at the input's exact tick. Server bounce will still
-	# correct any residual drift.
-	_pred_current_xz = Movement.resolve_overlap(
-		_pred_current_xz,
-		_collect_other_xz_positions(),
-		labyrinth.wall_endpoints(),
-		topology,
-	)
-	_pred_tick_start_t = Time.get_unix_time_from_system()
-	# Same step_jump the server runs. With the matching input_now_ms, the
-	# predicted jumpStartedAt equals what the server will store, so the
-	# arc Y matches at every render-rate sample after this point.
-	_pred_jump_started_at_ms = Physics.step_jump(
-		_pred_jump_started_at_ms,
-		jump_pressed,
-		input_now_ms,
-	)
-	local_sprint_energy = step["sprint_energy"]
-	local_sprinting = bool(step["sprinting"])
-	var planar: float = (_pred_current_xz - _pred_prev_xz).length() / INPUT_TICK_PERIOD
-	local_player.set_external_motion(planar, local_sprinting and world_move.length() > 0.0)
 
 # Collect XZ positions of every non-local rendered body. Used by the
 # predictor's collision-resolve step so the local body bounces off
@@ -988,7 +580,7 @@ func _stream_input(delta: float) -> void:
 	# the same input the server will apply. The render loop interpolates
 	# the XZ in _advance_local_prediction and recomputes Y from the arc
 	# at render rate so a >60 Hz monitor stays smooth.
-	_advance_predicted_tick(effective_move, effective_sprint, jump_pressed, input_now_ms)
+	predictor.advance_tick(effective_move, effective_sprint, jump_pressed, input_now_ms)
 
 func _rotate_wasd_to_world(wasd: Vector2, yaw: float) -> Vector2:
 	# wasd.x = right input strength, wasd.y = back-minus-forward. Map to a
@@ -1097,11 +689,6 @@ func _build_labyrinth(seed_value: int) -> void:
 	labyrinth = node
 	labyrinth.build(seed_value, topology)
 
-func _derive_offline_seed() -> int:
-	if GameState.lobby_code.is_empty():
-		return randi()
-	return GameState.lobby_code.hash() & 0x7fffffff
-
 func _spawn_player(id: String, p_name: String, team: String, is_bot: bool, is_local: bool) -> void:
 	var p: Node = PLAYER.instantiate()
 	p.team = team
@@ -1149,108 +736,10 @@ func _team_spawn_offset(team: String) -> Vector3:
 		return Vector3(-12.0, 0.0, 4.0)
 	return Vector3(12.0, 0.0, 4.0)
 
-# ---------------------------------------------------------------------------
-# Contact interactions
-# ---------------------------------------------------------------------------
-
-func _check_contact_interactions() -> void:
-	var active: String = _active_team()
-	var now: float = Time.get_unix_time_from_system()
-	for id in player_nodes.keys():
-		if id == local_player_id:
-			continue
-		var node: Node = player_nodes[id]
-		var dist: float = topology.distance(local_player.global_position, node.global_position)
-		if dist > CONTACT_RADIUS:
-			continue
-		if now - float(contact_cooldowns.get(id, 0.0)) < CONTACT_COOLDOWN_S:
-			continue
-		if _attempt_interaction(id, node, active):
-			contact_cooldowns[id] = now
-
-func _attempt_interaction(id: String, node: Node, active: String) -> bool:
-	if active == local_player.team and node.team != local_player.team and not node.frozen:
-		return _send_tag(id)
-	if node.team == local_player.team and node.frozen:
-		return _send_unfreeze(id)
-	return false
-
-func _active_team() -> String:
-	if online_mode:
-		match phase_label:
-			"turn_mime": return "mime"
-			"turn_clown": return "clown"
-		return ""
-	return rules.active_team()
-
-func _send_tag(target_id: String) -> bool:
-	if online_mode:
-		# Same null / disconnected guard as _stream_input: the player can
-		# trigger a tag during the one-frame window between
-		# _on_back_to_menu (or a failed reconnect) nulling room_client
-		# and the scene actually swapping.
-		if room_client == null or not room_client.is_connected_to_server():
-			return false
-		room_client.send_tag(target_id)
-		return true
-	return rules.try_tag(local_player_id, target_id)
-
-func _send_unfreeze(target_id: String) -> bool:
-	if online_mode:
-		if room_client == null or not room_client.is_connected_to_server():
-			return false
-		room_client.send_unfreeze(target_id)
-		return true
-	return rules.try_unfreeze(local_player_id, target_id)
-
-# ---------------------------------------------------------------------------
-# Offline event handlers
-# ---------------------------------------------------------------------------
-
-func _on_offline_tagged(victim_id: String, attacker_id: String, team: String) -> void:
-	var victim: Node = player_nodes.get(victim_id)
-	if victim != null:
-		victim.frozen = true
-	var attacker_info: Dictionary = rules.players.get(attacker_id, {})
-	var victim_info: Dictionary = rules.players.get(victim_id, {})
-	var verb: String = "mimed" if team == "mime" else "clowned"
-	hud.append_log("%s was %s by %s" % [victim_info.get("name", "?"), verb, attacker_info.get("name", "?")])
-	if victim_id == local_player_id:
-		hud.flash_frozen(team, attacker_info.get("name", "?"))
-	_render_team_status_offline()
-
-func _on_offline_tag_rejected(attacker_id: String, _victim_id: String, reason: String) -> void:
-	# Offline mirror of the online tag_result handler. Only the local
-	# player gets feedback; remote-on-server bots don't have anyone to
-	# message and the verbose log would be noisy with bot misses.
-	if attacker_id != local_player_id:
-		return
-	_surface_tag_reject(reason)
-
-func _on_offline_saved(victim_id: String, savior_id: String) -> void:
-	var victim: Node = player_nodes.get(victim_id)
-	if victim != null:
-		victim.frozen = false
-	var savior_info: Dictionary = rules.players.get(savior_id, {})
-	var victim_info: Dictionary = rules.players.get(victim_id, {})
-	hud.append_log("%s saved %s" % [savior_info.get("name", "?"), victim_info.get("name", "?")])
-	if victim_id == local_player_id:
-		hud.clear_frozen_overlay()
-	_render_team_status_offline()
-
-func _on_offline_won(team: String) -> void:
-	var victory: bool = team == local_player.team
-	hud.show_end(victory)
-	_play_stinger(victory)
-
-func _on_offline_phase_changed(phase: int) -> void:
-	match phase:
-		GameRulesScript.Phase.FREE_ROAM:
-			hud.flash_disperse()
-		GameRulesScript.Phase.TURN_MIME:
-			hud.flash_battle_cry(MIME_BATTLE_CRIES[randi() % MIME_BATTLE_CRIES.size()], "mime")
-		GameRulesScript.Phase.TURN_CLOWN:
-			hud.flash_battle_cry(CLOWN_BATTLE_CRIES[randi() % CLOWN_BATTLE_CRIES.size()], "clown")
+# Offline rules-event handlers + team-status render live in
+# game/scripts/offline_mode.gd. The shared MIME_BATTLE_CRIES /
+# CLOWN_BATTLE_CRIES constants below stay here because the online
+# phase-event handler also uses them.
 
 # ---------------------------------------------------------------------------
 # HUD helpers
@@ -1259,12 +748,6 @@ func _on_offline_phase_changed(phase: int) -> void:
 func _on_local_frozen_changed(is_frozen: bool) -> void:
 	if not is_frozen:
 		hud.clear_frozen_overlay()
-
-func _render_team_status_offline() -> void:
-	var list: Array = []
-	for player in rules.players.values():
-		list.append(player)
-	hud.render_team_status(list)
 
 func _render_team_status_online(entries: Array) -> void:
 	hud.render_team_status(entries)

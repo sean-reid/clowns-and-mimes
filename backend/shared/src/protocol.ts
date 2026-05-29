@@ -148,6 +148,7 @@ export type ErrorCode =
   | 'rate_limited'
   | 'internal'
   | 'match_in_progress'
+  | 'session_expired'
   | 'not_host';
 
 export interface MatchmakeCreateBody {

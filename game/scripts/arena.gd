@@ -436,23 +436,37 @@ func _on_room_error(code: String, message: String) -> void:
 	if code == "version_mismatch":
 		_show_version_mismatch_popup(message)
 		return
+	if code == "session_expired":
+		# Reconnect grace window expired before our ladder got a session
+		# token back to the server. The player's slot is gone; the match
+		# may still be running. Send them back to the menu cleanly.
+		_show_rejected_popup(
+			"Match ended",
+			"You were disconnected for too long. Returning to the menu.",
+		)
+		return
 	if code == "match_in_progress":
-		# Server rejected a reconnect because either the grace window
-		# expired or this client never had a valid sessionToken. Tell the
-		# player the match is gone instead of letting them sit in the
-		# reconnecting banner forever.
-		_show_match_in_progress_popup()
+		# We tried to join a room whose phase is past 'filling' without a
+		# session token. Most often hit when the matchmaker has not yet
+		# reaped a now-running room from its open pool, or when a stale
+		# private code is shared after the host started the match.
+		_show_rejected_popup(
+			"Match already running",
+			"This room is already mid-match. Try Find Match again for a new one.",
+		)
 		return
 	hud.append_log("Server error %s: %s" % [code, message])
 
-func _show_match_in_progress_popup() -> void:
-	# Stop the reconnect ladder so it doesn't keep retrying into the same
-	# rejection.
+# Single popup helper for the rejected-join family (session_expired,
+# match_in_progress). Stops the reconnect ladder so it does not retry
+# into the same rejection, then surfaces the supplied title + body and
+# routes the OK back to the menu.
+func _show_rejected_popup(title: String, body: String) -> void:
 	reconnect.stop()
 	reconnect.hide_banner()
 	var dialog := AcceptDialog.new()
-	dialog.title = "Match ended"
-	dialog.dialog_text = "You were disconnected for too long. Returning to the menu."
+	dialog.title = title
+	dialog.dialog_text = body
 	dialog.ok_button_text = "Back to menu"
 	dialog.unresizable = true
 	dialog.confirmed.connect(_on_back_to_menu)

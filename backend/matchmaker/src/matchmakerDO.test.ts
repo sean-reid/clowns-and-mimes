@@ -144,6 +144,27 @@ describe('MatchmakerDO.fetch', () => {
     expect((third as { roomId: string }).roomId).not.toBe(roomId);
   });
 
+  it('roomDetach removes an occupied room from the open pool', async () => {
+    // Regression for the 4003 'match_in_progress' loop: rooms call detach
+    // when phase moves past 'filling', but at that moment they typically
+    // still have humans+bots > 0. Previously detach only deleted empty
+    // entries, so an occupied non-filling room stayed in the pool and the
+    // next /openJoin handed it back, the client connected, and the room
+    // immediately rejected with close-4003.
+    const doInstance = makeDO();
+    const { json: first } = await call(doInstance, '/openJoin');
+    const roomId = (first as { roomId: string }).roomId;
+    await call(doInstance, '/roomState', { roomId, humans: 2, bots: 4 });
+
+    await call(doInstance, '/roomDetach', { roomId });
+
+    // The next openJoin must mint a fresh room - the detached one is
+    // no longer eligible regardless of its occupant count.
+    const { json: second } = await call(doInstance, '/openJoin');
+    expect((second as { created: boolean }).created).toBe(true);
+    expect((second as { roomId: string }).roomId).not.toBe(roomId);
+  });
+
   it('roomState rejects malformed bodies', async () => {
     const doInstance = makeDO();
     const { res } = await call(doInstance, '/roomState', { roomId: 'x' });

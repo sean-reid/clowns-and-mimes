@@ -33,6 +33,7 @@ const AssetPaths := preload("res://scripts/asset_paths.gd")
 const RoomClientScript := preload("res://scripts/network/room_client.gd")
 const OnlinePredictorScript := preload("res://scripts/online_predictor.gd")
 const ReconnectControllerScript := preload("res://scripts/reconnect_controller.gd")
+const ContactInteractionsScript := preload("res://scripts/contact_interactions.gd")
 
 # ---------------------------------------------------------------------------
 # Tunables
@@ -40,13 +41,8 @@ const ReconnectControllerScript := preload("res://scripts/reconnect_controller.g
 
 const BOT_COUNT_PER_TEAM := 3
 const SPAWN_RADIUS := 2.5
-const CONTACT_RADIUS := 1.4
-# Short cooldown only to keep one physics frame from firing the same tag
-# repeatedly. The server already de-dupes via its own cooldown / frozen state
-# checks, so we don't need a long client-side gate that would suppress
-# legitimate retries when the first attempt fell just outside the server's
-# tag radius due to interpolation lag.
-const CONTACT_COOLDOWN_S := 0.15
+# CONTACT_RADIUS / CONTACT_COOLDOWN_S + tag/save logic live in
+# game/scripts/contact_interactions.gd.
 ## Client input cadence. Matches the server's TICK_HZ in
 ## backend/room/src/room.ts so each server tick consumes exactly one input
 ## (one stepMovement call) on average. Going lower would queue inputs on the
@@ -138,7 +134,7 @@ var _jump_was_held: bool = false
 var local_player: PlayerScript = null
 var local_player_id: String = ""
 var player_nodes: Dictionary = {}
-var contact_cooldowns: Dictionary = {}
+var contacts: ContactInteractionsScript = null
 
 # Keepalive ping + reconnect ladder + banner + connection-lost popup
 # live in game/scripts/reconnect_controller.gd. Instantiated in _ready.
@@ -165,6 +161,7 @@ func _ready() -> void:
 	reconnect = ReconnectControllerScript.new()
 	add_child(reconnect)
 	reconnect.attach(self)
+	contacts = ContactInteractionsScript.new(self)
 	hud.set_sprint(100.0)
 	# Leave the countdown label blank until the first phase update arrives;
 	# seeding "10" was a leftover from the removed pre-match countdown phase
@@ -253,7 +250,7 @@ func _physics_process(delta: float) -> void:
 		local_player.global_position = wrapped
 		local_player.settle_into_world()
 	if not local_player.frozen:
-		_check_contact_interactions()
+		contacts.check()
 	if online_mode and snapshot_received:
 		# Network send still goes through _physics_process at 60 Hz; the
 		# 20 Hz tick accumulator inside _stream_input owns when to flush.
@@ -385,7 +382,7 @@ func _on_snapshot(snapshot: Dictionary, you_are: String) -> void:
 	# inputs sent before the snapshot arrived describe motion from a
 	# different origin and replaying them would compound the offset.
 	pending_inputs.clear()
-	contact_cooldowns.clear()
+	contacts.reset_cooldowns()
 	for entry in snapshot.get("players", []):
 		if entry.get("id", "") == local_player_id and local_player != null:
 			var pos: Dictionary = entry.get("position", {"x": 0.0, "z": 0.0})
@@ -778,60 +775,6 @@ func _team_spawn_offset(team: String) -> Vector3:
 	if team == "mime":
 		return Vector3(-12.0, 0.0, 4.0)
 	return Vector3(12.0, 0.0, 4.0)
-
-# ---------------------------------------------------------------------------
-# Contact interactions
-# ---------------------------------------------------------------------------
-
-func _check_contact_interactions() -> void:
-	var active: String = _active_team()
-	var now: float = Time.get_unix_time_from_system()
-	for id in player_nodes.keys():
-		if id == local_player_id:
-			continue
-		var node: Node = player_nodes[id]
-		var dist: float = topology.distance(local_player.global_position, node.global_position)
-		if dist > CONTACT_RADIUS:
-			continue
-		if now - float(contact_cooldowns.get(id, 0.0)) < CONTACT_COOLDOWN_S:
-			continue
-		if _attempt_interaction(id, node, active):
-			contact_cooldowns[id] = now
-
-func _attempt_interaction(id: String, node: Node, active: String) -> bool:
-	if active == local_player.team and node.team != local_player.team and not node.frozen:
-		return _send_tag(id)
-	if node.team == local_player.team and node.frozen:
-		return _send_unfreeze(id)
-	return false
-
-func _active_team() -> String:
-	if online_mode:
-		match phase_label:
-			"turn_mime": return "mime"
-			"turn_clown": return "clown"
-		return ""
-	return rules.active_team()
-
-func _send_tag(target_id: String) -> bool:
-	if online_mode:
-		# Same null / disconnected guard as _stream_input: the player can
-		# trigger a tag during the one-frame window between
-		# _on_back_to_menu (or a failed reconnect) nulling room_client
-		# and the scene actually swapping.
-		if room_client == null or not room_client.is_connected_to_server():
-			return false
-		room_client.send_tag(target_id)
-		return true
-	return rules.try_tag(local_player_id, target_id)
-
-func _send_unfreeze(target_id: String) -> bool:
-	if online_mode:
-		if room_client == null or not room_client.is_connected_to_server():
-			return false
-		room_client.send_unfreeze(target_id)
-		return true
-	return rules.try_unfreeze(local_player_id, target_id)
 
 # ---------------------------------------------------------------------------
 # Offline event handlers

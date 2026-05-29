@@ -13,7 +13,7 @@ extends Node
 ##
 ## Host pattern: stores an `arena: Node` reference set at construction.
 ## Reads arena.room_client / arena.hud / arena.pending_inputs /
-## arena.contact_cooldowns / arena.snapshot_received / arena._attach_dialog_lifecycle
+## arena.contacts / arena.snapshot_received / arena._attach_dialog_lifecycle
 ## / arena._on_back_to_menu and writes to a couple of those.
 
 # Keepalive ping interval. Cloudflare Durable Object sockets time out
@@ -100,7 +100,7 @@ func _schedule_next() -> void:
 	# across reconnects is unlikely but possible, and a stale entry would
 	# silently swallow the first tag after resume.
 	arena.pending_inputs.clear()
-	arena.contact_cooldowns.clear()
+	arena.contacts.reset_cooldowns()
 	arena.snapshot_received = false
 	arena.room_client.connect_to(GameState.server_url)
 	# If the connect call dispatches another `disconnected` immediately

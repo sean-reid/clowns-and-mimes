@@ -6,6 +6,41 @@ When cutting a release: rename the `[Unreleased]` heading below to the version b
 
 ## [Unreleased]
 
+## [0.5.2] - 2026-05-28
+
+Quality-of-life and correctness patch. A churny reconnect no longer flashes the "Reconnecting..." banner for blips the ladder absorbs, tag-rejection reasons beyond "out of reach" now surface in the side log, and a handful of fix-on-disconnect bugs were closed. Under the hood the backend gained runtime WS-message validation, a per-connection rate limit, a matchmaker protocol-version handshake, and a substantial refactor + test pass (cross-language fixtures for movement, grid maze, topology, and physics; tagRules pulled into the shared module; TagManager and SnapshotBroadcaster extracted from `room.ts`). Engine bumped to Godot 4.6.3.
+
+### Added
+
+- WebSocket message validation in the room. Malformed or wrong-shape payloads now get `invalid_message` and are dropped before they reach the simulation, instead of feeding garbage into `stepMovement`.
+- Per-connection token-bucket rate limit on the room WS (120 burst, 60/s sustained). A flooding client is rejected with `rate_limited` without closing the socket.
+- Matchmaker protocol-version handshake via `X-Protocol-Version` header on `/lobby`, `/lobby/:code/join`, `/open/join`. Stale clients now see "This client is out of date. Update to play online." before the WS dial.
+- Tag-rejection reasons beyond `vertical_separation` now surface to the HUD side log when a tag misses: `wall_in_way` ("Tag blocked: wall in the way"), `just_saved` ("Just unfrozen - try again in a moment"), `not_your_turn` ("Wait for your team's turn"). Throttled to one line per 1.5 s so contact spam doesn't fill the log.
+- Single source of truth for shared TS↔GDScript constants. `backend/shared/src/{physics,movement}.ts` stays canonical; a generator emits `game/scripts/shared_constants.gd` and CI fails if anyone hand-edits the generated file.
+- Cross-language determinism fixtures for `stepMovement`, `gridMaze`, topology distance/wrap, and the jump arc / lockout. A drift between TS and GDScript implementations now trips the GDScript test runner.
+
+### Changed
+
+- Engine bumped to Godot 4.6.3 (was 4.3). CI installs the matching version; `project.godot`'s features marker updated.
+- Reconnect banner now waits 1 s before showing, so transient CF edge / DO migration blips the ladder absorbs in under 500 ms no longer flash the "Reconnecting..." UI.
+- HUD team-status icons are pre-pooled instead of `queue_free`d + recreated per delta. Removes a known per-event node-churn hotspot.
+- A* point paths in the labyrinth are LRU-cached. With 6 bots converging on a small set of patrol targets, repeated path queries hit the cache instead of re-running the A* walk.
+
+### Fixed
+
+- `contact_cooldowns` is now cleared on reconnect and on fresh snapshot. A reconnect into a fresh match could otherwise carry a stale cooldown for a reused ID and silently swallow the first tag attempt after resume.
+- `_advance_predicted_tick` is now gated on `_pred_armed`. The predictor no longer advances from `Vector2.ZERO` when input streaming fires before the first snapshot.
+- Reconnect, version-mismatch, and match-ended dialogs are freed on every close path (including the X button and the version-mismatch "Close" OK button). A churny reconnect session no longer stacks dead dialogs in the scene tree.
+- Smoke test now sends `X-Protocol-Version` and uses the shared `PROTOCOL_VERSION` constant. The previous hardcoded `PROTOCOL_VERSION = 1` would have broken the smoke against any current deploy.
+
+### Under the hood
+
+- `room.ts` is down from 1982 to 1887 lines after extracting `TagManager` (state-writing tag/freeze handlers) and `SnapshotBroadcaster` (broadcast + per-tick delta builder).
+- `@cm/shared/tagRules` holds the pure tag-validation rules with 11 unit tests covering same-team, frozen attacker, wrong-turn, just-saved grace, out-of-range, wall blocking, and the vertical-overlap gate.
+- Backend CI gained coverage reporting (Vitest `--coverage` + uploaded artifact) and a CHANGELOG-validation step that fails a tag push when the matching `[X.Y.Z]` section is missing.
+- Weekly Dependabot scans landed for both npm and GitHub Actions.
+- `docs/ARCHITECTURE.md` refreshed: the stale 15 s reconnect grace is now 45 s, the monorepo layout calls out the extracted modules, and the anti-cheat section reflects what's actually enforced.
+
 ## [0.5.1] - 2026-05-27
 
 Closes a gap shipped with v0.5.0: spacebar now jumps in offline mode, and offline bots learn the same three jump triggers their server-driven counterparts use. The jumping feature is now identical online and offline.

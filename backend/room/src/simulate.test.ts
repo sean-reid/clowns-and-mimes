@@ -288,4 +288,33 @@ describe('Room.simulate', () => {
     expect(after.position.x).toBe(startPos.x);
     expect(after.position.z).toBe(startPos.z);
   });
+
+  it('still advances lastAppliedSeq for a frozen player so the client can prune', () => {
+    // Regression for the 2026-05-29 freeze: a frozen player's inputs were
+    // drained without updating lastAppliedSeq, so every delta's ackSeq
+    // stayed stuck at the value-at-freeze. The client's pending_inputs
+    // buffer grew unboundedly at ~60/s and reconcile() replays became
+    // O(N), tanking the frame rate within ~90 s. Drain must still ack.
+    const room = makeRoom();
+    setPhase(room, 'free_roam');
+    const h1 = placeHuman(room, 'h1', 'mime', 0, 0);
+    h1.frozen = true;
+    for (let seq = 1; seq <= 60; seq += 1) {
+      queueInput(room, 'h1', {
+        seq,
+        dt: 1 / 60,
+        move: { x: 0, z: 0 },
+        lookYaw: 0,
+        sprint: false,
+        nowMs: Date.now(),
+      });
+      callSimulate(room);
+      vi.advanceTimersByTime(1000 / 60);
+    }
+    const lastApplied = (room as unknown as { lastAppliedSeq: Map<string, number> }).lastAppliedSeq;
+    // After 60 ticks each with seq 1..60, the ack should sit at 60.
+    // (Whether the player moved is asserted by the prior test; this one
+    // only cares that the seq advanced.)
+    expect(lastApplied.get('h1')).toBe(60);
+  });
 });

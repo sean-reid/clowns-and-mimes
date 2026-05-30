@@ -39,6 +39,7 @@ const ReconnectControllerScript := preload("res://scripts/reconnect_controller.g
 const ContactInteractionsScript := preload("res://scripts/contact_interactions.gd")
 const OfflineModeScript := preload("res://scripts/offline_mode.gd")
 const ProjectileRendererScript := preload("res://scripts/projectile_renderer.gd")
+const ItemRendererScript := preload("res://scripts/item_renderer.gd")
 const SharedConstants := preload("res://scripts/shared_constants.gd")
 
 # ---------------------------------------------------------------------------
@@ -140,6 +141,9 @@ var _jump_was_held: bool = false
 # one shot per press. The server also gates re-fires on its cooldown, but
 # debouncing here keeps the wire stream to one shoot message per click.
 var _shoot_was_held: bool = false
+# Rising-edge tracker for the use-item key so holding E activates exactly once
+# per press. The server no-ops a use_item with an empty slot anyway.
+var _use_item_was_held: bool = false
 # Wall-clock ms of the last shoot message sent. Mirrors the server's cooldown
 # so rapid clicking doesn't spend wire frames on shots the server will reject.
 var _last_shot_at_ms: int = -1000000
@@ -147,6 +151,11 @@ var _last_shot_at_ms: int = -1000000
 # Online-only. Pooled sphere renderer for server-authoritative projectiles.
 # Instantiated on the online path once World is ready; null in offline mode.
 var projectile_renderer: RefCounted = null
+
+# Online-only. Pooled floating-icon renderer for server-authoritative power-up
+# items. Instantiated alongside projectile_renderer on the online path; null in
+# offline mode.
+var item_renderer: RefCounted = null
 
 # Shared.
 var local_player: PlayerScript = null
@@ -264,6 +273,8 @@ func _process(delta: float) -> void:
 			predictor.advance_local_prediction(delta)
 		if projectile_renderer != null:
 			projectile_renderer.tick(delta)
+		if item_renderer != null:
+			item_renderer.tick(delta)
 	else:
 		offline.drive_hud()
 
@@ -295,6 +306,7 @@ func _physics_process(delta: float) -> void:
 func _start_online() -> void:
 	hud.append_log("Connecting...")
 	projectile_renderer = ProjectileRendererScript.new(self)
+	item_renderer = ItemRendererScript.new(self)
 	hud.set_crosshair_visible(true)
 	# The lobby already opened the WebSocket (and sent `join`) before
 	# transitioning into the arena. Re-use that RoomClient so reconciliation
@@ -368,6 +380,9 @@ func _on_snapshot(snapshot: Dictionary, you_are: String) -> void:
 	contacts.reset_cooldowns()
 	if projectile_renderer != null:
 		projectile_renderer.clear()
+	# Items ride the snapshot (static between pickups); reconcile the floor set.
+	if item_renderer != null:
+		item_renderer.render_from_snapshot(snapshot.get("items", []))
 	for entry in snapshot.get("players", []):
 		if entry.get("id", "") == local_player_id and local_player != null:
 			var pos: Dictionary = entry.get("position", {"x": 0.0, "z": 0.0})
@@ -413,6 +428,8 @@ func _on_room_event(event: Dictionary) -> void:
 		"tag_result": _handle_tag_result(event)
 		"projectile_fired": _handle_projectile_fired(event)
 		"projectile_hit": _handle_projectile_hit(event)
+		"item_spawn": _handle_item_spawn(event)
+		"item_pickup": _handle_item_pickup(event)
 
 func _handle_projectile_fired(event: Dictionary) -> void:
 	# Spawn the sphere instantly so the shooter sees their shot a frame after
@@ -426,6 +443,18 @@ func _handle_projectile_hit(event: Dictionary) -> void:
 	# or expiry) rather than waiting for the next delta to drop it.
 	if projectile_renderer != null:
 		projectile_renderer.on_hit(String(event.get("projectileId", "")))
+
+func _handle_item_spawn(event: Dictionary) -> void:
+	# Show a respawned item instantly. The initial layout rides the snapshot;
+	# only respawns arrive as item_spawn events.
+	if item_renderer != null:
+		item_renderer.on_spawn(event.get("item", {}))
+
+func _handle_item_pickup(event: Dictionary) -> void:
+	# Hide the picked-up item immediately. If the local player grabbed it, the
+	# held-item HUD slot fills off the next delta's activeItem.
+	if item_renderer != null:
+		item_renderer.on_pickup(String(event.get("itemId", "")))
 
 func _handle_tag_result(event: Dictionary) -> void:
 	if bool(event.get("ok", false)):
@@ -625,6 +654,14 @@ func _stream_input(delta: float) -> void:
 		_shoot_was_held = true
 	else:
 		_shoot_was_held = false
+	# Use-item is a standalone message like shoot, on the rising edge of E so a
+	# held key activates once per press. The server no-ops an empty slot.
+	if not frozen and _input_active() and Input.is_action_pressed("use_item"):
+		if not _use_item_was_held:
+			room_client.send_use_item()
+		_use_item_was_held = true
+	else:
+		_use_item_was_held = false
 	var input_now_ms: int = int(Time.get_unix_time_from_system() * 1000.0)
 	pending_inputs.append({
 		"seq": input_seq,
@@ -709,6 +746,9 @@ func _apply_player_state(entry: Dictionary) -> void:
 		# server-authoritative bits that the client cannot derive on its own.
 		node.frozen = is_frozen
 		node.sprint_energy = sprint
+		# Held power-up slot is server-authoritative: a pickup sets activeItem,
+		# a use_item clears it. Empty/absent string hides the slot.
+		hud.set_held_item(String(entry.get("activeItem", "")))
 		# Local body's jumpStartedAt comes from the predictor, not the
 		# server snapshot - the predictor is one tick ahead and stays
 		# in sync via the reconcile replay. Setting it here would lag

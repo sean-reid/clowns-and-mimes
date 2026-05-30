@@ -104,6 +104,11 @@ func send_shoot(dir: Vector3) -> void:
 	# the predicted trail lines up; the server clamps large skew.
 	_enqueue({"t": "shoot", "dirX": dir.x, "dirY": dir.y, "dirZ": dir.z, "nowMs": _now_ms()})
 
+# Activate the held power-up. The server clears the slot and confirms with an
+# item_used event; the held-item HUD slot clears off the next delta's activeItem.
+func send_use_item() -> void:
+	_enqueue({"t": "use_item"})
+
 func send_tag(target_id: String) -> void:
 	_enqueue({"t": "tag_attempt", "targetId": target_id, "clientTime": _now_ms()})
 

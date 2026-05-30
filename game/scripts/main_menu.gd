@@ -54,6 +54,40 @@ func _ready() -> void:
 	AudioBus.set_bus_volume("Music", 0.0)
 	AudioBus.play_music_from_path(AssetPaths.THEME_AUDIO)
 	_check_for_updates()
+	_maybe_show_telemetry_opt_in()
+
+# First time the menu loads with no recorded consent answer, ask the
+# player. Once they answer (yes or no), the question never returns.
+# Independent of the version-check popup; both can stack if both fire.
+func _maybe_show_telemetry_opt_in() -> void:
+	if not Settings.telemetry_consent.is_empty():
+		return
+	var dialog := ConfirmationDialog.new()
+	dialog.title = "Share gameplay stats?"
+	dialog.dialog_text = (
+		"Help improve Clowns and Mimes by sharing anonymous gameplay "
+		+ "stats (match duration, items used, no personal info)?"
+	)
+	dialog.ok_button_text = "Yes, share"
+	dialog.get_cancel_button().text = "No thanks"
+	dialog.unresizable = true
+	dialog.confirmed.connect(_accept_telemetry)
+	dialog.canceled.connect(func(): Settings.set_telemetry_consent("no"))
+	dialog.confirmed.connect(dialog.queue_free)
+	dialog.canceled.connect(dialog.queue_free)
+	dialog.close_requested.connect(dialog.queue_free)
+	add_child(dialog)
+	dialog.popup_centered()
+
+func _accept_telemetry() -> void:
+	Settings.set_telemetry_consent("yes")
+	Telemetry.ensure_id()
+	Telemetry.event({
+		"t": "session_start",
+		"v": ProjectSettings.get_setting("application/config/version", "0.0.0"),
+		"platform": OS.get_name(),
+		"telemetryId": Settings.telemetry_id,
+	})
 
 func _check_for_updates() -> void:
 	var checker := VersionCheck.new()

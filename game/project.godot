@@ -19,6 +19,7 @@ AudioBus="*res://scripts/audio_bus.gd"
 Settings="*res://scripts/settings.gd"
 UsernameGenerator="*res://scripts/username_generator.gd"
 NetClient="*res://scripts/network/net_client.gd"
+Telemetry="*res://scripts/network/telemetry.gd"
 
 [display]
 

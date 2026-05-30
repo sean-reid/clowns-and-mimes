@@ -1,0 +1,20 @@
+name = "cm-telemetry"
+main = "src/index.ts"
+compatibility_date = "2025-01-01"
+compatibility_flags = ["nodejs_compat"]
+
+[env.dev]
+name = "cm-telemetry-dev"
+vars = { ENV = "dev", RETENTION_DAYS = "30" }
+# KV namespace IDs are created in the CF dashboard and pasted here.
+# Each environment has its own namespace so dev events don't pollute prod.
+kv_namespaces = [
+  { binding = "EVENTS", id = "REPLACE_WITH_DEV_KV_ID" },
+]
+
+[env.production]
+name = "cm-telemetry"
+vars = { ENV = "production", RETENTION_DAYS = "30" }
+kv_namespaces = [
+  { binding = "EVENTS", id = "REPLACE_WITH_PROD_KV_ID" },
+]

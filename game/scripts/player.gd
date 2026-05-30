@@ -247,6 +247,22 @@ func _process(delta: float) -> void:
 	# observers. _delta is the render frame dt, used to ease the
 	# recovery scale back to identity after a jump ends.
 	_apply_jump_squash(delta)
+	# Jump-arc Y at render rate. The arc is a pure function of
+	# (jump_started_at_ms, now_ms) - no integration, no collision -
+	# so evaluating it every render frame keeps the jump smooth on
+	# high-refresh-rate monitors. Previously this was set only in
+	# _physics_process (60 Hz) on the local + bot bodies, and via
+	# the snapshot-driven position on remote bodies (~60 Hz). On a
+	# 144 Hz display that left the same Y on screen for ~2-3 frames
+	# in a row, producing the visible stair-step stutter during
+	# jumps that was smooth on a 60 Hz Mac.
+	#
+	# Skip when frozen: the frozen-descent ramp above already owns
+	# Y in that case. Skip remote bodies that haven't received their
+	# first snapshot yet so we don't override the initial spawn.
+	if not frozen and (is_local or _remote_armed):
+		var now_ms: int = int(Time.get_unix_time_from_system() * 1000.0)
+		global_position.y = PhysicsScript.jump_arc_y(jump_started_at_ms, now_ms)
 
 func _physics_process(delta: float) -> void:
 	if frozen:

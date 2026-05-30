@@ -6,6 +6,14 @@ When cutting a release: rename the `[Unreleased]` heading below to the version b
 
 ## [Unreleased]
 
+## [0.5.7] - 2026-05-29
+
+Patch release. One fix.
+
+### Fixed
+
+- Jumping no longer looks stair-stepped on high-refresh-rate monitors. The jump arc Y was being set in `_physics_process` (60 Hz) for local and bot bodies, and via the per-server-tick snapshot for remote bodies. On a 144 Hz+ Windows display the same Y stayed on screen for 2–3 consecutive frames then snapped to the next 60 Hz step — the visible stair-step. Mac at 60 Hz didn't show it because render rate matched the data rate. The jump arc is a pure function of `(jump_started_at_ms, now_ms)` with no integration step, so it's now evaluated every render frame in `_process` for any body whose `jumpStartedAt` is set. XZ already had the equivalent render-rate path via the predictor (local) and entity interpolation (remote).
+
 ## [0.5.6] - 2026-05-29
 
 Patch release. Two private-lobby fixes from playtest plus an open-match bot-fill correction.

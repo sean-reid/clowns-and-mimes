@@ -14,7 +14,8 @@
     "./movement": "./src/movement.ts",
     "./mobius": "./src/mobius.ts",
     "./physics": "./src/physics.ts",
-    "./tagRules": "./src/tagRules.ts"
+    "./tagRules": "./src/tagRules.ts",
+    "./projectiles": "./src/projectiles.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit",

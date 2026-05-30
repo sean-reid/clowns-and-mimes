@@ -3,7 +3,11 @@ extends CanvasLayer
 ## Heads-up display: sprint bar, countdown timer, team status, side event log,
 ## center frozen-overlay text.
 
+const ItemVisuals := preload("res://scripts/item_visuals.gd")
+
 @onready var sprint_bar: ProgressBar = $Margins/SprintBar
+@onready var item_slot: ColorRect = $Margins/ItemSlot
+@onready var item_label: Label = $Margins/ItemSlot/ItemLabel
 @onready var countdown_label: Label = $Margins/Countdown
 @onready var team_status: HBoxContainer = $Margins/TeamStatus
 @onready var event_log: VBoxContainer = $Margins/EventLog
@@ -75,6 +79,7 @@ func _ready() -> void:
 	topology_badge.text = ""
 	battle_cry_label.text = ""
 	battle_cry_label.modulate.a = 0.0
+	item_slot.visible = false
 	_setup_log_lines()
 	_setup_team_icons()
 	_setup_crosshair()
@@ -132,6 +137,18 @@ func set_local_team(team: String) -> void:
 
 func set_sprint(value: float) -> void:
 	sprint_bar.value = value
+
+## Held power-up slot. Empty string hides the slot; otherwise show the item's
+## short label tinted to its category color. Driven by the server-authoritative
+## activeItem field on each delta, so a pickup fills it and a use_item clears it.
+func set_held_item(item_type: String) -> void:
+	if item_type.is_empty():
+		item_slot.visible = false
+		return
+	item_slot.visible = true
+	var tint: Color = ItemVisuals.color(item_type)
+	item_label.text = ItemVisuals.label(item_type)
+	item_label.modulate = tint
 
 func set_countdown_seconds(seconds: float) -> void:
 	# Negative is the explicit "no countdown" sentinel. Zero (or sub-millisecond

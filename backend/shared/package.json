@@ -15,7 +15,8 @@
     "./mobius": "./src/mobius.ts",
     "./physics": "./src/physics.ts",
     "./tagRules": "./src/tagRules.ts",
-    "./projectiles": "./src/projectiles.ts"
+    "./projectiles": "./src/projectiles.ts",
+    "./items": "./src/items.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit",

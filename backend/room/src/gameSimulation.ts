@@ -64,6 +64,7 @@ export interface GameSimulationHost {
   activeHumans(): number;
   simulateBots(dt: number): void;
   stepProjectiles(dt: number): void;
+  stepItems(dt: number): void;
   broadcast(msg: ServerToClient): void;
   broadcastDelta(): void;
 }
@@ -164,6 +165,10 @@ export class GameSimulation {
     // through the same tagged path; the next broadcastDelta carries the
     // updated projectile set.
     this.host.stepProjectiles(dt);
+    // Item respawn timers + pickup-on-touch run against post-collision
+    // positions too. Pickups/respawns broadcast as events; the static
+    // item set rides the snapshot, not the delta.
+    this.host.stepItems(dt);
   }
 
   /**

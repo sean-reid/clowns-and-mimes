@@ -1,0 +1,20 @@
+name = "cm-telemetry"
+main = "src/index.ts"
+compatibility_date = "2025-01-01"
+compatibility_flags = ["nodejs_compat"]
+
+[env.dev]
+name = "cm-telemetry-dev"
+vars = { ENV = "dev", RETENTION_DAYS = "30" }
+# Each environment has its own KV namespace so dev events don't
+# pollute prod. Created via `wrangler kv namespace create`.
+kv_namespaces = [
+  { binding = "EVENTS", id = "57a8e38171784bb99ebb8f82a1c0021d" },
+]
+
+[env.production]
+name = "cm-telemetry"
+vars = { ENV = "production", RETENTION_DAYS = "30" }
+kv_namespaces = [
+  { binding = "EVENTS", id = "c21d62bff98b40ab92ff3f59d5b5ab49" },
+]

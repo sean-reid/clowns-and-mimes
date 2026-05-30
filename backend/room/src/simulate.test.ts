@@ -27,6 +27,7 @@ interface MockState {
   acceptWebSocket: (ws: WebSocket) => void;
   storage: MockStorage;
   blockConcurrencyWhile: <T>(fn: () => Promise<T>) => Promise<T>;
+  getWebSockets: () => WebSocket[];
 }
 
 function makeMockStorage(): MockStorage {
@@ -56,6 +57,9 @@ function makeMockState(roomId = 'test-room-0001'): MockState {
     // fire-and-forget behavior is enough; the constructor's restore await
     // still runs to completion before the test reads any state.
     blockConcurrencyWhile: async <T>(fn: () => Promise<T>): Promise<T> => fn(),
+    // No hibernated WSes in unit tests; the simulate path doesn't go
+    // through the WS upgrade handler.
+    getWebSockets: () => [],
   };
 }
 

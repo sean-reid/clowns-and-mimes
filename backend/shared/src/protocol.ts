@@ -156,7 +156,7 @@ export type ServerToClient =
   | { t: 'tag_result'; ok: boolean; targetId?: string; reason?: string }
   | { t: 'unfreeze_result'; ok: boolean; targetId?: string; reason?: string }
   // Server-side ack for a shoot message. ok=false carries the reject
-  // reason (`cooldown`, `wrong_turn`, `frozen`, `out_of_bounds`).
+  // reason (`cooldown`, `wrong_turn`, `frozen`, `bad_direction`).
   | { t: 'shoot_result'; ok: boolean; projectileId?: string; reason?: string }
   | { t: 'pong'; serverTime: number; clientTime: number }
   | { t: 'error'; code: ErrorCode; message: string };

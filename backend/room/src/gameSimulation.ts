@@ -63,6 +63,7 @@ export interface GameSimulationHost {
   incrementRoundNumber(): void;
   activeHumans(): number;
   simulateBots(dt: number): void;
+  stepProjectiles(dt: number): void;
   broadcast(msg: ServerToClient): void;
   broadcastDelta(): void;
 }
@@ -158,6 +159,11 @@ export class GameSimulation {
       this.host.prevTickPositions.set(p.id, { x: p.position.x, z: p.position.z });
     }
     this.recordPositionsForLagComp();
+    // Advance in-flight projectiles after players have settled this tick
+    // so hit tests run against post-collision positions. Freezes apply
+    // through the same tagged path; the next broadcastDelta carries the
+    // updated projectile set.
+    this.host.stepProjectiles(dt);
   }
 
   /**

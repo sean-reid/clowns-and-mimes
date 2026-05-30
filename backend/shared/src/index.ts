@@ -5,4 +5,5 @@ export * from './gridMaze.ts';
 export * from './movement.ts';
 export * from './physics.ts';
 export * from './tagRules.ts';
+export * from './projectiles.ts';
 export * from './telemetry.ts';

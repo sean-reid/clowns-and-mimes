@@ -110,6 +110,11 @@ export function parseClientMessage(raw: unknown): ClientToServer | null {
       if (!isFinite(raw.clientTime)) return null;
       return { t: 'ping', clientTime: raw.clientTime };
     }
+    case 'shoot': {
+      if (!isFinite(raw.dirX) || !isFinite(raw.dirY) || !isFinite(raw.dirZ)) return null;
+      if (!isSafeInt(raw.nowMs)) return null;
+      return { t: 'shoot', dirX: raw.dirX, dirY: raw.dirY, dirZ: raw.dirZ, nowMs: raw.nowMs };
+    }
     case 'start_match':
       return { t: 'start_match' };
     default:

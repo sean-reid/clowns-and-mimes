@@ -22,6 +22,7 @@ import { MAX_SPRINT } from '@cm/shared/movement';
 import { BotManager, type BotManagerHost } from './botManager.ts';
 import { BotPathfinder } from './botPathfinder.ts';
 import { GameSimulation, type GameSimulationHost } from './gameSimulation.ts';
+import { ProjectileManager, type ProjectileManagerHost } from './projectileManager.ts';
 import { parseClientMessage } from './messageValidator.ts';
 import { RateLimiter } from './rateLimiter.ts';
 import { RoomPersistence, type PersistedRoomState } from './roomPersistence.ts';
@@ -165,6 +166,7 @@ export class Room implements DurableObject {
   private readonly broadcaster: SnapshotBroadcaster;
   private readonly bots: BotManager;
   private readonly sim: GameSimulation;
+  private readonly projectiles: ProjectileManager;
   // One token bucket per live WebSocket. Created on accept, removed on
   // detach. webSocketMessage rejects with a rate_limited error when the
   // bucket is empty; the connection stays open so a transient burst
@@ -232,6 +234,7 @@ export class Room implements DurableObject {
       getSeed: () => this.seed,
       getTopology: () => this.topology,
       getRoomId: () => this.state.id.toString(),
+      getProjectiles: () => this.projectiles.getProjectiles(),
     };
     this.broadcaster = new SnapshotBroadcaster(broadcasterHost);
     const host: TagManagerHost = {
@@ -304,10 +307,26 @@ export class Room implements DurableObject {
       },
       activeHumans: () => this.activeHumans(),
       simulateBots: (dt) => this.bots.simulate(dt),
+      stepProjectiles: (dt) => this.projectiles.step(dt),
       broadcast: (msg) => this.broadcast(msg),
       broadcastDelta: () => this.broadcaster.broadcastDelta(),
     };
     this.sim = new GameSimulation(simHost);
+    const projectilesHost: ProjectileManagerHost = {
+      players: this.players,
+      lastSavedAt: this.lastSavedAt,
+      connections: this.connections,
+      worldWidth: WORLD_WIDTH,
+      unfreezeGraceMs: UNFREEZE_GRACE_MS,
+      getWalls: () => this.walls,
+      getTopology: () => this.topology,
+      getPhase: () => this.phase,
+      broadcast: (msg) => this.broadcast(msg),
+      send: (ws, msg) => this.send(ws, msg),
+      freezePlayer: (p) => this.tagManager.freezePlayer(p),
+      checkWin: () => this.tagManager.checkWin(),
+    };
+    this.projectiles = new ProjectileManager(projectilesHost);
   }
 
   private rebuildPathfinder(): void {
@@ -534,6 +553,9 @@ export class Room implements DurableObject {
         return;
       case 'ping':
         this.send(ws, { t: 'pong', clientTime: msg.clientTime, serverTime: Date.now() });
+        return;
+      case 'shoot':
+        this.projectiles.onShoot(ws, { x: msg.dirX, y: msg.dirY, z: msg.dirZ }, msg.nowMs);
         return;
       case 'start_match':
         this.onStartMatch(ws);
@@ -942,6 +964,7 @@ export class Room implements DurableObject {
 
   private startMatch(): void {
     this.balanceHumansForMatchStart();
+    this.projectiles.clear();
     this.firstTeam = Math.random() < 0.5 ? 'mime' : 'clown';
     this.phase = 'free_roam';
     this.turnEndsAt = Date.now() + FREE_ROAM_MS;

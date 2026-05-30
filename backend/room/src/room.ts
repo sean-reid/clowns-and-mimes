@@ -668,6 +668,16 @@ export class Room implements DurableObject {
     const hasHost = this.expectedHostToken !== null;
     if (!hasHost) {
       if (this.phase === 'filling' && this.humanPlayers().length >= 2 && !this.tickHandle) {
+        // Two humans landed in an open room before the 3 s bot-fill
+        // timer could fire. Fill bots NOW before starting so the match
+        // doesn't go live as a bare 1v1 (or worse, larger). The 3 s
+        // delayed path runs fillTeams inside its callback; this immediate
+        // path was missing that step, which produced empty-team
+        // strangers matches when two players clicked Find Match in the
+        // same tick. cancelFill() drops any timer that hasn't fired yet
+        // (the 3 s timer could be racing the second-human join).
+        this.bots.cancelFill();
+        this.bots.fillTeams();
         this.startMatch();
       } else if (this.phase === 'filling' && !this.tickHandle) {
         this.bots.scheduleFill();

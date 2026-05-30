@@ -992,6 +992,12 @@ export class Room implements DurableObject {
     this.phase = 'free_roam';
     this.turnEndsAt = Date.now() + FREE_ROAM_MS;
     this.broadcast({ t: 'event', kind: { kind: 'phase', phase: this.phase } });
+    // Re-send the snapshot now that items.spawn() has populated the floor.
+    // The static item layout only rides the snapshot, and clients that
+    // joined during `filling` already received one with no items; without
+    // this resend the floor power-ups never reach them. It also syncs the
+    // match-start spawn repositions from balanceHumansForMatchStart.
+    this.broadcastSnapshot();
     this.tickHandle = setInterval(() => this.sim.tick(), TICK_MS);
     // Drop ourselves from the matchmaker's open-room pool immediately
     // so strangers stop being routed here. The notifyMatchmaker guard
@@ -1040,6 +1046,25 @@ export class Room implements DurableObject {
 
   private snapshot(): RoomSnapshot {
     return this.broadcaster.snapshot();
+  }
+
+  /**
+   * Re-send a fresh per-client snapshot envelope to every connection. The
+   * snapshot carries per-recipient youAre + sessionToken, so this can't go
+   * through the shared broadcast path. Used at match start to deliver the
+   * item layout (which only rides the snapshot) to clients that joined
+   * during `filling`.
+   */
+  private broadcastSnapshot(): void {
+    const snapshot = this.snapshot();
+    for (const conn of this.connections.values()) {
+      this.send(conn.ws, {
+        t: 'snapshot',
+        snapshot,
+        youAre: conn.playerId,
+        sessionToken: this.sessions.tokenFor(conn.playerId),
+      });
+    }
   }
 
   private broadcast(msg: ServerToClient): void {

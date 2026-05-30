@@ -32,7 +32,10 @@ function makeSharedStorage(): MockStorage {
   };
 }
 
-function makeRoomAgainst(storage: MockStorage): { room: Room; done: Promise<void> } {
+function makeRoomAgainst(
+  storage: MockStorage,
+  hibernatedWebSockets: WebSocket[] = [],
+): { room: Room; done: Promise<void> } {
   // Capture the blockConcurrencyWhile promise so callers can await
   // restoration before reading the room.
   let restorePromise: Promise<void> = Promise.resolve();
@@ -47,10 +50,30 @@ function makeRoomAgainst(storage: MockStorage): { room: Room; done: Promise<void
       restorePromise = p.then(() => undefined);
       return p;
     },
+    getWebSockets: () => hibernatedWebSockets,
   };
   const env: RoomEnv = {};
   const room = new Room(state as unknown as DurableObjectState, env);
   return { room, done: restorePromise };
+}
+
+interface MockAttachedWebSocket {
+  deserializeAttachment(): unknown;
+  serializeAttachment(value: unknown): void;
+}
+
+function makeAttachedWs(playerId: string): MockAttachedWebSocket {
+  // Mimics the minimum surface state.getWebSockets() returns after
+  // CF rehydrates a hibernated DO: each WS has a serialized attachment
+  // we set via onJoin / resumeSession. The room rebuilds connections
+  // from these on construct.
+  let attachment: unknown = { playerId };
+  return {
+    deserializeAttachment: () => attachment,
+    serializeAttachment: (value: unknown) => {
+      attachment = value;
+    },
+  };
 }
 
 function placeHuman(
@@ -167,5 +190,36 @@ describe('Room persistence across DO restart', () => {
     const thirdWalls = (third.room as unknown as { walls: readonly unknown[] }).walls.length;
     expect(secondWalls).toBe(thirdWalls);
     expect(secondWalls).toBeGreaterThan(0);
+  });
+
+  it('rebuilds connections from hibernated WebSockets on construct', async () => {
+    // Regression for the 2026-05-29 hibernation bug: CF rehydrates idle
+    // DOs with new JS WebSocket references, so a Map<WebSocket, Conn>
+    // keyed by the pre-hibernation object is empty after revival. The
+    // constructor now walks state.getWebSockets() and rebuilds the
+    // connections map from each WS's serialized attachment. Without
+    // this, the host stopped seeing joiners arrive, hitting Start
+    // surfaced 'only host can start', and Back orphaned the player
+    // slot in the players map.
+    const storage = makeSharedStorage();
+
+    // First incarnation - seed a player, persist.
+    const first = makeRoomAgainst(storage);
+    await first.done;
+    placeHuman(first.room, 'h1', 'mime', 0, 0);
+    primeSession(first.room, 'h1', 'tok-h1');
+    persistNow(first.room);
+
+    // Second incarnation - simulate hibernation revival with one live
+    // WS already attached to 'h1'. The constructor should rebuild the
+    // connections entry for this WS without needing a fresh onJoin.
+    const ws = makeAttachedWs('h1');
+    const second = makeRoomAgainst(storage, [ws as unknown as WebSocket]);
+    await second.done;
+    const connections = (
+      second.room as unknown as { connections: Map<WebSocket, { playerId: string }> }
+    ).connections;
+    expect(connections.size).toBe(1);
+    expect(connections.get(ws as unknown as WebSocket)?.playerId).toBe('h1');
   });
 });

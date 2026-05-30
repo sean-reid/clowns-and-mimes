@@ -19,15 +19,15 @@ import { PLAYER_RADIUS } from './labyrinth.ts';
 // Travel speed in world units per second. Fast enough to land at moderate
 // range, slow enough to strafe-dodge. Tuned by playtest after the client
 // shooting PR lands.
-export const PROJECTILE_SPEED = 12;
+export const PROJECTILE_SPEED = 16;
 // Collision half-extent of the projectile itself, added to the player
 // radius for the hit test.
-export const PROJECTILE_RADIUS = 0.3;
+export const PROJECTILE_RADIUS = 0.2;
 // Center-to-center XZ distance under which a projectile freezes an enemy.
 // Sum of the two radii plus a small feel margin.
 export const PROJECTILE_HIT_RADIUS = PLAYER_RADIUS + PROJECTILE_RADIUS + 0.2;
 // Flight time before a projectile dissipates if it hits nothing. At
-// PROJECTILE_SPEED this is ~30 units of travel — roughly the arena's
+// PROJECTILE_SPEED this is ~40 units of travel — roughly the arena's
 // half-width — so a clean miss expires rather than orbiting a torus.
 export const PROJECTILE_LIFETIME_MS = 2500;
 // Minimum gap between shots from one shooter. Per-shooter and persists

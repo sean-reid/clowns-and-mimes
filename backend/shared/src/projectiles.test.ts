@@ -159,8 +159,8 @@ describe('stepProjectiles', () => {
     const near = proj({ position: { x: 39.9, y: HOVER_HEIGHT, z: 0 } });
     const r = stepProjectiles([near], [], ctx({ topology: 'torus', dt: 0.1 }));
     expect(r.survivors).toHaveLength(1);
-    // 39.9 + 12*0.1 = 41.1 wraps to -38.9 on an 80-wide torus.
-    expect(r.survivors[0]!.position.x).toBeCloseTo(-38.9, 6);
+    // 39.9 + 16*0.1 = 41.5 wraps to -38.5 on an 80-wide torus.
+    expect(r.survivors[0]!.position.x).toBeCloseTo(-38.5, 6);
   });
 
   it('is deterministic across identical runs', () => {

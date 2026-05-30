@@ -3,7 +3,7 @@
  * Bump PROTOCOL_VERSION on every breaking change. The room rejects mismatches.
  */
 
-export const PROTOCOL_VERSION = 2 as const;
+export const PROTOCOL_VERSION = 3 as const;
 
 export type Team = 'mime' | 'clown';
 
@@ -46,6 +46,22 @@ export interface PlayerInput {
   nowMs: number;
   actionTag?: string;
   actionUnfreeze?: string;
+}
+
+/**
+ * Active projectile broadcast in deltas. Server owns the simulation;
+ * clients render the position and predict locally for snappy feedback.
+ * Full 3D — projectiles follow the camera's aim direction so airborne
+ * targets and over-the-wall skill shots are both possible.
+ */
+export interface Projectile {
+  id: string;
+  ownerId: string;
+  team: Team;
+  position: Vec3;
+  velocity: Vec3;
+  spawnedAt: number;
+  expiresAt: number;
 }
 
 export interface PlayerState {
@@ -110,6 +126,12 @@ export type ClientToServer =
   | { t: 'tag_attempt'; targetId: string; clientTime: number }
   | { t: 'unfreeze_attempt'; targetId: string; clientTime: number }
   | { t: 'ping'; clientTime: number }
+  // Fire a freeze projectile from the player's current position in
+  // the (dirX, dirY, dirZ) direction. Client normalizes the vector
+  // before sending. nowMs anchors the spawn timestamp the same way
+  // input.nowMs does for jumps; server clamps to ±500 ms of its own
+  // clock to bound client skew. Server enforces the cooldown.
+  | { t: 'shoot'; dirX: number; dirY: number; dirZ: number; nowMs: number }
   // Private-lobby host transitions the room out of `filling` and into
   // `free_roam`. Server fills empty slots with bots on receipt and rejects
   // the message from any non-host player or when the phase is past
@@ -122,10 +144,20 @@ export type ServerToClient =
   // and send it on the next join after a WS drop to resume the same
   // PlayerState rather than spawning fresh.
   | { t: 'snapshot'; snapshot: RoomSnapshot; youAre: string; sessionToken: string }
-  | { t: 'delta'; players: PlayerState[]; phase: RoomPhase; turnEndsAt: number; ackSeq: number }
+  | {
+      t: 'delta';
+      players: PlayerState[];
+      phase: RoomPhase;
+      turnEndsAt: number;
+      ackSeq: number;
+      projectiles?: Projectile[];
+    }
   | { t: 'event'; kind: GameEvent }
   | { t: 'tag_result'; ok: boolean; targetId?: string; reason?: string }
   | { t: 'unfreeze_result'; ok: boolean; targetId?: string; reason?: string }
+  // Server-side ack for a shoot message. ok=false carries the reject
+  // reason (`cooldown`, `wrong_turn`, `frozen`, `out_of_bounds`).
+  | { t: 'shoot_result'; ok: boolean; projectileId?: string; reason?: string }
   | { t: 'pong'; serverTime: number; clientTime: number }
   | { t: 'error'; code: ErrorCode; message: string };
 
@@ -136,7 +168,14 @@ export type GameEvent =
   // phases. All clients render the same cry by indexing into their local
   // MIME_BATTLE_CRIES / CLOWN_BATTLE_CRIES list. Omitted on non-turn phases.
   | { kind: 'phase'; phase: RoomPhase; cryIndex?: number }
-  | { kind: 'win'; team: Team };
+  | { kind: 'win'; team: Team }
+  // Projectile lifecycle. `fired` is broadcast for everyone to render
+  // the trail/audio; `hit` is broadcast on impact (with the victim id
+  // when the projectile hit a player, omitted when it hit a wall or
+  // expired in flight). The freeze itself rides on the standard
+  // 'tagged' event so existing handlers fire unchanged.
+  | { kind: 'projectile_fired'; projectile: Projectile }
+  | { kind: 'projectile_hit'; projectileId: string; victimId?: string };
 
 export const BATTLE_CRY_COUNT = 8;
 

@@ -6,6 +6,16 @@ When cutting a release: rename the `[Unreleased]` heading below to the version b
 
 ## [Unreleased]
 
+## [0.5.6] - 2026-05-29
+
+Patch release. Two private-lobby fixes from playtest plus an open-match bot-fill correction.
+
+### Fixed
+
+- Host now sees joiners arrive in the lobby roster. The server was only broadcasting a phase event on join (no roster info), and the per-tick delta broadcast doesn't run during `filling` phase. Added a one-shot `broadcastDelta()` after every join while filling so existing connections see the new player.
+- Hitting Start as host after the lobby has been idle for ~10+ seconds no longer surfaces "Only Host can start". Same root cause for the duplicate-name-after-rejoin and host-doesn't-see-joiners symptoms: Cloudflare hibernates idle Durable Objects and rehydrates them with new JS `WebSocket` references, which made the `Map<WebSocket, Connection>` lookup return `undefined` for every WS that survived a hibernation. `onStartMatch` then hit the `!conn` branch and emitted `not_host`; `detach` early-returned and `finalizeDisconnect` never cleaned up the host's player slot. Connections are now re-bound via `ws.serializeAttachment({playerId})` on join + resume, and the constructor walks `state.getWebSockets()` after persistence restore to rebuild the connections map.
+- Two strangers clicking Find Match within the same tick no longer drop into a bare 1v1 with no bots. The two-human immediate-start path in `onJoin` was missing the `bots.fillTeams()` call that the 3 s scheduled-fill and host-initiated start paths both include.
+
 ## [0.5.5] - 2026-05-29
 
 Patch release. Fixes the reproducible "start game → quit to menu → Find Match → 4003" loop that left the player unable to connect to any open game until they restarted the client. Two prior fixes in v0.5.4 (matchmaker always-delete on detach; lobby popup routing on close codes) were both correct in spirit but neither could take effect because the room was sending the wrong identifier to the matchmaker.

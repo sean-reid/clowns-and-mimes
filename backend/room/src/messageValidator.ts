@@ -117,6 +117,8 @@ export function parseClientMessage(raw: unknown): ClientToServer | null {
     }
     case 'start_match':
       return { t: 'start_match' };
+    case 'use_item':
+      return { t: 'use_item' };
     default:
       return null;
   }

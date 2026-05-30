@@ -64,6 +64,21 @@ export interface Projectile {
   expiresAt: number;
 }
 
+// Power-up kinds. surge + radar are always in a match's rotation; the rest
+// are drawn deterministically from the seed at match start (see items.ts).
+// PR #5 carries the state/spawn/pickup/use plumbing only; the per-type
+// effects land in later PRs.
+export type ItemType = 'leap' | 'portal' | 'surge' | 'clone' | 'radar' | 'overcharge' | 'cloak';
+
+// A power-up resting on the floor. Static between pickups, so items ride the
+// snapshot and change via item_spawn / item_pickup events rather than the
+// per-tick delta. id is a stable `i-${index}` from the spawn layout.
+export interface Item {
+  id: string;
+  type: ItemType;
+  position: Vec3;
+}
+
 export interface PlayerState {
   id: string;
   name: string;
@@ -86,6 +101,9 @@ export interface PlayerState {
   // rather than the height itself; client and server both compute Y from
   // the same source.
   jumpStartedAt: number | null;
+  // The single power-up the player is holding, or undefined for an empty
+  // slot. No stacking: picking one up while holding is blocked server-side.
+  activeItem?: ItemType;
 }
 
 export type RoomPhase = 'filling' | 'locked' | 'free_roam' | 'turn_mime' | 'turn_clown' | 'ended';
@@ -99,6 +117,9 @@ export interface RoomSnapshot {
   turnEndsAt: number;
   players: PlayerState[];
   winner?: Team;
+  // Available power-ups on the floor. Omitted when none are spawned. Items
+  // are static, so they ride the snapshot; pickups/respawns arrive as events.
+  items?: Item[];
 }
 
 export type Topology = 'plane' | 'torus' | 'mobius' | 'klein';
@@ -136,7 +157,11 @@ export type ClientToServer =
   // `free_roam`. Server fills empty slots with bots on receipt and rejects
   // the message from any non-host player or when the phase is past
   // `filling`.
-  | { t: 'start_match' };
+  | { t: 'start_match' }
+  // Activate the held power-up. Server clears the slot and broadcasts
+  // item_used; per-type effects are dispatched in later PRs. No-op when
+  // the player holds nothing.
+  | { t: 'use_item' };
 
 export type ServerToClient =
   // sessionToken is the resumption secret for the recipient of this
@@ -175,7 +200,14 @@ export type GameEvent =
   // expired in flight). The freeze itself rides on the standard
   // 'tagged' event so existing handlers fire unchanged.
   | { kind: 'projectile_fired'; projectile: Projectile }
-  | { kind: 'projectile_hit'; projectileId: string; victimId?: string };
+  | { kind: 'projectile_hit'; projectileId: string; victimId?: string }
+  // Power-up lifecycle. `item_spawn` is broadcast when an available item
+  // (re)appears after its respawn timer (the initial layout rides the
+  // snapshot); `item_pickup` when a player grabs one; `item_used` when a
+  // held power-up is activated.
+  | { kind: 'item_spawn'; item: Item }
+  | { kind: 'item_pickup'; itemId: string; playerId: string }
+  | { kind: 'item_used'; playerId: string; itemType: ItemType };
 
 export const BATTLE_CRY_COUNT = 8;
 

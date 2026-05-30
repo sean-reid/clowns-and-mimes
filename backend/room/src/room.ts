@@ -22,6 +22,7 @@ import { MAX_SPRINT } from '@cm/shared/movement';
 import { BotManager, type BotManagerHost } from './botManager.ts';
 import { BotPathfinder } from './botPathfinder.ts';
 import { GameSimulation, type GameSimulationHost } from './gameSimulation.ts';
+import { ItemManager, type ItemManagerHost } from './itemManager.ts';
 import { ProjectileManager, type ProjectileManagerHost } from './projectileManager.ts';
 import { parseClientMessage } from './messageValidator.ts';
 import { RateLimiter } from './rateLimiter.ts';
@@ -167,6 +168,7 @@ export class Room implements DurableObject {
   private readonly bots: BotManager;
   private readonly sim: GameSimulation;
   private readonly projectiles: ProjectileManager;
+  private readonly items: ItemManager;
   // One token bucket per live WebSocket. Created on accept, removed on
   // detach. webSocketMessage rejects with a rate_limited error when the
   // bucket is empty; the connection stays open so a transient burst
@@ -194,6 +196,19 @@ export class Room implements DurableObject {
     private readonly env: RoomEnv = {},
   ) {
     this.persistence = new RoomPersistence(state.storage);
+    // Built before blockConcurrencyWhile: restoreFromSnapshot can finalize an
+    // expired disconnect, whose persist() calls this.items.export(). Its host
+    // arrows resolve this.broadcaster lazily, so the not-yet-built broadcaster
+    // is fine - nothing inside the block broadcasts items.
+    const itemsHost: ItemManagerHost = {
+      players: this.players,
+      connections: this.connections,
+      worldWidth: WORLD_WIDTH,
+      getTopology: () => this.topology,
+      getSeed: () => this.seed,
+      broadcast: (msg) => this.broadcast(msg),
+    };
+    this.items = new ItemManager(itemsHost);
     // Restore in-memory state from a prior DO incarnation, if any.
     // blockConcurrencyWhile guarantees no WS message is dispatched until
     // this resolves, so the first onJoin sees the full restored snapshot
@@ -235,6 +250,7 @@ export class Room implements DurableObject {
       getTopology: () => this.topology,
       getRoomId: () => this.state.id.toString(),
       getProjectiles: () => this.projectiles.getProjectiles(),
+      getItems: () => this.items.available(),
     };
     this.broadcaster = new SnapshotBroadcaster(broadcasterHost);
     const host: TagManagerHost = {
@@ -308,6 +324,7 @@ export class Room implements DurableObject {
       activeHumans: () => this.activeHumans(),
       simulateBots: (dt) => this.bots.simulate(dt),
       stepProjectiles: (dt) => this.projectiles.step(dt),
+      stepItems: (dt) => this.items.step(dt),
       broadcast: (msg) => this.broadcast(msg),
       broadcastDelta: () => this.broadcaster.broadcastDelta(),
     };
@@ -364,6 +381,7 @@ export class Room implements DurableObject {
     this.expectedHostToken = s.expectedHostToken;
     this.hostPlayerId = s.hostPlayerId;
     for (const p of s.players) this.players.set(p.id, p);
+    this.items.restore(s.items ?? []);
     for (const [id, token] of s.sessions) this.sessions.restore(id, token);
     const now = Date.now();
     for (const [id, expiresAt] of s.pendingDisconnects) {
@@ -395,7 +413,7 @@ export class Room implements DurableObject {
    */
   private persist(): void {
     this.persistence.save({
-      version: 1,
+      version: 2,
       phase: this.phase,
       turnEndsAt: this.turnEndsAt,
       topology: this.topology,
@@ -405,6 +423,7 @@ export class Room implements DurableObject {
       expectedHostToken: this.expectedHostToken,
       hostPlayerId: this.hostPlayerId,
       players: [...this.players.values()],
+      items: this.items.export(),
       sessions: this.sessions.exportSessions(),
       pendingDisconnects: this.sessions.exportPendingDisconnects(),
     });
@@ -559,6 +578,9 @@ export class Room implements DurableObject {
         return;
       case 'start_match':
         this.onStartMatch(ws);
+        return;
+      case 'use_item':
+        this.items.onUseItem(ws);
         return;
     }
   }
@@ -965,6 +987,7 @@ export class Room implements DurableObject {
   private startMatch(): void {
     this.balanceHumansForMatchStart();
     this.projectiles.clear();
+    this.items.spawn();
     this.firstTeam = Math.random() < 0.5 ? 'mime' : 'clown';
     this.phase = 'free_roam';
     this.turnEndsAt = Date.now() + FREE_ROAM_MS;

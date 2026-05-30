@@ -4,6 +4,7 @@
 // a mock connections map; behavior is unchanged.
 
 import type {
+  Item,
   PlayerState,
   Projectile,
   RoomPhase,
@@ -28,6 +29,7 @@ export interface SnapshotBroadcasterHost {
   getTopology(): Topology;
   getRoomId(): string;
   getProjectiles(): Projectile[];
+  getItems(): Item[];
 }
 
 export class SnapshotBroadcaster {
@@ -58,6 +60,9 @@ export class SnapshotBroadcaster {
   }
 
   snapshot(): RoomSnapshot {
+    // Items are static between pickups, so they ride the snapshot rather
+    // than the per-tick delta. Omitted when none are on the floor.
+    const items = this.host.getItems();
     return {
       v: PROTOCOL_VERSION,
       roomId: this.host.getRoomId(),
@@ -66,6 +71,7 @@ export class SnapshotBroadcaster {
       phase: this.host.getPhase(),
       turnEndsAt: this.host.getTurnEndsAt(),
       players: [...this.host.players.values()],
+      ...(items.length > 0 ? { items } : {}),
     };
   }
 

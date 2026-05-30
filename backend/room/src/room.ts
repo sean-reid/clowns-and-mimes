@@ -205,6 +205,23 @@ export class Room implements DurableObject {
       if (persisted !== null) this.restoreFromSnapshot(persisted);
       this.walls = generateWalls(this.seed, this.topology);
       this.rebuildPathfinder();
+      // Rebuild the connections map from the hibernated WebSockets'
+      // serialized attachments. CF hibernates idle DOs and rehydrates
+      // them with new JS WebSocket object references, so a Map keyed
+      // by the pre-hibernation WS objects is empty after revival -
+      // every subsequent connections.get(ws) returned undefined and
+      // every broadcast iterated nothing. Without this, the host
+      // didn't see joiners arrive in the lobby, clicking Start hit
+      // 'only host can start' (conn was undefined), and Back failed
+      // to call finalizeDisconnect (orphaned player slot stayed in
+      // the players map). Each WS's playerId is set in onJoin /
+      // resumeSession via ws.serializeAttachment({playerId}).
+      for (const ws of state.getWebSockets()) {
+        const attachment = ws.deserializeAttachment() as { playerId?: string } | undefined;
+        if (attachment?.playerId) {
+          this.connections.set(ws, { ws, playerId: attachment.playerId });
+        }
+      }
     });
     const broadcasterHost: SnapshotBroadcasterHost = {
       players: this.players,
@@ -606,6 +623,9 @@ export class Room implements DurableObject {
     };
     this.players.set(id, player);
     this.connections.set(ws, { ws, playerId: id });
+    // Attach the playerId directly to the WS so the binding survives CF
+    // hibernation. See the constructor for the full rationale.
+    ws.serializeAttachment({ playerId: id });
     // Mint the resumption secret now so the snapshot below can carry it
     // back to the client. Kept server-side in SessionManager; never sent
     // to other clients.
@@ -632,6 +652,15 @@ export class Room implements DurableObject {
       sessionToken: newSessionToken,
     });
     this.broadcast({ t: 'event', kind: { kind: 'phase', phase: this.phase } });
+    // Push a roster update to every existing connection so the host
+    // sees joiners populate the lobby list. During 'filling' the tick
+    // isn't running, so without this nothing pushes the new player to
+    // anyone but the joiner themselves. broadcastDelta is the same
+    // path the tick uses post-startMatch; sending it once on every
+    // join keeps the lobby roster live without spinning up a tick.
+    if (this.phase === 'filling') {
+      this.broadcaster.broadcastDelta();
+    }
     // Auto-start fallback only applies when the room has NO host. Private
     // lobbies (matchmaker minted a hostToken) wait for an explicit
     // start_match from the host; open/strangers rooms keep starting on
@@ -639,6 +668,16 @@ export class Room implements DurableObject {
     const hasHost = this.expectedHostToken !== null;
     if (!hasHost) {
       if (this.phase === 'filling' && this.humanPlayers().length >= 2 && !this.tickHandle) {
+        // Two humans landed in an open room before the 3 s bot-fill
+        // timer could fire. Fill bots NOW before starting so the match
+        // doesn't go live as a bare 1v1 (or worse, larger). The 3 s
+        // delayed path runs fillTeams inside its callback; this immediate
+        // path was missing that step, which produced empty-team
+        // strangers matches when two players clicked Find Match in the
+        // same tick. cancelFill() drops any timer that hasn't fired yet
+        // (the 3 s timer could be racing the second-human join).
+        this.bots.cancelFill();
+        this.bots.fillTeams();
         this.startMatch();
       } else if (this.phase === 'filling' && !this.tickHandle) {
         this.bots.scheduleFill();
@@ -816,6 +855,9 @@ export class Room implements DurableObject {
       if (conn.playerId === playerId) this.connections.delete(oldWs);
     }
     this.connections.set(ws, { ws, playerId });
+    // Same hibernation-survival attachment as onJoin. Resume is the
+    // other entry point that binds a WS to a playerId.
+    ws.serializeAttachment({ playerId });
     // Re-evaluate host status for the resumed connection. A new WS upgrade
     // may have stamped a fresh host token on the URL even if the player's
     // first connection didn't.

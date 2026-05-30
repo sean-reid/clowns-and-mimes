@@ -63,6 +63,11 @@ var _log_lines: Array[Label] = []
 # the editor and clients.
 var _team_icons: Array[ColorRect] = []
 
+# Center-screen aim crosshair for shooting. Created in code (one node, no
+# .tscn churn) and centered with a full-rect anchor; hidden until the arena
+# turns it on for the online shooting flow.
+var _crosshair: Label = null
+
 func _ready() -> void:
 	frozen_overlay.text = ""
 	end_overlay.visible = false
@@ -72,6 +77,21 @@ func _ready() -> void:
 	battle_cry_label.modulate.a = 0.0
 	_setup_log_lines()
 	_setup_team_icons()
+	_setup_crosshair()
+
+func _setup_crosshair() -> void:
+	_crosshair = Label.new()
+	_crosshair.text = "+"
+	_crosshair.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_crosshair.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	_crosshair.set_anchors_preset(Control.PRESET_FULL_RECT)
+	_crosshair.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_crosshair.visible = false
+	add_child(_crosshair)
+
+func set_crosshair_visible(value: bool) -> void:
+	if _crosshair != null:
+		_crosshair.visible = value
 
 func _setup_log_lines() -> void:
 	# Remove any labels left over from the .tscn or from a previous run.

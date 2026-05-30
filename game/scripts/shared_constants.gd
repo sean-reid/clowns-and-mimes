@@ -25,3 +25,7 @@ const MAX_SPRINT := 100.0
 const SPRINT_DRAIN_PER_S := 25.0
 const SPRINT_REGEN_PER_S := 15.0
 const SPRINT_ENGAGE_THRESHOLD := 20.0
+
+# Mirrored from backend/shared/src/projectiles.ts
+const PROJECTILE_RADIUS := 0.2
+const SHOOT_COOLDOWN_MS := 1500.0

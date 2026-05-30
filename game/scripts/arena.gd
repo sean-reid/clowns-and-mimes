@@ -38,6 +38,8 @@ const OnlinePredictorScript := preload("res://scripts/online_predictor.gd")
 const ReconnectControllerScript := preload("res://scripts/reconnect_controller.gd")
 const ContactInteractionsScript := preload("res://scripts/contact_interactions.gd")
 const OfflineModeScript := preload("res://scripts/offline_mode.gd")
+const ProjectileRendererScript := preload("res://scripts/projectile_renderer.gd")
+const SharedConstants := preload("res://scripts/shared_constants.gd")
 
 # ---------------------------------------------------------------------------
 # Tunables
@@ -133,6 +135,18 @@ var predictor: OnlinePredictorScript = null
 # the input sampling pipeline, not predictor state. Reset when the
 # player lets go.
 var _jump_was_held: bool = false
+
+# Rising-edge tracker for the shoot button so holding the mouse fires exactly
+# one shot per press. The server also gates re-fires on its cooldown, but
+# debouncing here keeps the wire stream to one shoot message per click.
+var _shoot_was_held: bool = false
+# Wall-clock ms of the last shoot message sent. Mirrors the server's cooldown
+# so rapid clicking doesn't spend wire frames on shots the server will reject.
+var _last_shot_at_ms: int = -1000000
+
+# Online-only. Pooled sphere renderer for server-authoritative projectiles.
+# Instantiated on the online path once World is ready; null in offline mode.
+var projectile_renderer: RefCounted = null
 
 # Shared.
 var local_player: PlayerScript = null
@@ -248,6 +262,8 @@ func _process(delta: float) -> void:
 		# same XZ each frame.
 		if snapshot_received and local_player != null:
 			predictor.advance_local_prediction(delta)
+		if projectile_renderer != null:
+			projectile_renderer.tick(delta)
 	else:
 		offline.drive_hud()
 
@@ -278,6 +294,8 @@ func _physics_process(delta: float) -> void:
 
 func _start_online() -> void:
 	hud.append_log("Connecting...")
+	projectile_renderer = ProjectileRendererScript.new(self)
+	hud.set_crosshair_visible(true)
 	# The lobby already opened the WebSocket (and sent `join`) before
 	# transitioning into the arena. Re-use that RoomClient so reconciliation
 	# state and the initial snapshot survive the scene swap. Only fall back
@@ -348,6 +366,8 @@ func _on_snapshot(snapshot: Dictionary, you_are: String) -> void:
 	# different origin and replaying them would compound the offset.
 	pending_inputs.clear()
 	contacts.reset_cooldowns()
+	if projectile_renderer != null:
+		projectile_renderer.clear()
 	for entry in snapshot.get("players", []):
 		if entry.get("id", "") == local_player_id and local_player != null:
 			var pos: Dictionary = entry.get("position", {"x": 0.0, "z": 0.0})
@@ -379,6 +399,10 @@ func _on_delta(delta: Dictionary) -> void:
 	_sync_players_from_snapshot(delta.get("players", []))
 	if predictor != null:
 		predictor.reconcile(delta)
+	if projectile_renderer != null:
+		# Field is omitted entirely when no projectiles are live; treat absent
+		# as empty so the renderer hides any sphere that just terminated.
+		projectile_renderer.render_from_delta(delta.get("projectiles", []))
 
 func _on_room_event(event: Dictionary) -> void:
 	match event.get("kind", event.get("t", "")):
@@ -387,6 +411,21 @@ func _on_room_event(event: Dictionary) -> void:
 		"win": _handle_win(event)
 		"phase": _handle_phase_event(event.get("phase", ""), int(event.get("cryIndex", -1)))
 		"tag_result": _handle_tag_result(event)
+		"projectile_fired": _handle_projectile_fired(event)
+		"projectile_hit": _handle_projectile_hit(event)
+
+func _handle_projectile_fired(event: Dictionary) -> void:
+	# Spawn the sphere instantly so the shooter sees their shot a frame after
+	# the click instead of waiting for the next delta. The delta then keeps it
+	# in sync with the authoritative path.
+	if projectile_renderer != null:
+		projectile_renderer.on_fired(event.get("projectile", {}))
+
+func _handle_projectile_hit(event: Dictionary) -> void:
+	# Hide the sphere the instant the server says it terminated (wall, enemy,
+	# or expiry) rather than waiting for the next delta to drop it.
+	if projectile_renderer != null:
+		projectile_renderer.on_hit(String(event.get("projectileId", "")))
 
 func _handle_tag_result(event: Dictionary) -> void:
 	if bool(event.get("ok", false)):
@@ -573,6 +612,19 @@ func _stream_input(delta: float) -> void:
 		_jump_was_held = true
 	else:
 		_jump_was_held = false
+	# Shoot is a standalone message, not part of the input frame. Rising-edge
+	# on the mouse so a held button fires one shot per press; aim is the
+	# camera's forward (-Z of its basis), giving full 3D pitch+yaw aim.
+	if not frozen and _input_active() and Input.is_action_pressed("shoot"):
+		var shot_now_ms: int = int(Time.get_unix_time_from_system() * 1000.0)
+		var off_cooldown: bool = shot_now_ms - _last_shot_at_ms >= int(SharedConstants.SHOOT_COOLDOWN_MS)
+		if not _shoot_was_held and off_cooldown and local_player.camera != null:
+			var aim: Vector3 = -local_player.camera.global_transform.basis.z
+			room_client.send_shoot(aim)
+			_last_shot_at_ms = shot_now_ms
+		_shoot_was_held = true
+	else:
+		_shoot_was_held = false
 	var input_now_ms: int = int(Time.get_unix_time_from_system() * 1000.0)
 	pending_inputs.append({
 		"seq": input_seq,

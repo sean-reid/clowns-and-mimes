@@ -48,6 +48,11 @@ const SOURCES = [
       'SPRINT_ENGAGE_THRESHOLD',
     ],
   },
+  {
+    file: 'backend/shared/src/projectiles.ts',
+    sourceUrl: 'backend/shared/src/projectiles.ts',
+    consts: ['PROJECTILE_RADIUS', 'SHOOT_COOLDOWN_MS'],
+  },
 ];
 
 async function extract(file, name) {

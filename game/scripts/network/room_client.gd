@@ -98,6 +98,12 @@ func send_input(
 		}
 	)
 
+func send_shoot(dir: Vector3) -> void:
+	# Standalone top-level message (not part of the input frame). nowMs lets
+	# the server stamp the projectile's spawn time to the client's clock so
+	# the predicted trail lines up; the server clamps large skew.
+	_enqueue({"t": "shoot", "dirX": dir.x, "dirY": dir.y, "dirZ": dir.z, "nowMs": _now_ms()})
+
 func send_tag(target_id: String) -> void:
 	_enqueue({"t": "tag_attempt", "targetId": target_id, "clientTime": _now_ms()})
 

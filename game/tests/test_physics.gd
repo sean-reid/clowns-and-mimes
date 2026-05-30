@@ -25,6 +25,23 @@ func test_jump_arc_y_is_symmetric() -> void:
 	var later: float = Physics.jump_arc_y(0, int(0.75 * ARC_MS))
 	assert_approx(earlier, later, 0.001)
 
+func test_jump_arc_y_leap_peaks_higher() -> void:
+	var peak: float = Physics.jump_arc_y(1000, 1000 + ARC_MS / 2, Physics.LEAP_JUMP_AMP)
+	assert_approx(peak, Physics.HOVER_HEIGHT + Physics.LEAP_JUMP_AMP, 0.001)
+
+func test_jump_arc_y_leap_clears_wall_height() -> void:
+	# A leap arc must rise above WALL_HEIGHT for part of its window so the
+	# Y-aware wall skip can engage; a normal jump must never reach it.
+	var leap_above: int = 0
+	var normal_above: int = 0
+	for i in range(1, ARC_MS):
+		if Physics.jump_arc_y(0, i, Physics.LEAP_JUMP_AMP) > Physics.WALL_HEIGHT:
+			leap_above += 1
+		if Physics.jump_arc_y(0, i, Physics.JUMP_AMP) > Physics.WALL_HEIGHT:
+			normal_above += 1
+	assert_true(leap_above > 0, "leap arc never clears wall height")
+	assert_eq(normal_above, 0, "normal jump must not clear wall height")
+
 func test_jump_arc_y_clamps_outside_window() -> void:
 	assert_approx(Physics.jump_arc_y(1000, 999), Physics.HOVER_HEIGHT)
 	assert_approx(Physics.jump_arc_y(1000, 1000 + ARC_MS + 1), Physics.HOVER_HEIGHT)

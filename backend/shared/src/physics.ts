@@ -20,6 +20,18 @@ export const HOVER_HEIGHT = 0.5;
 // well below the 6 m wall so jumping can't see over walls.
 export const JUMP_AMP = 2.0;
 
+// Peak rise of a Leap-boosted jump. At 7.0 m the body center reaches
+// ~7.5 m at apex, clearing the 6 m wall with ~1.5 m of headroom so the
+// arc spends ~0.28 s of its 0.6 s window above wall height - long enough
+// to carry a sprinting body's XZ across a wall. The Leap power-up arms
+// the next jump to use this amplitude instead of JUMP_AMP.
+export const LEAP_JUMP_AMP = 7.0;
+
+// Height of every labyrinth wall. Owned here (the vertical axis) so the
+// Y-aware wall skip in movement.ts and the client mirror read one value.
+// game/scripts/labyrinth.gd uses the same 6.0 for wall mesh sizing.
+export const WALL_HEIGHT = 6.0;
+
 // Length of a single jump arc, takeoff to landing. Short enough to feel
 // responsive, long enough for the squash-and-stretch animation to read.
 export const JUMP_DURATION_S = 0.6;
@@ -57,22 +69,23 @@ export const BOUNCE_E_WALL = 0.15;
  * jump's start timestamp (in ms, same epoch as Date.now()) and the
  * current time in ms.
  *
- * Curve: parabola y = HOVER_HEIGHT + JUMP_AMP * 4 * t * (1 - t) where
+ * Curve: parabola y = HOVER_HEIGHT + amp * 4 * t * (1 - t) where
  * t = elapsed / (JUMP_DURATION_S * 1000) clamped to [0, 1]. Peaks at
- * t = 0.5 (height = HOVER_HEIGHT + JUMP_AMP), lands at t = 1.0.
+ * t = 0.5 (height = HOVER_HEIGHT + amp), lands at t = 1.0. `amp`
+ * defaults to JUMP_AMP; a Leap-boosted jump passes LEAP_JUMP_AMP.
  *
  * Returns HOVER_HEIGHT for a null startedAt, an elapsed time before
  * the start, or an elapsed time past the arc window. These are all
  * the "not currently jumping" cases; the caller is expected to clear
  * `jumpStartedAt` once the window expires.
  */
-export function jumpArcY(startedAtMs: number | null, nowMs: number): number {
+export function jumpArcY(startedAtMs: number | null, nowMs: number, amp: number = JUMP_AMP): number {
   if (startedAtMs === null) return HOVER_HEIGHT;
   const elapsedMs = nowMs - startedAtMs;
   const durationMs = JUMP_DURATION_S * 1000;
   if (elapsedMs < 0 || elapsedMs >= durationMs) return HOVER_HEIGHT;
   const t = elapsedMs / durationMs;
-  return HOVER_HEIGHT + JUMP_AMP * 4 * t * (1 - t);
+  return HOVER_HEIGHT + amp * 4 * t * (1 - t);
 }
 
 /**

@@ -104,6 +104,16 @@ export interface PlayerState {
   // The single power-up the player is holding, or undefined for an empty
   // slot. No stacking: picking one up while holding is blocked server-side.
   activeItem?: ItemType;
+  // True while the current jump arc is a Leap (high arc that clears wall
+  // height). Set when a leap-armed jump triggers, cleared when the arc
+  // ends. Rides the wire so client prediction and remote rendering pick
+  // the boosted amplitude (Y is recomputed from jumpStartedAt on both
+  // sides, so the flag - not the height - is the source of truth).
+  leaping?: boolean;
+  // Server-authoritative "the next jump is a Leap" flag. Set by using a
+  // leap power-up, consumed (cleared) when that jump triggers. Serialized
+  // with the rest of PlayerState but unused by the client.
+  leapArmed?: boolean;
 }
 
 export type RoomPhase = 'filling' | 'locked' | 'free_roam' | 'turn_mime' | 'turn_clown' | 'ended';

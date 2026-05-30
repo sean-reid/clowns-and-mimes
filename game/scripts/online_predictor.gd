@@ -58,6 +58,14 @@ var _pred_tick_start_t: float = 0.0
 var _pred_armed: bool = false
 # Predicted jumpStartedAt (Unix ms). -1 means not in lockout.
 var _pred_jump_started_at_ms: int = -1
+# Leap power-up prediction. _pred_leap_armed mirrors the server's leapArmed:
+# set when the local player activates a held leap, consumed when the next
+# jump triggers. _pred_leaping mirrors PlayerState.leaping - true while the
+# current arc is a leap, which selects LEAP_JUMP_AMP for the arc Y and skips
+# wall collision while above wall height. reconcile() pulls the authoritative
+# leaping flag from the server delta.
+var _pred_leap_armed: bool = false
+var _pred_leaping: bool = false
 
 var arena: Node = null
 # Client input cadence in seconds per tick. Set at construction; matches
@@ -80,6 +88,12 @@ func get_current_xz() -> Vector2:
 
 func get_jump_started_at_ms() -> int:
 	return _pred_jump_started_at_ms
+
+## Arm the next predicted jump as a leap. arena calls this when the local
+## player activates a held leap power-up, in the same frame it sends the
+## use_item message, so the prediction arms when the server's leapArmed does.
+func arm_leap() -> void:
+	_pred_leap_armed = true
 
 ## Seed the predictor from a snapshot. Both prev and current land on
 ## spawn_xz so the first render frame after arming draws at exactly
@@ -121,7 +135,8 @@ func advance_local_prediction(delta: float) -> void:
 	# but the local body would otherwise jump straight down in a single
 	# frame. Detect that case and lerp Y at ~5 m/s instead.
 	var now_ms: int = int(Time.get_unix_time_from_system() * 1000.0)
-	var rendered_y: float = Physics.jump_arc_y(_pred_jump_started_at_ms, now_ms)
+	var amp: float = Physics.LEAP_JUMP_AMP if _pred_leaping else Physics.JUMP_AMP
+	var rendered_y: float = Physics.jump_arc_y(_pred_jump_started_at_ms, now_ms, amp)
 	var body_y: float = rendered_y
 	if _pred_jump_started_at_ms < 0:
 		var current_y: float = arena.local_player.global_position.y
@@ -131,6 +146,9 @@ func advance_local_prediction(delta: float) -> void:
 	# Push the predicted jumpStartedAt onto the body so its
 	# _apply_jump_squash runs from the same source the predictor uses.
 	arena.local_player.jump_started_at_ms = _pred_jump_started_at_ms
+	# Same for leaping, so player.gd's render-rate arc Y picks the leap
+	# amplitude instead of recomputing a normal-height arc over it.
+	arena.local_player.leaping = _pred_leaping
 
 ## Advance the authoritative predicted position by one server-tick
 ## worth of motion. Called once per physics tick from arena._stream_input,
@@ -149,6 +167,12 @@ func advance_tick(
 	# from origin would pile garbage into pending_inputs.
 	if not _pred_armed:
 		return
+	# Y-aware wall skip: a leap arc whose body center clears wall height
+	# passes over walls. Uses the pre-step jumpStartedAt + leap amp so the
+	# body Y matches the server's lagged Y at simulateHumans time.
+	var amp: float = Physics.LEAP_JUMP_AMP if _pred_leaping else Physics.JUMP_AMP
+	var body_y: float = Physics.jump_arc_y(_pred_jump_started_at_ms, input_now_ms, amp)
+	var above_walls: bool = body_y > Physics.WALL_HEIGHT
 	var step := Movement.step(
 		{
 			"position": _pred_current_xz,
@@ -158,6 +182,7 @@ func advance_tick(
 		{"move": world_move, "sprint": sprint_held, "dt": input_tick_period},
 		arena.labyrinth.wall_endpoints(),
 		arena.topology,
+		above_walls,
 	)
 	_pred_prev_xz = _pred_current_xz
 	_pred_current_xz = step["position"]
@@ -175,11 +200,20 @@ func advance_tick(
 	# Same step_jump the server runs. With the matching input_now_ms,
 	# the predicted jumpStartedAt equals what the server will store, so
 	# the arc Y matches at every render-rate sample after this point.
+	var prev_jsa: int = _pred_jump_started_at_ms
 	_pred_jump_started_at_ms = Physics.step_jump(
-		_pred_jump_started_at_ms,
+		prev_jsa,
 		jump_pressed,
 		input_now_ms,
 	)
+	# A fresh trigger consumes a banked leap; leaping clears when the arc
+	# ends. Mirrors gameSimulation.simulateHumans on the server.
+	var fresh_trigger: bool = _pred_jump_started_at_ms >= 0 and _pred_jump_started_at_ms != prev_jsa
+	if fresh_trigger and _pred_leap_armed:
+		_pred_leaping = true
+		_pred_leap_armed = false
+	if _pred_jump_started_at_ms < 0:
+		_pred_leaping = false
 	arena.local_sprint_energy = step["sprint_energy"]
 	arena.local_sprinting = bool(step["sprinting"])
 	var planar: float = (_pred_current_xz - _pred_prev_xz).length() / input_tick_period
@@ -235,7 +269,15 @@ func reconcile(delta: Dictionary) -> void:
 	# Snapshot other bodies' XZ once outside the loop; they don't change
 	# during replay so the resolve step uses the same set every input.
 	var others_xz: Array = arena._collect_other_xz_positions()
+	# Leap arc estimate for the replay's Y-aware wall skip. The acked jump
+	# state isn't replayed per-input arming, so use the current predicted
+	# leaping as the arc-amplitude estimate; reconcile_leaping below pins
+	# it to the server's authoritative flag once the loop settles.
+	var replay_amp: float = Physics.LEAP_JUMP_AMP if _pred_leaping else Physics.JUMP_AMP
 	for entry in arena.pending_inputs:
+		var entry_now_ms: int = int(entry.get("now_ms", 0))
+		var body_y: float = Physics.jump_arc_y(replayed_jump_started_at_ms, entry_now_ms, replay_amp)
+		var above_walls: bool = body_y > Physics.WALL_HEIGHT
 		var step := Movement.step(
 			{
 				"position": replayed_pos,
@@ -249,6 +291,7 @@ func reconcile(delta: Dictionary) -> void:
 			},
 			walls,
 			arena.topology,
+			above_walls,
 		)
 		replayed_pos = step["position"]
 		replayed_pos = Movement.resolve_overlap(replayed_pos, others_xz, walls, arena.topology)
@@ -257,9 +300,20 @@ func reconcile(delta: Dictionary) -> void:
 		replayed_jump_started_at_ms = Physics.step_jump(
 			replayed_jump_started_at_ms,
 			bool(entry.get("jump", false)),
-			int(entry.get("now_ms", 0)),
+			entry_now_ms,
 		)
 	_pred_jump_started_at_ms = replayed_jump_started_at_ms
+	# Reconcile leaping against the server's authoritative flag. When the
+	# replayed jump has landed it's false; when the server confirms a leap
+	# it's true (and the banked arm is spent). Otherwise keep the local
+	# prediction so a just-pressed leap the server hasn't processed yet
+	# doesn't flicker back to a normal arc for one round-trip.
+	var server_leaping: bool = bool(server_local.get("leaping", false))
+	if replayed_jump_started_at_ms < 0:
+		_pred_leaping = false
+	elif server_leaping:
+		_pred_leaping = true
+		_pred_leap_armed = false
 	# Only re-anchor when there is a real correction to absorb. In steady
 	# state the predictor's _pred_current_xz already equals replayed_pos
 	# (both sides run the same stepMovement deterministically) so reconcile

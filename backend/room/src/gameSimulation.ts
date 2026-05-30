@@ -184,10 +184,11 @@ export class GameSimulation {
     for (const p of this.host.players.values()) {
       if (p.jumpStartedAt !== null && now - p.jumpStartedAt >= lockoutMs) {
         p.jumpStartedAt = null;
+        p.leaping = false;
       }
       p.position = {
         x: p.position.x,
-        y: bodyYForState({ jumpStartedAt: p.jumpStartedAt }, now),
+        y: bodyYForState({ jumpStartedAt: p.jumpStartedAt, leaping: p.leaping }, now),
         z: p.position.z,
       };
     }
@@ -286,8 +287,17 @@ export class GameSimulation {
         { jumpStartedAt: p.jumpStartedAt },
         { jump: input.jump ?? false, nowMs: arcNow },
       );
+      // Leap: a fresh trigger (new non-null takeoff) consumes a banked
+      // leapArmed flag and marks this arc as a leap. leaping persists
+      // through the arc and clears when the lockout ends below.
+      const freshTrigger = jump.jumpStartedAt !== null && jump.jumpStartedAt !== p.jumpStartedAt;
+      if (freshTrigger && p.leapArmed) {
+        p.leaping = true;
+        p.leapArmed = false;
+      }
       p.position = next.position;
       p.jumpStartedAt = jump.jumpStartedAt;
+      if (jump.jumpStartedAt === null) p.leaping = false;
       p.sprintEnergy = next.sprintEnergy;
       p.sprinting = next.sprinting;
       p.yaw = input.lookYaw;

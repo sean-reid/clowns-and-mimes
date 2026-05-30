@@ -28,6 +28,8 @@ const SOURCES = [
     consts: [
       'HOVER_HEIGHT',
       'JUMP_AMP',
+      'LEAP_JUMP_AMP',
+      'WALL_HEIGHT',
       'JUMP_DURATION_S',
       'BODY_VERTICAL_EXTENT',
       'JUMP_COOLDOWN_S',

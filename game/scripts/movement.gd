@@ -37,11 +37,16 @@ const TopologyScript := preload("res://scripts/topology/topology.gd")
 ## responsible for keeping y in sync. topology.wrap() handles seam wrapping.
 ##
 ## walls is an Array of {ax, az, bx, bz} dictionaries (labyrinth.wall_endpoints).
+## above_walls (Leap power-up): when true the body's center is above wall
+## height, so walls no longer block its XZ - the candidate loop and the
+## rebound both skip wall collision. Mirrors the Y-aware skip in
+## backend/shared/src/movement.ts::stepMovement.
 static func step(
 	state: Dictionary,
 	input: Dictionary,
 	walls: Array,
 	topology,
+	above_walls: bool = false,
 ) -> Dictionary:
 	var pos: Vector2 = state["position"]
 	var sprint_energy: float = state["sprint_energy"]
@@ -72,12 +77,13 @@ static func step(
 		Vector2(pos.x + sign(dx) * speed * dt, pos.y),
 		Vector2(pos.x, pos.y + sign(dz) * speed * dt),
 	]
+	var walls_block: bool = walls.size() > 0 and not above_walls
 	var next_pos: Vector2 = pos
 	for c in candidates:
 		var candidate: Vector2 = c
 		if candidate.x == pos.x and candidate.y == pos.y:
 			continue
-		if walls.size() > 0 and path_crosses_wall(walls, pos.x, pos.y, candidate.x, candidate.y):
+		if walls_block and path_crosses_wall(walls, pos.x, pos.y, candidate.x, candidate.y):
 			continue
 		# Player-on-player collision is server-authoritative. During the
 		# client predict step we cannot know every other body's position at
@@ -122,7 +128,7 @@ static func step(
 		var rebound_z: float = -loss_dz * PhysicsScript.BOUNCE_E_WALL
 		var candidate_xz := Vector2(next_pos.x + rebound_x, next_pos.y + rebound_z)
 		var rebound_blocked: bool = (
-			walls.size() > 0
+			walls_block
 			and path_crosses_wall(
 				walls, next_pos.x, next_pos.y, candidate_xz.x, candidate_xz.y
 			)

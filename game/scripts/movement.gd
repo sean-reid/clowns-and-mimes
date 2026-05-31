@@ -14,8 +14,11 @@ const SharedConstants := preload("res://scripts/shared_constants.gd")
 
 const WALK_SPEED := SharedConstants.WALK_SPEED
 const SPRINT_SPEED := SharedConstants.SPRINT_SPEED
-# Single-tick travel cap derived from SPRINT_SPEED * 1.5 on both sides.
-const MAX_TICK_TRAVEL := SPRINT_SPEED * 1.5
+const SURGE_SPEED_MULT := SharedConstants.SURGE_SPEED_MULT
+const SURGE_DURATION_MS := SharedConstants.SURGE_DURATION_MS
+# Single-tick travel cap derived from SPRINT_SPEED * SURGE_SPEED_MULT * 1.5 on
+# both sides (the fastest sustained pace is sprint under surge).
+const MAX_TICK_TRAVEL := SPRINT_SPEED * SURGE_SPEED_MULT * 1.5
 const MAX_SPRINT := SharedConstants.MAX_SPRINT
 const SPRINT_DRAIN_PER_S := SharedConstants.SPRINT_DRAIN_PER_S
 const SPRINT_REGEN_PER_S := SharedConstants.SPRINT_REGEN_PER_S
@@ -64,7 +67,11 @@ static func step(
 			want_sprint = true
 		else:
 			want_sprint = sprint_energy >= SPRINT_ENGAGE_THRESHOLD
-	var speed: float = SPRINT_SPEED if want_sprint else WALK_SPEED
+	# Surge forces sprint pace regardless of the sprint key and scales it;
+	# drain is skipped below. Mirrors backend/shared/src/movement.ts.
+	var surge: bool = input.get("surge", false)
+	var base_speed: float = SPRINT_SPEED if (surge or want_sprint) else WALK_SPEED
+	var speed: float = base_speed * (SURGE_SPEED_MULT if surge else 1.0)
 	var move_len: float = move.length()
 	var nx: float = move.x / move_len if move_len > 0.0 else 0.0
 	var nz: float = move.y / move_len if move_len > 0.0 else 0.0
@@ -136,7 +143,7 @@ static func step(
 		if not rebound_blocked:
 			next_pos = candidate_xz
 
-	var drained: bool = want_sprint and move_len > 0.0
+	var drained: bool = not surge and want_sprint and move_len > 0.0
 	var energy_delta: float = (-SPRINT_DRAIN_PER_S if drained else SPRINT_REGEN_PER_S) * dt
 	var next_energy: float = clampf(sprint_energy + energy_delta, 0.0, MAX_SPRINT)
 	var next_sprinting: bool = want_sprint and next_energy > 0.0

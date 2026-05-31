@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { PlayerState, ServerToClient, Team, Topology, Vec3 } from '@cm/shared';
 import type { WallSegment } from '@cm/shared/labyrinth';
 import { ITEM_RESPAWN_MS } from '@cm/shared/items';
+import { SURGE_DURATION_MS } from '@cm/shared/movement';
 import { PORTAL_DURATION_MS } from '@cm/shared/portals';
 import { ItemManager, type ItemManagerHost } from './itemManager.ts';
 
@@ -155,6 +156,18 @@ describe('ItemManager.onUseItem', () => {
     h.connections.set(ws, { playerId: 'p' });
     h.im.onUseItem(ws);
     expect(h.players.get('p')!.leapArmed).toBeUndefined();
+  });
+
+  it('sets a surge deadline when a surge is used', () => {
+    const h = harness();
+    const ws = {} as WebSocket;
+    h.players.set('p', makePlayer('p', 'mime', { x: 0, y: 0, z: 0 }, { activeItem: 'surge' }));
+    h.connections.set(ws, { playerId: 'p' });
+    const before = Date.now();
+    h.im.onUseItem(ws);
+    const surgeUntil = h.players.get('p')!.surgeUntil ?? 0;
+    expect(surgeUntil).toBeGreaterThanOrEqual(before + SURGE_DURATION_MS);
+    expect(surgeUntil).toBeLessThanOrEqual(Date.now() + SURGE_DURATION_MS);
   });
 });
 

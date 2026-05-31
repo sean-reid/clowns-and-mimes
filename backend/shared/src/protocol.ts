@@ -127,6 +127,10 @@ export interface PlayerState {
   // leap power-up, consumed (cleared) when that jump triggers. Serialized
   // with the rest of PlayerState but unused by the client.
   leapArmed?: boolean;
+  // Wall-clock (Unix ms) the player's Surge power-up stays active until.
+  // Surge is "active" while surgeUntil > now; it is never cleared, just left
+  // in the past, so reconciliation always adopts the server's value.
+  surgeUntil?: number;
 }
 
 export type RoomPhase = 'filling' | 'locked' | 'free_roam' | 'turn_mime' | 'turn_clown' | 'ended';

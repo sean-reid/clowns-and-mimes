@@ -20,6 +20,7 @@ import type {
 } from '@cm/shared';
 import type { WallSegment } from '@cm/shared/labyrinth';
 import { ITEM_PICKUP_RADIUS, ITEM_RESPAWN_MS, itemSpawnLayout } from '@cm/shared/items';
+import { SURGE_DURATION_MS } from '@cm/shared/movement';
 import { buildPortalPair, PORTAL_DURATION_MS, PORTAL_ENTER_RADIUS } from '@cm/shared/portals';
 import { topologyDistance } from '@cm/shared/topology';
 
@@ -135,6 +136,11 @@ export class ItemManager {
         break;
       case 'portal':
         this.openPortal(player);
+        break;
+      case 'surge':
+        // Sprint boost for a fixed window. Stored as an absolute deadline so
+        // the simulation and client predictor agree without further events.
+        player.surgeUntil = Date.now() + SURGE_DURATION_MS;
         break;
       default:
         break;

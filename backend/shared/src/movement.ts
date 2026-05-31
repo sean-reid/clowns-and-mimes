@@ -23,10 +23,15 @@ import {
 
 export const WALK_SPEED = 3.2;
 export const SPRINT_SPEED = 5.6;
+// Surge power-up: while active the player moves at sprint pace times this
+// multiplier and spends no sprint energy.
+export const SURGE_SPEED_MULT = 1.5;
+export const SURGE_DURATION_MS = 10000;
 // Anti-cheat: a single tick cannot displace a player more than this many
-// units. SPRINT_SPEED * 1.5 leaves headroom for input bursts while rejecting
-// teleports.
-export const MAX_TICK_TRAVEL = SPRINT_SPEED * 1.5;
+// units. The fastest sustained pace is sprint under surge, so headroom is
+// measured off that (the extra 1.5 absorbs input bursts) while still
+// rejecting teleports.
+export const MAX_TICK_TRAVEL = SPRINT_SPEED * SURGE_SPEED_MULT * 1.5;
 export const MAX_SPRINT = 100;
 export const SPRINT_DRAIN_PER_S = 25;
 export const SPRINT_REGEN_PER_S = 15;
@@ -40,6 +45,9 @@ export interface MoveStepInput {
   move: Vec2;
   sprint: boolean;
   dt: number;
+  // Surge power-up active this tick. Independent of the sprint key: it forces
+  // sprint pace (scaled by SURGE_SPEED_MULT) and suppresses energy drain.
+  surge?: boolean;
 }
 
 export interface MoveStepState {
@@ -87,7 +95,10 @@ export function stepMovement(
   if (input.sprint && state.sprintEnergy > 0) {
     wantSprint = state.sprinting ? true : state.sprintEnergy >= SPRINT_ENGAGE_THRESHOLD;
   }
-  const speed = wantSprint ? SPRINT_SPEED : WALK_SPEED;
+  // Surge forces sprint pace regardless of the sprint key (so it reads as a
+  // burst even from a standstill) and scales it; drain is skipped below.
+  const surge = input.surge === true;
+  const speed = (surge || wantSprint ? SPRINT_SPEED : WALK_SPEED) * (surge ? SURGE_SPEED_MULT : 1);
   const moveLen = Math.hypot(input.move.x, input.move.z);
   const nx = moveLen > 0 ? input.move.x / moveLen : 0;
   const nz = moveLen > 0 ? input.move.z / moveLen : 0;
@@ -155,7 +166,7 @@ export function stepMovement(
     if (!reboundBlocked) nextXZ = candidateXZ;
   }
   const nextPos: Vec3 = { x: nextXZ.x, y: state.position.y, z: nextXZ.z };
-  const drained = wantSprint && moveLen > 0;
+  const drained = !surge && wantSprint && moveLen > 0;
   const nextSprint = clamp(
     state.sprintEnergy + (drained ? -SPRINT_DRAIN_PER_S : SPRINT_REGEN_PER_S) * input.dt,
     0,

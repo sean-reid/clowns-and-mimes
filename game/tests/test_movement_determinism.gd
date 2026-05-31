@@ -140,3 +140,17 @@ func test_wall_blocks_at_ground_level() -> void:
 func test_wall_skipped_when_above_walls() -> void:
 	var pos: Vector2 = _walk_into_wall(true)
 	assert_true(pos.x > 0.5, "leaping body must cross the wall, got x=%f" % pos.x)
+
+func test_surge_moves_at_boosted_speed_without_drain() -> void:
+	var topology = TopologyFactory.from_string("plane")
+	var dt: float = 1.0 / 60.0
+	var state: Dictionary = {
+		"position": Vector2(0.0, 0.0),
+		"sprint_energy": Movement.MAX_SPRINT,
+		"sprinting": false,
+	}
+	var input: Dictionary = {"move": Vector2(1.0, 0.0), "sprint": false, "dt": dt, "surge": true}
+	state = Movement.step(state, input, [], topology)
+	var expected: float = Movement.SPRINT_SPEED * Movement.SURGE_SPEED_MULT * dt
+	assert_approx(state["position"].x, expected, 0.0001, "surge moves at boosted sprint pace")
+	assert_eq(state["sprint_energy"], Movement.MAX_SPRINT, "surge does not drain sprint energy")

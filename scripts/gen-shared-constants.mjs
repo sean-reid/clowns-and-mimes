@@ -44,6 +44,8 @@ const SOURCES = [
     consts: [
       'WALK_SPEED',
       'SPRINT_SPEED',
+      'SURGE_SPEED_MULT',
+      'SURGE_DURATION_MS',
       'MAX_SPRINT',
       'SPRINT_DRAIN_PER_S',
       'SPRINT_REGEN_PER_S',

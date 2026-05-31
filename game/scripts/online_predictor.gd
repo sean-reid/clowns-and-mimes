@@ -66,6 +66,12 @@ var _pred_jump_started_at_ms: int = -1
 # leaping flag from the server delta.
 var _pred_leap_armed: bool = false
 var _pred_leaping: bool = false
+# Surge power-up prediction. Mirrors PlayerState.surgeUntil: the wall-clock
+# (ms) the local player's surge stays active until. Set optimistically when
+# the player activates a held surge, threaded into Movement.step as the
+# `surge` flag while it's in the future, and reconciled up to the server's
+# authoritative surgeUntil in reconcile().
+var _pred_surge_until_ms: int = 0
 
 var arena: Node = null
 # Client input cadence in seconds per tick. Set at construction; matches
@@ -94,6 +100,14 @@ func get_jump_started_at_ms() -> int:
 ## use_item message, so the prediction arms when the server's leapArmed does.
 func arm_leap() -> void:
 	_pred_leap_armed = true
+
+## Arm the local surge prediction. arena calls this in the same frame it sends
+## use_item, so surge speed kicks in immediately instead of after a round-trip.
+## Uses the same wall clock as the input timestamps; reconcile() pins it to the
+## server's surgeUntil once the delta carrying it arrives.
+func arm_surge() -> void:
+	var now_ms: int = int(Time.get_unix_time_from_system() * 1000.0)
+	_pred_surge_until_ms = now_ms + int(Movement.SURGE_DURATION_MS)
 
 ## Seed the predictor from a snapshot. Both prev and current land on
 ## spawn_xz so the first render frame after arming draws at exactly
@@ -179,7 +193,12 @@ func advance_tick(
 			"sprint_energy": arena.local_sprint_energy,
 			"sprinting": arena.local_sprinting,
 		},
-		{"move": world_move, "sprint": sprint_held, "dt": input_tick_period},
+		{
+			"move": world_move,
+			"sprint": sprint_held,
+			"dt": input_tick_period,
+			"surge": _pred_surge_until_ms > input_now_ms,
+		},
 		arena.labyrinth.wall_endpoints(),
 		arena.topology,
 		above_walls,
@@ -288,6 +307,7 @@ func reconcile(delta: Dictionary) -> void:
 				"move": entry["world_move"],
 				"sprint": entry["sprint"],
 				"dt": entry["dt"],
+				"surge": _pred_surge_until_ms > entry_now_ms,
 			},
 			walls,
 			arena.topology,
@@ -314,6 +334,12 @@ func reconcile(delta: Dictionary) -> void:
 	elif server_leaping:
 		_pred_leaping = true
 		_pred_leap_armed = false
+	# Adopt the server's surge deadline once it arrives. Take the max so a
+	# just-activated surge the server hasn't acked yet keeps its optimistic
+	# window instead of snapping back to 0 for one round-trip. The server
+	# never clears surgeUntil (leaves it in the past), so max() can't pin a
+	# stale-active window.
+	_pred_surge_until_ms = maxi(_pred_surge_until_ms, int(server_local.get("surgeUntil", 0)))
 	# Only re-anchor when there is a real correction to absorb. In steady
 	# state the predictor's _pred_current_xz already equals replayed_pos
 	# (both sides run the same stepMovement deterministically) so reconcile

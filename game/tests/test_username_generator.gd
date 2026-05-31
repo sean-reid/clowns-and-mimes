@@ -19,9 +19,11 @@ func test_word_lists_come_from_shared_constants() -> void:
 	assert_true(SharedConstants.NAME_NOUNS.size() > 0, "nouns should be populated from shared constants")
 
 func test_word_lists_have_no_duplicates() -> void:
-	for list_name in ["NAME_ADJECTIVES", "NAME_NOUNS"]:
-		var words: Array = SharedConstants.get(list_name)
-		var seen := {}
-		for word in words:
-			assert_false(seen.has(word), "%s has duplicate: %s" % [list_name, word])
-			seen[word] = true
+	_assert_no_duplicates("NAME_ADJECTIVES", SharedConstants.NAME_ADJECTIVES)
+	_assert_no_duplicates("NAME_NOUNS", SharedConstants.NAME_NOUNS)
+
+func _assert_no_duplicates(list_name: String, words: Array) -> void:
+	var seen := {}
+	for word in words:
+		assert_false(seen.has(word), "%s has duplicate: %s" % [list_name, word])
+		seen[word] = true

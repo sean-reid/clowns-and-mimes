@@ -15,6 +15,11 @@ signal error_received(code: String, message: String)
 var _socket: WebSocketPeer = null
 var _connected: bool = false
 var _send_queue: Array[String] = []
+# Most recent delta seen during the current _process packet drain, held back
+# so only the newest of a queued batch is reconciled. See the drain loop in
+# _process for why intermediate deltas are dropped.
+var _pending_delta: Dictionary = {}
+var _have_pending_delta: bool = false
 # Bound on the outbound queue. The arena enqueues inputs at 60 Hz and a
 # ping every 5 s; if the underlying socket cannot drain (wifi dropped,
 # tunnel wedged), the queue would otherwise grow unboundedly until the
@@ -141,6 +146,11 @@ func _process(_delta: float) -> void:
 			connected.emit()
 		while _socket.get_available_packet_count() > 0:
 			_handle_packet(_socket.get_packet())
+		if _have_pending_delta:
+			_have_pending_delta = false
+			var coalesced: Dictionary = _pending_delta
+			_pending_delta = {}
+			delta_received.emit(coalesced)
 		while not _send_queue.is_empty():
 			var text: String = _send_queue.pop_front()
 			var err: int = _socket.send_text(text)
@@ -192,7 +202,13 @@ func _handle_packet(packet: PackedByteArray) -> void:
 				session_token = token
 			snapshot_received.emit(snap, you_are)
 		"delta":
-			delta_received.emit(data)
+			# Stash, don't emit. The _process drain loop emits only the last
+			# delta of the batch (see the coalescing note there): a delta is a
+			# full authoritative snapshot, so when several queue behind a frame
+			# hitch the older ones are superseded and reconciling each one just
+			# burns a frame's budget. Events below still emit per-message.
+			_pending_delta = data
+			_have_pending_delta = true
 		"event":
 			event_received.emit(data.get("kind", {}))
 		"error":

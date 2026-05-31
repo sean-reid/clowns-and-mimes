@@ -331,6 +331,60 @@ describe('Room.simulate', () => {
     expect(bots.bots.botMinds.get('b1')!.engagedTargetId).toBeNull();
   });
 
+  it('drains a backlog of queued inputs in one tick (up to the per-tick cap)', () => {
+    // A Cloudflare DO setInterval cannot hold a precise 60 Hz, so a slow
+    // tick can leave several inputs queued. A one-per-tick drain would let
+    // the queue overflow and drop inputs the client already predicted,
+    // snapping its authoritative base backward (the "backstep"). One tick
+    // must instead apply the backlog up to MAX_INPUTS_PER_TICK (6).
+    const room = makeRoom();
+    setPhase(room, 'free_roam');
+    placeHuman(room, 'h1', 'mime', 0, 0);
+    for (let seq = 1; seq <= 6; seq += 1) {
+      queueInput(room, 'h1', {
+        seq,
+        dt: 1 / 60,
+        move: { x: 1, z: 0 },
+        lookYaw: 0,
+        sprint: false,
+        nowMs: Date.now(),
+      });
+    }
+    callSimulate(room);
+    const players = (room as unknown as { players: Map<string, PlayerState> }).players;
+    const lastApplied = (room as unknown as { lastAppliedSeq: Map<string, number> }).lastAppliedSeq;
+    // All 6 applied in the single tick: ack at 6, position advanced 6 steps.
+    expect(lastApplied.get('h1')).toBe(6);
+    expect(players.get('h1')!.position.x).toBeCloseTo(6 * (3.2 / 60), 5);
+  });
+
+  it('carries an over-cap backlog across ticks without dropping inputs', () => {
+    // Ten queued inputs, cap of 6: the first tick applies 6 and the second
+    // applies the remaining 4. No seq is skipped, so the client never sees
+    // ackSeq jump past an input the server failed to apply.
+    const room = makeRoom();
+    setPhase(room, 'free_roam');
+    placeHuman(room, 'h1', 'mime', 0, 0);
+    for (let seq = 1; seq <= 10; seq += 1) {
+      queueInput(room, 'h1', {
+        seq,
+        dt: 1 / 60,
+        move: { x: 1, z: 0 },
+        lookYaw: 0,
+        sprint: false,
+        nowMs: Date.now(),
+      });
+    }
+    const lastApplied = (room as unknown as { lastAppliedSeq: Map<string, number> }).lastAppliedSeq;
+    callSimulate(room);
+    expect(lastApplied.get('h1')).toBe(6);
+    vi.advanceTimersByTime(1000 / 60);
+    callSimulate(room);
+    expect(lastApplied.get('h1')).toBe(10);
+    const players = (room as unknown as { players: Map<string, PlayerState> }).players;
+    expect(players.get('h1')!.position.x).toBeCloseTo(10 * (3.2 / 60), 5);
+  });
+
   it('still advances lastAppliedSeq for a frozen player so the client can prune', () => {
     // Regression for the 2026-05-29 freeze: a frozen player's inputs were
     // drained without updating lastAppliedSeq, so every delta's ackSeq

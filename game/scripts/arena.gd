@@ -80,6 +80,10 @@ const DARK_FOG := Color(0.06, 0.05, 0.09)
 const DARK_FOG_DENSITY := 0.018
 const DARK_SUN_COLOR := Color(1.0, 1.0, 1.0)
 const DARK_SUN_ENERGY := 0.45
+# Volumetric fog albedo per mode (separate from the classic distance fog
+# above). Lighter daylight tint reads as haze; dusk keeps the moody violet.
+const LIGHT_VOL_FOG := Color(0.78, 0.85, 0.95)
+const DARK_VOL_FOG := Color(0.06, 0.05, 0.09)
 
 const MIME_BATTLE_CRIES := [
 	"MIMES- ATTACK!", "MIMES- STRIKE!", "MIMES- POUNCE!", "MIMES- ENTRAP!",
@@ -249,6 +253,7 @@ func apply_light_mode(enabled: bool) -> void:
 		env.ambient_light_energy = LIGHT_AMBIENT_ENERGY
 		env.fog_light_color = LIGHT_FOG
 		env.fog_density = LIGHT_FOG_DENSITY
+		env.volumetric_fog_albedo = LIGHT_VOL_FOG
 		sun.light_energy = LIGHT_SUN_ENERGY
 		sun.light_color = LIGHT_SUN_COLOR
 	else:
@@ -257,6 +262,7 @@ func apply_light_mode(enabled: bool) -> void:
 		env.ambient_light_energy = DARK_AMBIENT_ENERGY
 		env.fog_light_color = DARK_FOG
 		env.fog_density = DARK_FOG_DENSITY
+		env.volumetric_fog_albedo = DARK_VOL_FOG
 		sun.light_energy = DARK_SUN_ENERGY
 		sun.light_color = DARK_SUN_COLOR
 

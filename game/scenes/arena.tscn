@@ -1,4 +1,4 @@
-[gd_scene load_steps=4 format=3]
+[gd_scene load_steps=5 format=3]
 
 [ext_resource type="Script" path="res://scripts/arena.gd" id="1_arena"]
 [ext_resource type="PackedScene" path="res://scenes/hud.tscn" id="2_hud"]
@@ -12,6 +12,14 @@ ambient_light_energy = 0.18
 fog_enabled = true
 fog_light_color = Color(0.06, 0.05, 0.09, 1)
 fog_density = 0.018
+volumetric_fog_enabled = true
+volumetric_fog_density = 0.012
+volumetric_fog_albedo = Color(0.06, 0.05, 0.09, 1)
+volumetric_fog_length = 64.0
+
+[sub_resource type="FogMaterial" id="fog_pocket"]
+density = 0.04
+albedo = Color(0.07, 0.06, 0.1, 1)
 
 [node name="Arena" type="Node3D"]
 script = ExtResource("1_arena")
@@ -31,5 +39,27 @@ directional_shadow_max_distance = 60.0
 
 [node name="Spawn" type="Marker3D" parent="World"]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.1, 0)
+
+[node name="FogPockets" type="Node3D" parent="World"]
+
+[node name="FogPocket1" type="FogVolume" parent="World/FogPockets"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -22, 4, -18)
+size = Vector3(16, 8, 16)
+material = SubResource("fog_pocket")
+
+[node name="FogPocket2" type="FogVolume" parent="World/FogPockets"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 20, 4, -24)
+size = Vector3(14, 8, 14)
+material = SubResource("fog_pocket")
+
+[node name="FogPocket3" type="FogVolume" parent="World/FogPockets"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 4, 6)
+size = Vector3(18, 8, 18)
+material = SubResource("fog_pocket")
+
+[node name="FogPocket4" type="FogVolume" parent="World/FogPockets"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -18, 4, 26)
+size = Vector3(14, 8, 14)
+material = SubResource("fog_pocket")
 
 [node name="HUD" parent="." instance=ExtResource("2_hud")]

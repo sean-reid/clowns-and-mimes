@@ -27,7 +27,12 @@ import {
   itemSpawnLayout,
 } from '@cm/shared/items';
 import { SURGE_DURATION_MS } from '@cm/shared/movement';
-import { buildPortalPair, PORTAL_DURATION_MS, PORTAL_ENTER_RADIUS } from '@cm/shared/portals';
+import {
+  buildPortalPair,
+  PORTAL_DURATION_MS,
+  PORTAL_ENTER_RADIUS,
+  PORTAL_TELEPORT_COOLDOWN_MS,
+} from '@cm/shared/portals';
 import { topologyDistance } from '@cm/shared/topology';
 
 // respawnAt is 0 when the item is on the floor; once picked up it holds the
@@ -73,6 +78,10 @@ export class ItemManager {
   // opener at creation, and anyone who just emerged. Cleared the tick they step
   // clear of every mouth, so re-entering teleports again (pairs are two-way).
   private readonly portalBlocked = new Set<string>();
+  // playerId -> earliest time (ms) they may be teleported again. Set on every
+  // teleport so a player who emerges facing a mouth can't bounce through it on
+  // the next tick; re-entry resumes once the cooldown lapses.
+  private readonly portalCooldownUntil = new Map<string, number>();
   private portalSeq = 0;
 
   constructor(private readonly host: ItemManagerHost) {}
@@ -82,6 +91,7 @@ export class ItemManager {
     this.items.clear();
     this.portals.clear();
     this.portalBlocked.clear();
+    this.portalCooldownUntil.clear();
     for (const entry of itemSpawnLayout(this.host.getSeed(), this.host.getTopology())) {
       this.items.set(entry.id, { ...entry, respawnAt: 0 });
     }
@@ -211,6 +221,7 @@ export class ItemManager {
   private stepPortals(now: number): void {
     if (this.portals.size === 0) {
       if (this.portalBlocked.size > 0) this.portalBlocked.clear();
+      if (this.portalCooldownUntil.size > 0) this.portalCooldownUntil.clear();
       return;
     }
     for (const portal of this.portals.values()) {
@@ -221,6 +232,7 @@ export class ItemManager {
     }
     if (this.portals.size === 0) {
       this.portalBlocked.clear();
+      this.portalCooldownUntil.clear();
       return;
     }
     const topology = this.host.getTopology();
@@ -242,8 +254,10 @@ export class ItemManager {
         continue;
       }
       if (this.portalBlocked.has(player.id)) continue;
+      if (now < (this.portalCooldownUntil.get(player.id) ?? 0)) continue;
       player.position = { x: dest.x, y: player.position.y, z: dest.z };
       this.portalBlocked.add(player.id);
+      this.portalCooldownUntil.set(player.id, now + PORTAL_TELEPORT_COOLDOWN_MS);
     }
   }
 
@@ -276,6 +290,7 @@ export class ItemManager {
     this.items.clear();
     this.portals.clear();
     this.portalBlocked.clear();
+    this.portalCooldownUntil.clear();
   }
 }
 

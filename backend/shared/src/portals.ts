@@ -20,6 +20,16 @@ export const PORTAL_ENTER_RADIUS = 1.4;
 // larger than PORTAL_ENTER_RADIUS so you don't land back inside the mouth you
 // just arrived at (which would immediately teleport you back).
 export const PORTAL_EXIT_OFFSET = 2.0;
+// After being pulled through, a player can't be teleported by any mouth again
+// for this long. Stops the back-and-forth bounce when someone emerges facing
+// the mouth they just arrived at and walks straight back into it: re-entry is
+// still allowed (pairs are two-way), just not instantly.
+export const PORTAL_TELEPORT_COOLDOWN_MS = 900;
+// Planar footprint radius of a rendered mouth (matches RING_OUTER in
+// game/scripts/portal_renderer.gd, plus a small margin). A mouth is kept at
+// least this far from its wall segment's ends so the ring never overhangs a
+// corner (showing only half) or juts past an opening.
+export const PORTAL_MOUTH_RADIUS = 1.3;
 // How far a look-yaw ray probes before giving up on finding a faced wall.
 const RAY_MAX = 200;
 
@@ -61,6 +71,20 @@ interface WallHit {
   wall: WallSegment;
   x: number;
   z: number;
+}
+
+// Project (px, pz) onto a wall segment and return the closest point, but keep
+// it at least `inset` from each end so a mouth anchored there leaves room for
+// the rendered ring. Segments shorter than 2*inset collapse to their midpoint.
+function clampOntoWall(w: WallSegment, px: number, pz: number, inset: number): Vec2 {
+  const dx = w.bx - w.ax;
+  const dz = w.bz - w.az;
+  const len = Math.hypot(dx, dz);
+  if (len < 1e-9) return { x: w.ax, z: w.az };
+  let t = ((px - w.ax) * dx + (pz - w.az) * dz) / (len * len);
+  const margin = len >= 2 * inset ? inset / len : 0.5;
+  t = Math.max(margin, Math.min(1 - margin, t));
+  return { x: w.ax + dx * t, z: w.az + dz * t };
 }
 
 // Nearest forward wall the ray O + t*D crosses (t in [0, RAY_MAX]), or null.
@@ -161,12 +185,19 @@ export function buildPortalPair(
       exitWall = walls[Math.floor(rng() * walls.length)]!;
     } while (exitWall === entryWall);
   }
-  const bx = (exitWall.ax + exitWall.bx) / 2;
-  const bz = (exitWall.az + exitWall.bz) / 2;
+  // Inset both mouths from their segment ends so the rendered ring sits fully
+  // on the wall rather than overhanging a corner or jutting past an opening.
+  const entry = clampOntoWall(entryWall, hit.x, hit.z, PORTAL_MOUTH_RADIUS);
+  const exitMid = clampOntoWall(
+    exitWall,
+    (exitWall.ax + exitWall.bx) / 2,
+    (exitWall.az + exitWall.bz) / 2,
+    PORTAL_MOUTH_RADIUS,
+  );
   return {
-    a: { x: hit.x, y: 0, z: hit.z },
-    b: { x: bx, y: 0, z: bz },
-    aExit: emerge(entryWall, hit.x, hit.z, origin, walls, topology, worldWidth),
-    bExit: emerge(exitWall, bx, bz, null, walls, topology, worldWidth),
+    a: { x: entry.x, y: 0, z: entry.z },
+    b: { x: exitMid.x, y: 0, z: exitMid.z },
+    aExit: emerge(entryWall, entry.x, entry.z, origin, walls, topology, worldWidth),
+    bExit: emerge(exitWall, exitMid.x, exitMid.z, null, walls, topology, worldWidth),
   };
 }

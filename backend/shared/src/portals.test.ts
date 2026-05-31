@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   PORTAL_ENTER_RADIUS,
   PORTAL_EXIT_OFFSET,
+  PORTAL_MOUTH_RADIUS,
   buildPortalPair,
   forwardFromYaw,
 } from './portals.ts';
@@ -64,5 +65,13 @@ describe('buildPortalPair', () => {
     const g = buildPortalPair({ x: 0, z: 3 }, Math.PI / 2, WALLS, 'plane', 80);
     expect(g).not.toBeNull();
     expect(g!.a.z).toBeCloseTo(-3, 6);
+  });
+
+  it('insets the entry mouth from a wall end so the ring does not overhang', () => {
+    // Facing -z from near the wall's +x end (x=1.9 on a segment spanning
+    // x[-2,2]) hits at x=1.9, 0.1 from the end. The mouth is pulled inward to
+    // sit a full ring radius from the corner.
+    const g = buildPortalPair({ x: 1.9, z: 0 }, 0, WALLS, 'plane', 80)!;
+    expect(g.a.x).toBeCloseTo(2 - PORTAL_MOUTH_RADIUS, 6);
   });
 });

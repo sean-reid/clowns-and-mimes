@@ -7,12 +7,24 @@ extends Node
 const ServerConfig := preload("res://scripts/network/server_config.gd")
 
 signal lobby_created(code: String, room_id: String, ws_url: String, host_token: String)
-signal lobby_joined(room_id: String, ws_url: String)
+## `team` is the matchmaker-assigned team for an open-as-party join (so every
+## member lands together); empty string for host / join-by-code / solo-open.
+signal lobby_joined(room_id: String, ws_url: String, team: String)
 ## Emitted when the matchmaker returns 404 on a join-by-code request. The
 ## room never existed (or has expired); the lobby treats this as a hard
 ## error, not a "fall back to offline" trigger.
 signal lobby_not_found(code: String)
 signal request_failed(reason: String)
+## Party create / join resolved: carries the party handle, shareable code,
+## the team the whole party will land on, the caller's own member id, and the
+## current roster (Array of { memberId, name }).
+signal party_ready(party_id: String, code: String, team: String, member_id: String, members: Array)
+## Live roster from a poll (GET /party/:id) so the screen tracks friends joining.
+signal party_refreshed(members: Array)
+## join_party failed with a reason the player can act on (bad code / party full).
+signal party_join_failed(reason: String)
+## A poll found the party gone (everyone left, or it aged out server-side).
+signal party_gone()
 
 func create_private(topology: String) -> void:
 	_post("/lobby", {"topology": topology}, _on_create_response)
@@ -26,13 +38,28 @@ func join_code(code: String) -> void:
 	_last_join_code = code.to_upper()
 	_post("/lobby/%s/join" % _last_join_code, {}, _on_join_response, _on_join_code_failure)
 
-func join_open() -> void:
-	_post("/open/join", {}, _on_join_response)
+func join_open(party_id: String = "") -> void:
+	var body: Dictionary = {"partyId": party_id} if not party_id.is_empty() else {}
+	_post("/open/join", body, _on_join_response)
+
+func create_party(name: String) -> void:
+	_post("/party/create", {"name": name}, _on_party_response)
+
+func join_party(code: String, name: String) -> void:
+	_post("/party/%s/join" % code.to_upper(), {"name": name}, _on_party_response, _on_party_join_failure)
+
+func leave_party(party_id: String, member_id: String) -> void:
+	# Fire-and-forget: the player is already leaving the screen, so a failed
+	# leave just lets the empty party age out server-side.
+	_post("/party/%s/leave" % party_id, {"memberId": member_id})
+
+func poll_party(party_id: String) -> void:
+	_http_get("/party/%s" % party_id, _on_party_poll, _on_party_poll_failure)
 
 func _post(
 	path: String,
 	body: Dictionary,
-	on_response: Callable,
+	on_response: Callable = Callable(),
 	on_failure: Callable = Callable(),
 ) -> void:
 	var http := HTTPRequest.new()
@@ -40,16 +67,29 @@ func _post(
 	http.timeout = 10.0
 	http.request_completed.connect(_make_handler(http, on_response, on_failure))
 	var url: String = ServerConfig.matchmaker_url() + path
-	var headers: PackedStringArray = [
+	var payload: String = JSON.stringify(body) if body.size() > 0 else "{}"
+	var err: int = http.request(url, _headers(), HTTPClient.METHOD_POST, payload)
+	if err != OK:
+		request_failed.emit("Could not reach the lobby server.")
+		http.queue_free()
+
+func _http_get(path: String, on_response: Callable, on_failure: Callable = Callable()) -> void:
+	var http := HTTPRequest.new()
+	add_child(http)
+	http.timeout = 10.0
+	http.request_completed.connect(_make_handler(http, on_response, on_failure))
+	var url: String = ServerConfig.matchmaker_url() + path
+	var err: int = http.request(url, _headers(), HTTPClient.METHOD_GET)
+	if err != OK:
+		request_failed.emit("Could not reach the lobby server.")
+		http.queue_free()
+
+func _headers() -> PackedStringArray:
+	return [
 		"Content-Type: application/json",
 		"Accept: application/json",
 		"X-Protocol-Version: %d" % ServerConfig.protocol_version(),
 	]
-	var payload: String = JSON.stringify(body) if body.size() > 0 else "{}"
-	var err: int = http.request(url, headers, HTTPClient.METHOD_POST, payload)
-	if err != OK:
-		request_failed.emit("Could not reach the lobby server.")
-		http.queue_free()
 
 func _make_handler(http: HTTPRequest, on_response: Callable, on_failure: Callable) -> Callable:
 	return func(_result: int, code: int, _headers: PackedStringArray, body: PackedByteArray) -> void:
@@ -63,7 +103,8 @@ func _make_handler(http: HTTPRequest, on_response: Callable, on_failure: Callabl
 		if typeof(parsed) != TYPE_DICTIONARY:
 			request_failed.emit("Unexpected response from the server.")
 			return
-		on_response.call(parsed)
+		if on_response.is_valid():
+			on_response.call(parsed)
 
 # Map an HTTP status (and the optional `{ "error": "<code>" }` body the
 # matchmaker Worker sends) to a sentence the player can read. Falls through
@@ -123,4 +164,39 @@ func _on_join_response(parsed: Dictionary) -> void:
 	if room_id.is_empty() or ws_url.is_empty():
 		request_failed.emit("Lobby server returned an incomplete response.")
 		return
-	lobby_joined.emit(room_id, ws_url)
+	# `team` is present only on an open-as-party join; absent otherwise.
+	lobby_joined.emit(room_id, ws_url, String(parsed.get("team", "")))
+
+func _on_party_response(parsed: Dictionary) -> void:
+	var party_id: String = parsed.get("partyId", "")
+	var code: String = parsed.get("code", "")
+	var team: String = parsed.get("team", "")
+	var member_id: String = parsed.get("memberId", "")
+	var members: Array = parsed.get("members", [])
+	if party_id.is_empty() or code.is_empty() or member_id.is_empty():
+		request_failed.emit("Lobby server returned an incomplete response.")
+		return
+	party_ready.emit(party_id, code, team, member_id, members)
+
+func _on_party_poll(parsed: Dictionary) -> void:
+	party_refreshed.emit(parsed.get("members", []))
+
+# 404 here means the party is gone (disbanded / aged out): the screen routes
+# the player back to the menu. Any other status is a transient poll blip - the
+# poll fires every couple seconds, so swallow it rather than clobber the roster
+# status label with a stale error the next poll would not clear.
+func _on_party_poll_failure(http_status: int, _body: PackedByteArray) -> bool:
+	if http_status == 404:
+		party_gone.emit()
+	return true
+
+# Surface the matchmaker's specific rejection (404 unknown code, 409 full) so
+# the player learns which it was rather than a generic failure.
+func _on_party_join_failure(http_status: int, body: PackedByteArray) -> bool:
+	if http_status == 404:
+		party_join_failed.emit("No party found with that code.")
+		return true
+	if http_status == 409:
+		party_join_failed.emit("That party is full.")
+		return true
+	return false

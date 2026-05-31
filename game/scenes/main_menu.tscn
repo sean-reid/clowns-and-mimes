@@ -50,6 +50,9 @@ text = "Host a game"
 [node name="OpenButton" type="Button" parent="Center/Buttons"]
 text = "Play against internet strangers"
 
+[node name="PartyButton" type="Button" parent="Center/Buttons"]
+text = "Party up with friends"
+
 [node name="CodeRow" type="HBoxContainer" parent="Center"]
 
 [node name="CodeLabel" type="Label" parent="Center/CodeRow"]

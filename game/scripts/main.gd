@@ -7,6 +7,7 @@ extends Node
 const TITLE := preload("res://scenes/title_screen.tscn")
 const MENU := preload("res://scenes/main_menu.tscn")
 const LOBBY := preload("res://scenes/lobby.tscn")
+const PARTY := preload("res://scenes/party.tscn")
 const ARENA := preload("res://scenes/arena.tscn")
 
 func _ready() -> void:
@@ -25,6 +26,8 @@ func _on_request(screen: String) -> void:
 			_swap(MENU.instantiate())
 		"lobby":
 			_swap(LOBBY.instantiate())
+		"party":
+			_swap(PARTY.instantiate())
 		"arena":
 			_swap(ARENA.instantiate())
 		"title":

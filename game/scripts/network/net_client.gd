@@ -65,7 +65,9 @@ func _cache_delta(delta: Dictionary) -> void:
 func _on_connected(username: String, host_token: String) -> void:
 	if room_client == null:
 		return
-	room_client.send_join(username, "", host_token)
+	# prefer_team is set only for an open-as-party join; the room honors it to
+	# keep the party on one team. Empty for every other flow.
+	room_client.send_join(username, GameState.prefer_team, host_token)
 
 func send_start_match() -> void:
 	if room_client == null:

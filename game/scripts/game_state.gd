@@ -24,6 +24,14 @@ var server_url: String = ""
 # room can identify which connected player is the host, gating start_match.
 # Empty for non-host (JOIN / OPEN) modes - they never see it.
 var host_token: String = ""
+# Party handle + the caller's member id, set on the party screen and carried
+# into the lobby so an open-as-party join routes everyone to the same room.
+# Empty when not queuing as a party.
+var party_id: String = ""
+var party_member_id: String = ""
+# Team the matchmaker assigned the party; passed as the WS join `preferTeam`
+# so the whole party lands on one team. Empty for solo / host / join-by-code.
+var prefer_team: String = ""
 
 func _ready() -> void:
 	randomize()

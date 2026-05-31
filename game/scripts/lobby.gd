@@ -101,6 +101,10 @@ func _start_matchmaking() -> void:
 	# otherwise be sent on the next join and the server would falsely
 	# accept that client as host.
 	GameState.host_token = ""
+	# Cleared here and only repopulated by an open-as-party join via
+	# _on_lobby_joined; a leftover team from a prior party would otherwise be
+	# sent as preferTeam on an unrelated solo / host join.
+	GameState.prefer_team = ""
 	matchmaker = MatchmakerClientScript.new()
 	add_child(matchmaker)
 	matchmaker.lobby_created.connect(_on_lobby_created)
@@ -114,7 +118,7 @@ func _start_matchmaking() -> void:
 		GameState.Mode.JOIN:
 			matchmaker.join_code(GameState.lobby_code)
 		GameState.Mode.OPEN:
-			matchmaker.join_open()
+			matchmaker.join_open(GameState.party_id)
 		_:
 			_go_offline("offline")
 			return
@@ -173,9 +177,12 @@ func _on_lobby_created(code: String, _room_id: String, ws_url: String, host_toke
 	start_button.grab_focus()
 	_open_ws(GameState.username, host_token)
 
-func _on_lobby_joined(_room_id: String, ws_url: String) -> void:
+func _on_lobby_joined(_room_id: String, ws_url: String, team: String) -> void:
 	network_resolved = true
 	GameState.server_url = ws_url
+	# Carries the party team (empty for solo) into the WS join so NetClient
+	# sends it as preferTeam and the whole party lands together.
+	GameState.prefer_team = team
 	# OPEN matches have no host - the room auto-fills with bots / other
 	# strangers and starts on its own once 2 humans or the bot-fill timer
 	# fires. The status text needs to match what the player is actually

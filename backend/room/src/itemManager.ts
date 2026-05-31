@@ -20,6 +20,7 @@ import type {
 } from '@cm/shared';
 import type { WallSegment } from '@cm/shared/labyrinth';
 import {
+  CLOAK_DURATION_MS,
   ITEM_PICKUP_RADIUS,
   ITEM_RESPAWN_MS,
   RADAR_DURATION_MS,
@@ -163,6 +164,12 @@ export class ItemManager {
         // Arm the next shot to skip the cooldown and pierce walls. The
         // ProjectileManager consumes the flag when that shot fires.
         player.overchargeArmed = true;
+        break;
+      case 'cloak':
+        // Hide this body from other clients for a fixed window. Visual only,
+        // stored as an absolute deadline that rides the snapshot; remote
+        // clients hide the body while it is in the future.
+        player.cloakUntil = Date.now() + CLOAK_DURATION_MS;
         break;
       default:
         break;

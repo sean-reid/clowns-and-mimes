@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { PlayerState, ServerToClient, Team, Topology, Vec3 } from '@cm/shared';
 import type { WallSegment } from '@cm/shared/labyrinth';
-import { ITEM_RESPAWN_MS, RADAR_DURATION_MS } from '@cm/shared/items';
+import { CLOAK_DURATION_MS, ITEM_RESPAWN_MS, RADAR_DURATION_MS } from '@cm/shared/items';
 import { SURGE_DURATION_MS } from '@cm/shared/movement';
 import { PORTAL_DURATION_MS } from '@cm/shared/portals';
 import { ItemManager, type ItemManagerHost } from './itemManager.ts';
@@ -203,6 +203,18 @@ describe('ItemManager.onUseItem', () => {
     h.connections.set(ws, { playerId: 'p' });
     h.im.onUseItem(ws);
     expect(h.players.get('p')!.overchargeArmed).toBe(true);
+  });
+
+  it('sets a cloak deadline when a cloak is used', () => {
+    const h = harness();
+    const ws = {} as WebSocket;
+    h.players.set('p', makePlayer('p', 'mime', { x: 0, y: 0, z: 0 }, { activeItem: 'cloak' }));
+    h.connections.set(ws, { playerId: 'p' });
+    const before = Date.now();
+    h.im.onUseItem(ws);
+    const cloakUntil = h.players.get('p')!.cloakUntil ?? 0;
+    expect(cloakUntil).toBeGreaterThanOrEqual(before + CLOAK_DURATION_MS);
+    expect(cloakUntil).toBeLessThanOrEqual(Date.now() + CLOAK_DURATION_MS);
   });
 });
 

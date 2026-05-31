@@ -809,6 +809,8 @@ func _apply_player_state(entry: Dictionary) -> void:
 		# Server-authoritative leap flag so the remote body's render-rate
 		# arc Y uses the boosted amplitude that clears walls.
 		node.leaping = bool(entry.get("leaping", false))
+		# Cloak deadline: while in the future the body hides itself locally.
+		node.cloak_until_ms = int(entry.get("cloakUntil", 0))
 
 func _handle_tagged(event: Dictionary) -> void:
 	var victim_id: String = event.get("victimId", "")

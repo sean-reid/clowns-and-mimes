@@ -201,6 +201,9 @@ var portal_renderer: RefCounted = null
 # Shared.
 var local_player: PlayerScript = null
 var local_player_id: String = ""
+# Winning team once the match ends, "" while live. Lets a host_changed
+# promotion that lands on the end screen re-show the overlay with Play Again.
+var _ended_win_team: String = ""
 var player_nodes: Dictionary = {}
 var contacts: ContactInteractionsScript = null
 # OfflineMode owns the offline match lifecycle: rules wiring, bot
@@ -491,6 +494,7 @@ func _on_room_event(event: Dictionary) -> void:
 		"portal_open": _handle_portal_open(event)
 		"portal_close": _handle_portal_close(event)
 		"player_teleport": _handle_player_teleport(event)
+		"host_changed": _handle_host_changed(event)
 
 func _handle_projectile_fired(event: Dictionary) -> void:
 	# Spawn the sphere instantly so the shooter sees their shot a frame after
@@ -538,6 +542,22 @@ func _handle_player_teleport(event: Dictionary) -> void:
 		return
 	if local_player != null:
 		local_player.rotation.y = float(event.get("yaw", local_player.rotation.y))
+
+func _handle_host_changed(event: Dictionary) -> void:
+	# The original host left and the server promoted a remaining human. If that
+	# is us, take the host role so the end-screen Play Again shows up - even
+	# though we never held a host token. If the match has already ended and the
+	# overlay is up, re-show it with the button now enabled.
+	if String(event.get("hostId", "")) != local_player_id or local_player_id.is_empty():
+		return
+	GameState.is_room_host = true
+	if hud != null:
+		hud.append_log("The host left - you're the host now.")
+	# If the match already ended, the overlay is up without a Play Again button;
+	# re-show it now that we can restart.
+	if online_mode and hud != null and not _ended_win_team.is_empty():
+		var victory: bool = local_player != null and _ended_win_team == local_player.team
+		hud.show_end(victory, true)
 
 func _handle_tag_result(event: Dictionary) -> void:
 	if bool(event.get("ok", false)):
@@ -899,12 +919,14 @@ func _handle_saved(event: Dictionary) -> void:
 
 func _handle_win(event: Dictionary) -> void:
 	var team: String = event.get("team", "")
+	_ended_win_team = team
 	var victory: bool = local_player != null and team == local_player.team
 	# Only the private-lobby host gets Play Again; the server gates the
 	# restart_room message to the host player anyway, so a non-host who
 	# never sees the button can't trigger a restart. OPEN matches have no
-	# host token, so the button stays hidden for them too.
-	var is_host: bool = online_mode and not GameState.host_token.is_empty()
+	# host, so the button stays hidden for them too. is_room_host also covers
+	# a player the server promoted mid-match after the original host left.
+	var is_host: bool = online_mode and GameState.is_room_host
 	# Free the cursor so the end overlay is clickable; while captured the mouse
 	# only steers look yaw (player.gd gates motion on MOUSE_MODE_CAPTURED). A
 	# fresh match recaptures it when the next local player spawns.

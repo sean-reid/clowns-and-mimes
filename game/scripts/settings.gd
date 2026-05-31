@@ -20,7 +20,8 @@ extends Node
 ## Onboarding:
 ##   - has_seen_tutorial: set once the first-match hint sequence finishes or
 ##     is skipped. The arena shows the overlay only while this is false; the
-##     "Replay tutorial" button in settings clears it to re-run.
+##     "Reset settings" button in settings clears it (along with every other
+##     preference) so the tutorial replays on the next match.
 ##
 ## Mutations emit `changed` so the active scene can re-apply the visual
 ## side of the change immediately without reloading.
@@ -108,6 +109,21 @@ func set_telemetry_id(value: String) -> void:
 		return
 	telemetry_id = value
 	_save()
+
+## Restore every preference to its first-launch default. Keeps telemetry_id
+## (a stable anonymous handle, not a preference) but clears the consent choice
+## so the opt-in prompt runs again. Emits `changed` so the live scene re-applies.
+func reset_to_defaults() -> void:
+	music_muted = false
+	sfx_muted = false
+	light_mode = false
+	custom_username = ""
+	use_v1_menu = false
+	telemetry_consent = ""
+	has_seen_tutorial = false
+	_apply_audio()
+	_save()
+	changed.emit()
 
 func _apply_audio() -> void:
 	AudioBus.mute_bus("Music", music_muted)

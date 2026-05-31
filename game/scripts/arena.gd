@@ -257,8 +257,7 @@ func _ready() -> void:
 		start_tutorial()
 
 func start_tutorial() -> void:
-	# Replace any live overlay so the settings "Replay tutorial" button can
-	# restart mid-match without stacking instances.
+	# Free any live overlay first so a restart never stacks instances.
 	var existing := get_node_or_null("TutorialOverlay")
 	if existing != null:
 		existing.free()

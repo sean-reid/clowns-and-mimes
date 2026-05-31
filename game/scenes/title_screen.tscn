@@ -1,66 +1,58 @@
-[gd_scene load_steps=2 format=3]
+[gd_scene load_steps=5 format=3]
 
 [ext_resource type="Script" path="res://scripts/title_screen.gd" id="1_title"]
+[ext_resource type="Theme" uid="uid://b1cawvm5n8q7c" path="res://assets/themes/carnival_theme.tres" id="2_theme"]
+[ext_resource type="Shader" path="res://assets/shaders/harlequin.gdshader" id="3_harlequin"]
+
+[sub_resource type="ShaderMaterial" id="Mat_harlequin"]
+shader = ExtResource("3_harlequin")
 
 [node name="TitleScreen" type="Control"]
 anchor_right = 1.0
 anchor_bottom = 1.0
 grow_horizontal = 2
 grow_vertical = 2
+theme = ExtResource("2_theme")
 script = ExtResource("1_title")
 
 [node name="Background" type="ColorRect" parent="."]
+material = SubResource("Mat_harlequin")
 anchor_right = 1.0
 anchor_bottom = 1.0
-color = Color(0.04, 0.04, 0.05, 1)
-
-[node name="Decor" type="Control" parent="."]
-anchor_right = 1.0
-anchor_bottom = 1.0
-grow_horizontal = 2
-grow_vertical = 2
 mouse_filter = 2
-
-[node name="ClownPanel" type="ColorRect" parent="Decor"]
-anchor_top = 0.2
-anchor_bottom = 0.8
-anchor_right = 0.18
-offset_left = 24.0
-color = Color(0.9, 0.18, 0.22, 1)
-
-[node name="MimePanel" type="ColorRect" parent="Decor"]
-anchor_top = 0.2
-anchor_bottom = 0.8
-anchor_left = 0.82
-anchor_right = 1.0
-offset_right = -24.0
-color = Color(0.95, 0.95, 0.95, 1)
 
 [node name="Lines" type="VBoxContainer" parent="."]
 anchor_left = 0.2
 anchor_right = 0.8
-anchor_top = 0.3
-anchor_bottom = 0.6
+anchor_top = 0.28
+anchor_bottom = 0.62
 alignment = 1
+mouse_filter = 2
 
 [node name="Line1" type="Label" parent="Lines"]
 horizontal_alignment = 1
 text = ""
-theme_override_font_sizes/font_size = 56
+theme_override_font_sizes/font_size = 52
+theme_override_colors/font_color = Color(0.96, 0.84, 0.3, 1)
 
 [node name="Line2" type="Label" parent="Lines"]
 horizontal_alignment = 1
 text = ""
-theme_override_font_sizes/font_size = 28
+theme_override_font_sizes/font_size = 24
 
 [node name="Line3" type="Label" parent="Lines"]
 horizontal_alignment = 1
 text = ""
-theme_override_font_sizes/font_size = 36
+theme_override_font_sizes/font_size = 32
+theme_override_colors/font_color = Color(0.9, 0.18, 0.22, 1)
 
 [node name="EnterButton" type="Button" parent="."]
-anchor_left = 0.45
-anchor_right = 0.55
+anchor_left = 0.5
 anchor_top = 0.78
-anchor_bottom = 0.84
+anchor_right = 0.5
+anchor_bottom = 0.78
+offset_left = -110.0
+offset_right = 110.0
+offset_bottom = 64.0
 text = "Enter"
+theme_override_font_sizes/font_size = 28

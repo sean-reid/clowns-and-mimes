@@ -17,8 +17,7 @@ const PHASE_3_TEXT := "... IN THE DARK!"
 @onready var line2: Label = $Lines/Line2
 @onready var line3: Label = $Lines/Line3
 @onready var enter_button: Button = $EnterButton
-@onready var clown_panel: ColorRect = $Decor/ClownPanel
-@onready var mime_panel: ColorRect = $Decor/MimePanel
+@onready var background: ColorRect = $Background
 
 func _ready() -> void:
 	line1.text = ""
@@ -26,8 +25,7 @@ func _ready() -> void:
 	line3.text = ""
 	enter_button.disabled = true
 	enter_button.modulate.a = 0.0
-	clown_panel.modulate.a = 0.0
-	mime_panel.modulate.a = 0.0
+	background.modulate.a = 0.0
 	enter_button.pressed.connect(_on_enter)
 	AudioBus.play_music_from_path(AssetPaths.THEME_AUDIO)
 	_animate()
@@ -41,8 +39,7 @@ func _animate() -> void:
 	t.tween_interval(1.4)
 	t.tween_callback(func(): line3.text = PHASE_3_TEXT)
 	t.tween_interval(0.7)
-	t.tween_property(clown_panel, "modulate:a", 1.0, 0.6)
-	t.parallel().tween_property(mime_panel, "modulate:a", 1.0, 0.6)
+	t.tween_property(background, "modulate:a", 1.0, 0.6)
 	t.tween_callback(func(): enter_button.disabled = false)
 	t.tween_property(enter_button, "modulate:a", 1.0, 0.5)
 

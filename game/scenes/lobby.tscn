@@ -1,16 +1,16 @@
-[gd_scene load_steps=2 format=3]
+[gd_scene load_steps=4 format=3]
 
 [ext_resource type="Script" path="res://scripts/lobby.gd" id="1_lobby"]
+[ext_resource type="Theme" uid="uid://b1cawvm5n8q7c" path="res://assets/themes/carnival_theme.tres" id="2_theme"]
+[ext_resource type="PackedScene" uid="uid://dn8q2vc7yk4ab" path="res://scenes/carnival_backdrop.tscn" id="3_backdrop"]
 
 [node name="Lobby" type="Control"]
 anchor_right = 1.0
 anchor_bottom = 1.0
+theme = ExtResource("2_theme")
 script = ExtResource("1_lobby")
 
-[node name="Background" type="ColorRect" parent="."]
-anchor_right = 1.0
-anchor_bottom = 1.0
-color = Color(0.06, 0.06, 0.08, 1)
+[node name="Backdrop" parent="." instance=ExtResource("3_backdrop")]
 
 [node name="Center" type="VBoxContainer" parent="."]
 anchor_left = 0.3

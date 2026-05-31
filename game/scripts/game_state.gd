@@ -41,6 +41,10 @@ var host_random_topology: bool = false
 # so the create/join choice lives in the navigation tree, not the party screen.
 var party_intent: String = ""
 var party_join_code: String = ""
+# Which menu_v2 panel to open on entry (e.g. "joinparty"), instead of the root.
+# Lets a screen hand the player back to a specific menu panel - leaving a party
+# returns to the join-by-code panel rather than the party screen. "" = root.
+var menu_panel: String = ""
 
 func _ready() -> void:
 	randomize()

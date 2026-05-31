@@ -93,7 +93,11 @@ func _ready() -> void:
 
 	_populate_topologies()
 	_wire_button_sfx(self)
-	_show_panel("root")
+	# A screen can hand us back to a specific panel (e.g. leaving a party returns
+	# to "joinparty"); fall back to root when unset or unknown.
+	var open_panel := GameState.menu_panel
+	GameState.menu_panel = ""
+	_show_panel(open_panel if _panels.has(open_panel) else "root")
 	edit_row.visible = false
 	if not Settings.custom_username.is_empty():
 		GameState.username = Settings.custom_username

@@ -49,22 +49,29 @@ func _ready() -> void:
 	_poll_timer.wait_time = POLL_INTERVAL
 	_poll_timer.timeout.connect(_poll)
 	add_child(_poll_timer)
-	_show_entry()
 	_apply_intent()
 
 # The menu decides create-vs-join, so honor that choice immediately instead of
-# making the player pick again here. A failed auto-join falls back to the entry
-# view (still visible) so they can retype the code.
+# making the player pick again here. On an auto-handoff we hide the entry view
+# up front so the create/join controls don't flash before the matchmaker
+# responds - only the working status shows until the roster is ready. A failed
+# auto-join falls back to the entry view so they can retype the code.
 func _apply_intent() -> void:
 	var intent := GameState.party_intent
 	var code := GameState.party_join_code
 	GameState.party_intent = ""
 	GameState.party_join_code = ""
 	if intent == "create":
+		entry.visible = false
+		roster.visible = false
 		_on_create_pressed()
 	elif intent == "join" and not code.is_empty():
+		entry.visible = false
+		roster.visible = false
 		code_entry.text = code
 		_on_join_pressed()
+	else:
+		_show_entry()
 
 func _show_entry() -> void:
 	entry.visible = true
@@ -101,6 +108,9 @@ func _on_party_refreshed(members: Array) -> void:
 
 func _on_party_join_failed(reason: String) -> void:
 	join_button.disabled = false
+	# An auto-join hid the entry view; bring it back so they can retype the code.
+	entry.visible = true
+	roster.visible = false
 	status_label.text = reason
 	code_entry.grab_focus()
 
@@ -115,6 +125,9 @@ func _on_party_gone() -> void:
 func _on_request_failed(reason: String) -> void:
 	create_button.disabled = false
 	join_button.disabled = false
+	# An auto-handoff hid the entry view; bring it back so they can retry.
+	entry.visible = true
+	roster.visible = false
 	status_label.text = reason
 
 func _poll() -> void:
@@ -135,7 +148,9 @@ func _on_leave_pressed() -> void:
 	if not GameState.party_id.is_empty():
 		matchmaker.leave_party(GameState.party_id, GameState.party_member_id)
 	_clear_party_state()
-	_show_entry()
+	# Drop back to the menu's join-by-code panel, not this scene's entry view.
+	GameState.menu_panel = "joinparty"
+	requested_screen.emit("menu")
 
 func _on_back_pressed() -> void:
 	_poll_timer.stop()

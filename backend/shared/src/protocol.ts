@@ -279,7 +279,12 @@ export type GameEvent =
   // any other movement, but yaw is client-owned for the local player, so the
   // server emits the emergence yaw here for that client to snap its facing
   // away from the exit wall. Remote bodies pick up the same yaw from the delta.
-  | { kind: 'player_teleport'; playerId: string; yaw: number };
+  | { kind: 'player_teleport'; playerId: string; yaw: number }
+  // The private-room host left and the server promoted a remaining human so
+  // start/restart stays reachable. Broadcast to everyone; the client whose own
+  // id equals hostId assumes the host role (the original host token never
+  // reaches a promoted joiner, so this event is how they learn it).
+  | { kind: 'host_changed'; hostId: string };
 
 export const BATTLE_CRY_COUNT = 8;
 

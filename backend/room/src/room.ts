@@ -915,13 +915,11 @@ export class Room implements DurableObject {
     this.connections.delete(ws);
     this.hostTokenByWs.delete(ws);
     this.rateLimiters.delete(ws);
-    // If the host drops, leave hostPlayerId null. They (or a successor
-    // who knows the hostToken) will re-claim on the next join. The room
-    // stays in `filling` until something triggers startMatch, so the
-    // empty-host state never strands the lobby.
-    if (this.hostPlayerId === conn.playerId) {
-      this.hostPlayerId = null;
-    }
+    // Keep hostPlayerId pointing at the host through the grace window: a
+    // transient drop should let them resume as host (resumeSession matches
+    // on the retained id even when the reconnect URL no longer carries the
+    // token). The role is only vacated - and handed to a successor - in
+    // finalizeDisconnect, once the host is truly gone.
     // Hold the slot open for RECONNECT_GRACE_MS so a transient drop can
     // resume via sessionToken instead of tearing the match down. The
     // PlayerState stays in `players`, the tick keeps running, and bots
@@ -945,6 +943,7 @@ export class Room implements DurableObject {
   }
 
   private finalizeDisconnect(playerId: string): void {
+    const wasHost = this.hostPlayerId === playerId;
     this.players.delete(playerId);
     this.sessions.forget(playerId);
     this.inputQueues.delete(playerId);
@@ -963,8 +962,32 @@ export class Room implements DurableObject {
       // point without leaving disk garbage behind.
       this.persistence.clear();
     } else {
+      // The host is truly gone now (grace expired without a resume). Hand the
+      // role to a remaining human so start_match / restart_room stays reachable
+      // and the others can keep playing.
+      if (wasHost) {
+        this.hostPlayerId = null;
+        this.promoteHostIfVacant();
+      }
       this.notifyMatchmaker(this.humanPlayers().length, this.botPlayers().length);
       this.persist();
+    }
+  }
+
+  // Pick a still-connected human to carry the host role when it has been
+  // vacated. Only private rooms have a host (the matchmaker minted an
+  // expectedHostToken); open rooms auto-start and must never grow one. The
+  // promoted client learns of its new role via the broadcast host_changed
+  // event, since the original host token never reaches a joiner.
+  private promoteHostIfVacant(): void {
+    if (this.expectedHostToken === null || this.hostPlayerId !== null) return;
+    for (const conn of this.connections.values()) {
+      const player = this.players.get(conn.playerId);
+      if (player && !player.bot) {
+        this.hostPlayerId = conn.playerId;
+        this.broadcast({ t: 'event', kind: { kind: 'host_changed', hostId: conn.playerId } });
+        return;
+      }
     }
   }
 

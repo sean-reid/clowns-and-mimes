@@ -42,6 +42,9 @@ var transition_started: bool = false
 # during the transition so the arena's connections don't clash. The actual
 # RoomClient lives under NetClient so it outlives this scene.
 var _room_signal_handlers: Array = []
+# Our own player id, learned from the first snapshot. Used to recognise a
+# host_changed promotion aimed at us when the original host leaves the lobby.
+var _local_id: String = ""
 
 func _ready() -> void:
 	back_button.pressed.connect(_on_back_pressed)
@@ -101,6 +104,7 @@ func _start_matchmaking() -> void:
 	# otherwise be sent on the next join and the server would falsely
 	# accept that client as host.
 	GameState.host_token = ""
+	GameState.is_room_host = false
 	# Cleared here and only repopulated by an open-as-party join via
 	# _on_lobby_joined; a leftover team from a prior party would otherwise be
 	# sent as preferTeam on an unrelated solo / host join.
@@ -144,9 +148,9 @@ func _adopt_live_connection() -> void:
 	]
 	for entry in _room_signal_handlers:
 		entry[0].connect(entry[1], entry[2])
-	# The host keeps its token across the restart, so re-show the code + Start
+	# The host keeps its role across the restart, so re-show the code + Start
 	# controls; everyone else waits on the host to start the next match.
-	if not GameState.host_token.is_empty():
+	if GameState.is_room_host:
 		code_label.text = "Code: %s" % _placeholder_code_if_missing()
 		status_label.text = "Match reset. Start again when everyone is ready."
 		code_actions.visible = true
@@ -171,6 +175,7 @@ func _on_lobby_created(code: String, _room_id: String, ws_url: String, host_toke
 	GameState.lobby_code = code
 	GameState.server_url = ws_url
 	GameState.host_token = host_token
+	GameState.is_room_host = true
 	code_label.text = "Code: %s" % code
 	status_label.text = "Share the code. Start the match when everyone is ready."
 	code_actions.visible = true
@@ -231,6 +236,7 @@ func _go_offline(reason: String) -> void:
 	network_resolved = true
 	GameState.server_url = ""
 	GameState.host_token = ""
+	GameState.is_room_host = false
 	status_label.text = "Playing offline against bots. (%s)" % reason
 	_finalize_and_transition()
 
@@ -254,7 +260,9 @@ func _open_ws(username: String, host_token: String) -> void:
 	for entry in _room_signal_handlers:
 		entry[0].connect(entry[1], entry[2])
 
-func _on_snapshot(snapshot: Dictionary, _you_are: String) -> void:
+func _on_snapshot(snapshot: Dictionary, you_are: String) -> void:
+	if not you_are.is_empty():
+		_local_id = you_are
 	_render_roster_from(snapshot.get("players", []))
 	var phase: String = snapshot.get("phase", "filling")
 	# An initial snapshot arriving with a non-`filling` phase means the
@@ -273,14 +281,30 @@ func _on_delta(delta: Dictionary) -> void:
 		_finalize_and_transition()
 
 func _on_event(event: Dictionary) -> void:
-	# Phase events arrive in the form { kind: 'phase', phase: '<name>' }.
-	# We only care here about leaving `filling`; chase / freeze events are
-	# the arena's business once it takes over.
-	var kind: Variant = event.get("kind", "")
-	if typeof(kind) == TYPE_DICTIONARY and kind.get("kind", "") == "phase":
-		var phase: String = kind.get("phase", "")
+	# RoomClient hands us the inner event kind dict, e.g.
+	# { kind: 'phase', phase: '<name>' } or { kind: 'host_changed', hostId }.
+	var kind: String = String(event.get("kind", ""))
+	if kind == "phase":
+		# Leaving `filling` is the cue to hand off to the arena; chase / freeze
+		# events are the arena's business once it takes over.
+		var phase: String = String(event.get("phase", ""))
 		if not phase.is_empty() and phase != "filling":
 			_finalize_and_transition()
+	elif kind == "host_changed":
+		# The host left the lobby and the server handed us the role; surface the
+		# Start controls so play can continue.
+		if String(event.get("hostId", "")) == _local_id and not _local_id.is_empty():
+			_become_host_in_lobby()
+
+# Promote this client to host while still in the lobby: it can now start the
+# match. A promoted joiner has no host token to mint a fresh code, so reuse the
+# code they typed to join (empty for an open match, which has no host anyway).
+func _become_host_in_lobby() -> void:
+	GameState.is_room_host = true
+	status_label.text = "You are the host now. Start when everyone is ready."
+	code_actions.visible = true
+	start_button.disabled = false
+	start_button.grab_focus()
 
 func _on_room_error(code: String, message: String) -> void:
 	if code == "match_in_progress":

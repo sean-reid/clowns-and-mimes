@@ -1,0 +1,239 @@
+[gd_scene load_steps=10 format=3]
+
+[ext_resource type="Script" path="res://scripts/menu_v2.gd" id="1_menu2"]
+[ext_resource type="FontFile" uid="uid://cqhv5d8ogdj2q" path="res://assets/fonts/Bungee-Regular.ttf" id="2_bungee"]
+[ext_resource type="Texture2D" uid="uid://d2dvcywxfev6h" path="res://assets/textures/clown_head.png" id="3_clown"]
+[ext_resource type="Texture2D" uid="uid://76ft2q7p6x2d" path="res://assets/textures/mime_head.png" id="4_mime"]
+
+[sub_resource type="Theme" id="Theme_menu2"]
+default_font = ExtResource("2_bungee")
+default_font_size = 18
+
+[sub_resource type="Shader" id="Shader_harlequin"]
+code = "shader_type canvas_item;
+
+uniform vec4 color_a : source_color = vec4(0.07, 0.05, 0.09, 1.0);
+uniform vec4 color_b : source_color = vec4(0.13, 0.09, 0.15, 1.0);
+uniform float scale = 10.0;
+
+void fragment() {
+	vec2 p = UV * scale;
+	// Rotate the grid 45 degrees so the checker reads as a diamond harlequin.
+	vec2 r = vec2(p.x + p.y, p.x - p.y);
+	float c = mod(floor(r.x) + floor(r.y), 2.0);
+	COLOR = mix(color_a, color_b, c);
+}
+"
+
+[sub_resource type="ShaderMaterial" id="Mat_harlequin"]
+shader = SubResource("Shader_harlequin")
+
+[sub_resource type="StyleBoxFlat" id="Style_primary"]
+bg_color = Color(0.85, 0.16, 0.22, 1)
+corner_radius_top_left = 16
+corner_radius_top_right = 16
+corner_radius_bottom_right = 16
+corner_radius_bottom_left = 16
+content_margin_left = 24.0
+content_margin_top = 16.0
+content_margin_right = 24.0
+content_margin_bottom = 16.0
+
+[sub_resource type="StyleBoxFlat" id="Style_flyout"]
+bg_color = Color(0.1, 0.08, 0.12, 0.94)
+corner_radius_top_left = 12
+corner_radius_top_right = 12
+corner_radius_bottom_right = 12
+corner_radius_bottom_left = 12
+content_margin_left = 18.0
+content_margin_top = 18.0
+content_margin_right = 18.0
+content_margin_bottom = 18.0
+
+[node name="MenuV2" type="Control"]
+anchor_right = 1.0
+anchor_bottom = 1.0
+theme = SubResource("Theme_menu2")
+script = ExtResource("1_menu2")
+
+[node name="Background" type="ColorRect" parent="."]
+material = SubResource("Mat_harlequin")
+anchor_right = 1.0
+anchor_bottom = 1.0
+
+[node name="ClownMascot" type="TextureRect" parent="."]
+modulate = Color(1, 1, 1, 0.5)
+anchor_top = 0.25
+anchor_bottom = 0.95
+anchor_right = 0.26
+offset_left = 16.0
+texture = ExtResource("3_clown")
+expand_mode = 1
+stretch_mode = 5
+mouse_filter = 2
+
+[node name="MimeMascot" type="TextureRect" parent="."]
+modulate = Color(1, 1, 1, 0.5)
+anchor_left = 0.74
+anchor_top = 0.25
+anchor_right = 1.0
+anchor_bottom = 0.95
+offset_right = -16.0
+texture = ExtResource("4_mime")
+expand_mode = 1
+stretch_mode = 5
+mouse_filter = 2
+
+[node name="MenuTitle" type="Label" parent="."]
+anchor_left = 0.5
+anchor_right = 0.5
+offset_left = -320.0
+offset_top = 36.0
+offset_right = 320.0
+offset_bottom = 96.0
+horizontal_alignment = 1
+text = "CLOWNS & MIMES"
+theme_override_font_sizes/font_size = 44
+theme_override_colors/font_color = Color(0.96, 0.84, 0.3, 1)
+
+[node name="TopBar" type="VBoxContainer" parent="."]
+anchor_left = 0.5
+anchor_right = 0.5
+offset_left = -220.0
+offset_top = 112.0
+offset_right = 220.0
+offset_bottom = 180.0
+alignment = 1
+theme_override_constants/separation = 8
+
+[node name="UserRow" type="HBoxContainer" parent="TopBar"]
+alignment = 1
+theme_override_constants/separation = 12
+
+[node name="UserLabel" type="Label" parent="TopBar/UserRow"]
+text = "Playing as ..."
+theme_override_font_sizes/font_size = 18
+
+[node name="EditLink" type="Button" parent="TopBar/UserRow"]
+text = "Edit"
+flat = true
+theme_override_font_sizes/font_size = 16
+
+[node name="EditRow" type="HBoxContainer" parent="TopBar"]
+alignment = 1
+theme_override_constants/separation = 8
+
+[node name="Username" type="LineEdit" parent="TopBar/EditRow"]
+custom_minimum_size = Vector2(220, 0)
+placeholder_text = "Your name"
+theme_override_font_sizes/font_size = 16
+
+[node name="Random" type="Button" parent="TopBar/EditRow"]
+text = "Random"
+theme_override_font_sizes/font_size = 16
+
+[node name="Save" type="Button" parent="TopBar/EditRow"]
+text = "Save"
+theme_override_font_sizes/font_size = 16
+
+[node name="Center" type="VBoxContainer" parent="."]
+anchor_left = 0.5
+anchor_top = 0.5
+anchor_right = 0.5
+anchor_bottom = 0.5
+offset_left = -200.0
+offset_top = -120.0
+offset_right = 200.0
+offset_bottom = 220.0
+alignment = 1
+theme_override_constants/separation = 18
+
+[node name="Primary" type="VBoxContainer" parent="Center"]
+theme_override_constants/separation = 16
+
+[node name="FindMatchButton" type="Button" parent="Center/Primary"]
+custom_minimum_size = Vector2(400, 72)
+text = "Find Match"
+theme_override_font_sizes/font_size = 30
+theme_override_styles/normal = SubResource("Style_primary")
+theme_override_styles/hover = SubResource("Style_primary")
+theme_override_styles/pressed = SubResource("Style_primary")
+
+[node name="FriendsButton" type="Button" parent="Center/Primary"]
+custom_minimum_size = Vector2(400, 72)
+text = "Play with Friends"
+theme_override_font_sizes/font_size = 30
+theme_override_styles/normal = SubResource("Style_primary")
+theme_override_styles/hover = SubResource("Style_primary")
+theme_override_styles/pressed = SubResource("Style_primary")
+
+[node name="Flyout" type="PanelContainer" parent="Center"]
+custom_minimum_size = Vector2(400, 0)
+theme_override_styles/panel = SubResource("Style_flyout")
+
+[node name="FlyoutBox" type="VBoxContainer" parent="Center/Flyout"]
+theme_override_constants/separation = 12
+
+[node name="TopologyRow" type="HBoxContainer" parent="Center/Flyout/FlyoutBox"]
+
+[node name="Label" type="Label" parent="Center/Flyout/FlyoutBox/TopologyRow"]
+text = "Topology"
+size_flags_horizontal = 3
+theme_override_font_sizes/font_size = 16
+
+[node name="Topology" type="OptionButton" parent="Center/Flyout/FlyoutBox/TopologyRow"]
+size_flags_horizontal = 3
+theme_override_font_sizes/font_size = 16
+
+[node name="HostButton" type="Button" parent="Center/Flyout/FlyoutBox"]
+custom_minimum_size = Vector2(0, 44)
+text = "Host a private game"
+theme_override_font_sizes/font_size = 18
+
+[node name="CodeRow" type="HBoxContainer" parent="Center/Flyout/FlyoutBox"]
+theme_override_constants/separation = 8
+
+[node name="CodeLabel" type="Label" parent="Center/Flyout/FlyoutBox/CodeRow"]
+text = "Code"
+theme_override_font_sizes/font_size = 16
+
+[node name="CodeEntry" type="LineEdit" parent="Center/Flyout/FlyoutBox/CodeRow"]
+size_flags_horizontal = 3
+placeholder_text = "ABCDEF"
+theme_override_font_sizes/font_size = 16
+
+[node name="JoinButton" type="Button" parent="Center/Flyout/FlyoutBox/CodeRow"]
+text = "Join"
+theme_override_font_sizes/font_size = 16
+
+[node name="PartyButton" type="Button" parent="Center/Flyout/FlyoutBox"]
+custom_minimum_size = Vector2(0, 44)
+text = "Party up with friends"
+theme_override_font_sizes/font_size = 18
+
+[node name="SettingsButton" type="Button" parent="."]
+anchor_left = 1.0
+anchor_right = 1.0
+offset_left = -64.0
+offset_top = 12.0
+offset_right = -12.0
+offset_bottom = 56.0
+tooltip_text = "Settings"
+text = "⚙"
+theme_override_font_sizes/font_size = 26
+
+[node name="Confetti" type="CPUParticles2D" parent="."]
+position = Vector2(800, 200)
+emitting = false
+amount = 80
+lifetime = 2.5
+one_shot = true
+explosiveness = 0.85
+direction = Vector2(0, -1)
+spread = 70.0
+gravity = Vector2(0, 600)
+initial_velocity_min = 300.0
+initial_velocity_max = 600.0
+scale_amount_min = 3.0
+scale_amount_max = 7.0
+color = Color(0.96, 0.84, 0.3, 1)

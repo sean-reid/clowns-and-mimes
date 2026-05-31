@@ -11,6 +11,8 @@ const THEME_AUDIO := "res://assets/audio/oompa_theme.mp3"
 const LOSE_STINGER := "res://assets/audio/womp_womp.mp3"
 const WIN_STINGER := "res://assets/audio/maniacal_laugh.mp3"
 const FOOTSTEPS := "res://assets/audio/footsteps.mp3"
+const UI_CLICK := "res://assets/audio/ui_click.wav"
+const UI_HOVER := "res://assets/audio/ui_hover.wav"
 
 static func try_load_texture(team: String) -> Texture2D:
 	var path: String = MIME_TEXTURE if team == "mime" else CLOWN_TEXTURE

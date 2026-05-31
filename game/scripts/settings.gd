@@ -17,6 +17,12 @@ extends Node
 ##     string means "no saved name, generate a random one each session."
 ##     Names produced by the Random button are NOT saved here.
 ##
+## Onboarding:
+##   - has_seen_tutorial: set once the first-match hint sequence finishes or
+##     is skipped. The arena shows the overlay only while this is false; the
+##     "Reset settings" button in settings clears it (along with every other
+##     preference) so the tutorial replays on the next match.
+##
 ## Mutations emit `changed` so the active scene can re-apply the visual
 ## side of the change immediately without reloading.
 
@@ -38,6 +44,8 @@ var use_v1_menu: bool = false
 var telemetry_consent: String = ""
 # Random UUID generated once and reused across sessions. No PII.
 var telemetry_id: String = ""
+# First-match onboarding overlay. False until the player finishes or skips it.
+var has_seen_tutorial: bool = false
 
 func _ready() -> void:
 	_load()
@@ -90,11 +98,32 @@ func set_telemetry_consent(value: String) -> void:
 	_save()
 	changed.emit()
 
+func set_has_seen_tutorial(value: bool) -> void:
+	if has_seen_tutorial == value:
+		return
+	has_seen_tutorial = value
+	_save()
+
 func set_telemetry_id(value: String) -> void:
 	if telemetry_id == value:
 		return
 	telemetry_id = value
 	_save()
+
+## Restore every preference to its first-launch default. Keeps telemetry_id
+## (a stable anonymous handle, not a preference) but clears the consent choice
+## so the opt-in prompt runs again. Emits `changed` so the live scene re-applies.
+func reset_to_defaults() -> void:
+	music_muted = false
+	sfx_muted = false
+	light_mode = false
+	custom_username = ""
+	use_v1_menu = false
+	telemetry_consent = ""
+	has_seen_tutorial = false
+	_apply_audio()
+	_save()
+	changed.emit()
 
 func _apply_audio() -> void:
 	AudioBus.mute_bus("Music", music_muted)
@@ -115,6 +144,7 @@ func _load() -> void:
 	use_v1_menu = bool(cfg.get_value(SECTION, "use_v1_menu", false))
 	telemetry_consent = String(cfg.get_value(SECTION, "telemetry_consent", ""))
 	telemetry_id = String(cfg.get_value(SECTION, "telemetry_id", ""))
+	has_seen_tutorial = bool(cfg.get_value(SECTION, "has_seen_tutorial", false))
 
 func _save() -> void:
 	var cfg := ConfigFile.new()
@@ -125,4 +155,5 @@ func _save() -> void:
 	cfg.set_value(SECTION, "use_v1_menu", use_v1_menu)
 	cfg.set_value(SECTION, "telemetry_consent", telemetry_consent)
 	cfg.set_value(SECTION, "telemetry_id", telemetry_id)
+	cfg.set_value(SECTION, "has_seen_tutorial", has_seen_tutorial)
 	cfg.save(CONFIG_PATH)

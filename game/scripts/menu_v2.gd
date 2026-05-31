@@ -14,6 +14,9 @@ signal requested_screen(screen: String)
 const AssetPaths := preload("res://scripts/asset_paths.gd")
 const VersionCheck := preload("res://scripts/network/version_check.gd")
 const SettingsPanel := preload("res://scenes/settings_panel.tscn")
+# Popups are Window-based, so they don't inherit this scene's theme - assign it
+# explicitly to keep the dialogs on the carnival font/button styling.
+const CARNIVAL_THEME := preload("res://assets/themes/carnival_theme.tres")
 
 # Picker id past the four concrete topologies = "Random" (rolled client-side).
 const RANDOM_TOPOLOGY_ID := 100
@@ -244,6 +247,7 @@ func _check_for_updates() -> void:
 
 func _show_update_popup(local: String, latest: String) -> void:
 	var dialog := AcceptDialog.new()
+	dialog.theme = CARNIVAL_THEME
 	dialog.title = "Update available"
 	dialog.dialog_text = (
 		"A newer version is available.\n\nYou have v%s.  Latest is v%s."
@@ -260,6 +264,7 @@ func _maybe_show_telemetry_opt_in() -> void:
 	if not Settings.telemetry_consent.is_empty():
 		return
 	var dialog := ConfirmationDialog.new()
+	dialog.theme = CARNIVAL_THEME
 	dialog.title = "Share gameplay stats?"
 	dialog.dialog_text = (
 		"Help improve Clowns and Mimes by sharing anonymous gameplay "
@@ -268,6 +273,10 @@ func _maybe_show_telemetry_opt_in() -> void:
 	dialog.ok_button_text = "Yes, share"
 	dialog.get_cancel_button().text = "No thanks"
 	dialog.unresizable = true
+	# Cap the label width so the prompt wraps instead of stretching wide.
+	var label := dialog.get_label()
+	label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	label.custom_minimum_size = Vector2(360, 0)
 	dialog.confirmed.connect(_accept_telemetry)
 	dialog.canceled.connect(func(): Settings.set_telemetry_consent("no"))
 	dialog.confirmed.connect(dialog.queue_free)

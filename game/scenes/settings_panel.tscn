@@ -1,6 +1,7 @@
-[gd_scene load_steps=3 format=3]
+[gd_scene load_steps=4 format=3]
 
 [ext_resource type="Script" path="res://scripts/settings_panel.gd" id="1_settings"]
+[ext_resource type="Theme" uid="uid://b1cawvm5n8q7c" path="res://assets/themes/carnival_theme.tres" id="2_theme"]
 
 [sub_resource type="StyleBoxFlat" id="dim_style"]
 bg_color = Color(0.04, 0.04, 0.05, 1)
@@ -12,6 +13,7 @@ script = ExtResource("1_settings")
 [node name="Dim" type="PanelContainer" parent="."]
 anchor_right = 1.0
 anchor_bottom = 1.0
+theme = ExtResource("2_theme")
 theme_override_styles/panel = SubResource("dim_style")
 mouse_filter = 1
 
@@ -51,6 +53,15 @@ theme_override_colors/font_color = Color(0.7, 0.7, 0.75, 1)
 
 [node name="LightMode" type="CheckButton" parent="Content"]
 text = "Light mode (blue skies, brighter arena)"
+theme_override_font_sizes/font_size = 18
+
+[node name="HelpHeader" type="Label" parent="Content"]
+text = "Help"
+theme_override_font_sizes/font_size = 18
+theme_override_colors/font_color = Color(0.7, 0.7, 0.75, 1)
+
+[node name="ResetSettings" type="Button" parent="Content"]
+text = "Reset settings"
 theme_override_font_sizes/font_size = 18
 
 [node name="Spacer" type="Control" parent="Content"]

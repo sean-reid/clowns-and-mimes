@@ -24,6 +24,7 @@ const LABYRINTH := preload("res://scenes/labyrinth.tscn")
 const Movement := preload("res://scripts/movement.gd")
 const Physics := preload("res://scripts/physics.gd")
 const IN_GAME_MENU := preload("res://scenes/in_game_menu.tscn")
+const TUTORIAL_OVERLAY := preload("res://scenes/tutorial_overlay.tscn")
 # Preload kept here only for the `var rules: GameRulesScript` field
 # type annotation - OfflineMode (offline_mode.gd) is the actual lifecycle
 # owner and instantiates the GameRulesScript; contact_interactions.gd
@@ -252,6 +253,15 @@ func _ready() -> void:
 		_start_online()
 	else:
 		offline.start()
+	if not Settings.has_seen_tutorial:
+		start_tutorial()
+
+func start_tutorial() -> void:
+	# Free any live overlay first so a restart never stacks instances.
+	var existing := get_node_or_null("TutorialOverlay")
+	if existing != null:
+		existing.free()
+	add_child(TUTORIAL_OVERLAY.instantiate())
 
 func _setup_menu() -> void:
 	menu = IN_GAME_MENU.instantiate()

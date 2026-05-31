@@ -49,6 +49,9 @@ func drive_hud() -> void:
 		arena.rules.update_position(id, arena.player_nodes[id].global_position)
 	arena.rules.tick(Time.get_unix_time_from_system())
 	arena.hud.set_countdown_seconds(arena.rules.phase_time_remaining(Time.get_unix_time_from_system()))
+	# The minimap plots live positions, so refresh it every frame here rather
+	# than only on tag/save events (which sufficed for the old status bars).
+	_render_team_status()
 
 func _setup_rules() -> void:
 	arena.rules = GameRulesScript.new()
@@ -145,6 +148,10 @@ func _on_phase_changed(phase: int) -> void:
 
 func _render_team_status() -> void:
 	var list: Array = []
-	for player in arena.rules.players.values():
-		list.append(player)
+	for id in arena.rules.players:
+		var row: Dictionary = arena.rules.players[id].duplicate()
+		var node: Node = arena.player_nodes.get(id)
+		if node != null:
+			row["yaw"] = node.rotation.y
+		list.append(row)
 	arena.hud.render_team_status(list)

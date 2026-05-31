@@ -32,12 +32,14 @@ interface Harness {
   players: Map<string, PlayerState>;
   connections: Map<WebSocket, { playerId: string }>;
   broadcasts: ServerToClient[];
+  cloneSpawns: PlayerState[];
 }
 
 function harness(seed = 1, topology: Topology = 'plane', walls: WallSegment[] = []): Harness {
   const players = new Map<string, PlayerState>();
   const connections = new Map<WebSocket, { playerId: string }>();
   const broadcasts: ServerToClient[] = [];
+  const cloneSpawns: PlayerState[] = [];
   const host: ItemManagerHost = {
     players,
     connections,
@@ -46,8 +48,9 @@ function harness(seed = 1, topology: Topology = 'plane', walls: WallSegment[] = 
     getSeed: () => seed,
     getWalls: () => walls,
     broadcast: (msg) => broadcasts.push(msg),
+    spawnClone: (owner) => cloneSpawns.push(owner),
   };
-  return { im: new ItemManager(host), players, connections, broadcasts };
+  return { im: new ItemManager(host), players, connections, broadcasts, cloneSpawns };
 }
 
 function kinds(broadcasts: ServerToClient[]): string[] {
@@ -156,6 +159,17 @@ describe('ItemManager.onUseItem', () => {
     h.connections.set(ws, { playerId: 'p' });
     h.im.onUseItem(ws);
     expect(h.players.get('p')!.leapArmed).toBeUndefined();
+  });
+
+  it('asks the host to spawn an ally when a clone is used', () => {
+    const h = harness();
+    const ws = {} as WebSocket;
+    const owner = makePlayer('p', 'mime', { x: 0, y: 0, z: 0 }, { activeItem: 'clone' });
+    h.players.set('p', owner);
+    h.connections.set(ws, { playerId: 'p' });
+    h.im.onUseItem(ws);
+    expect(h.cloneSpawns).toEqual([owner]);
+    expect(kinds(h.broadcasts)).toContain('item_used');
   });
 
   it('sets a surge deadline when a surge is used', () => {

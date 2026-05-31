@@ -52,6 +52,9 @@ export interface ItemManagerHost {
   getSeed(): number;
   getWalls(): readonly WallSegment[];
   broadcast(msg: ServerToClient): void;
+  // Spawn a temporary ally bot (Clone power-up) near and on the team of the
+  // activating player. Owned by BotManager, which despawns it on expiry.
+  spawnClone(owner: PlayerState): void;
 }
 
 export class ItemManager {
@@ -141,6 +144,9 @@ export class ItemManager {
         // Sprint boost for a fixed window. Stored as an absolute deadline so
         // the simulation and client predictor agree without further events.
         player.surgeUntil = Date.now() + SURGE_DURATION_MS;
+        break;
+      case 'clone':
+        this.host.spawnClone(player);
         break;
       default:
         break;

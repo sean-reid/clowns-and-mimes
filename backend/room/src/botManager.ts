@@ -43,6 +43,10 @@ const BOT_JUMP_REFRACTORY_MS = 1500;
 const BOT_JUMP_NOISE_PER_SECOND = 0.05;
 const BOT_JUMP_EVADE_BUFFER = 0.5;
 const BOT_JUMP_CORNER_THREAT_RADIUS = 4.0;
+// Clone power-up: a temporary ally bot lives this long, then despawns.
+const CLONE_DURATION_MS = 30_000;
+// Clone spawns this far from its owner, on the first unobstructed bearing.
+const CLONE_SPAWN_OFFSET = 2.0;
 
 interface BotMind {
   patrolTarget: { x: number; z: number };
@@ -212,22 +216,90 @@ export class BotManager {
           sprinting: false,
           jumpStartedAt: null,
         });
-        this.botMinds.set(id, {
-          patrolTarget: this.randomPatrolPoint(),
-          patrolUntil: 0,
-          engagedTargetId: null,
-          lastDir: { x: 0, z: 0 },
-          lastYaw: 0,
-          progressSampleAt: Date.now(),
-          progressSamplePos: { x: spawn.x, z: spawn.z },
-          lastKnownPos: null,
-          investigateUntil: 0,
-          recentTargets: [],
-          lastJumpedAt: 0,
-        });
+        this.botMinds.set(id, this.freshMind(spawn, 0));
       }
     }
     this.host.notifyMatchmaker(this.host.humanCount(), this.host.botCount());
+  }
+
+  /**
+   * Spawn a Clone power-up's temporary ally: a bot on the owner's team,
+   * placed next to them, that despawns after CLONE_DURATION_MS. It rides the
+   * snapshot like any other player, so no event is needed; cloneExpiresAt on
+   * its PlayerState both schedules the despawn and survives persistence.
+   */
+  spawnClone(owner: PlayerState): void {
+    const id = crypto.randomUUID();
+    const spawn = this.cloneSpawnNear(owner);
+    this.host.players.set(id, {
+      id,
+      name: generateBotName(),
+      team: owner.team,
+      bot: true,
+      position: spawn,
+      yaw: owner.yaw,
+      frozen: false,
+      sprintEnergy: MAX_SPRINT,
+      sprinting: false,
+      jumpStartedAt: null,
+      cloneExpiresAt: Date.now() + CLONE_DURATION_MS,
+    });
+    this.botMinds.set(id, this.freshMind(spawn, owner.yaw));
+    this.host.notifyMatchmaker(this.host.humanCount(), this.host.botCount());
+  }
+
+  private freshMind(pos: { x: number; z: number }, yaw: number): BotMind {
+    return {
+      patrolTarget: this.randomPatrolPoint(),
+      patrolUntil: 0,
+      engagedTargetId: null,
+      lastDir: { x: 0, z: 0 },
+      lastYaw: yaw,
+      progressSampleAt: Date.now(),
+      progressSamplePos: { x: pos.x, z: pos.z },
+      lastKnownPos: null,
+      investigateUntil: 0,
+      recentTargets: [],
+      lastJumpedAt: 0,
+    };
+  }
+
+  // First bearing around the owner at CLONE_SPAWN_OFFSET that doesn't land in
+  // a wall; falls back to the owner's own cell if every bearing is blocked.
+  private cloneSpawnNear(owner: PlayerState): Vec3 {
+    const walls = this.host.getWalls();
+    const topology = this.host.getTopology();
+    for (let i = 0; i < 8; i += 1) {
+      const a = (i / 8) * 2 * Math.PI;
+      const raw = {
+        x: owner.position.x + Math.cos(a) * CLONE_SPAWN_OFFSET,
+        z: owner.position.z + Math.sin(a) * CLONE_SPAWN_OFFSET,
+      };
+      const w = wrapPosition(raw, topology, WORLD_WIDTH);
+      if (walls.length === 0 || !pointBlockedByWall(walls, w.x, w.z)) {
+        return { x: w.x, y: owner.position.y, z: w.z };
+      }
+    }
+    return { x: owner.position.x, y: owner.position.y, z: owner.position.z };
+  }
+
+  // Despawn clones whose lifetime elapsed. Runs at the top of each bot tick.
+  // Re-checks win state because a team can lose its last standing member when
+  // a clone that was propping it up expires.
+  private sweepExpiredClones(now: number): void {
+    let removed = false;
+    for (const [id, p] of this.host.players) {
+      if (p.cloneExpiresAt !== undefined && p.cloneExpiresAt <= now) {
+        this.host.players.delete(id);
+        this.botMinds.delete(id);
+        this.host.lastSavedAt.delete(id);
+        removed = true;
+      }
+    }
+    if (removed) {
+      this.host.notifyMatchmaker(this.host.humanCount(), this.host.botCount());
+      this.host.checkWin();
+    }
   }
 
   /** Drop all bots. Called on detach when no humans remain. */
@@ -345,6 +417,7 @@ export class BotManager {
   simulate(dt: number): void {
     const active = this.host.getActiveTurnTeam();
     const now = Date.now();
+    this.sweepExpiredClones(now);
     const topology = this.host.getTopology();
     const walls = this.host.getWalls();
     const pathfinder = this.host.getPathfinder();

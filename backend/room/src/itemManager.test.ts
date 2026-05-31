@@ -3,7 +3,7 @@ import type { PlayerState, ServerToClient, Team, Topology, Vec3 } from '@cm/shar
 import type { WallSegment } from '@cm/shared/labyrinth';
 import { CLOAK_DURATION_MS, ITEM_RESPAWN_MS, RADAR_DURATION_MS } from '@cm/shared/items';
 import { SURGE_DURATION_MS } from '@cm/shared/movement';
-import { PORTAL_DURATION_MS } from '@cm/shared/portals';
+import { PORTAL_DURATION_MS, PORTAL_TELEPORT_COOLDOWN_MS } from '@cm/shared/portals';
 import { ItemManager, type ItemManagerHost } from './itemManager.ts';
 
 function makePlayer(
@@ -266,10 +266,45 @@ describe('ItemManager portal', () => {
     expect(h.players.get('q')!.position.z).toBeLessThan(0);
   });
 
+  it('faces the player away from the exit wall and broadcasts player_teleport', () => {
+    const h = openPortalFor(-2);
+    h.players.set('q', makePlayer('q', 'clown', { x: 0, y: 0, z: 10 }));
+    h.im.step(1 / 60);
+    // Entry wall at z=-3, emergence on the +z side, so facing is +z (yaw +/-PI).
+    expect(Math.abs(h.players.get('q')!.yaw)).toBeCloseTo(Math.PI, 6);
+    const ev = h.broadcasts
+      .map((m) => (m as { kind?: { kind: string; playerId?: string; yaw?: number } }).kind)
+      .find((k) => k?.kind === 'player_teleport');
+    expect(ev?.playerId).toBe('q');
+    expect(Math.abs(ev?.yaw ?? 0)).toBeCloseTo(Math.PI, 6);
+  });
+
   it('does not teleport the opener while they stand on the entry mouth', () => {
     const h = openPortalFor(-2);
     h.im.step(1 / 60);
     expect(h.players.get('p')!.position).toEqual({ x: 0, y: 0, z: -2 });
+  });
+
+  it('does not bounce a player back through a mouth within the teleport cooldown', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(0);
+    const h = openPortalFor(-2);
+    h.players.set('q', makePlayer('q', 'clown', { x: 0, y: 0, z: 10 }));
+    // First step pulls q through, off the entry wall to z<0.
+    h.im.step(1 / 60);
+    expect(h.players.get('q')!.position.z).toBeLessThan(0);
+    // q steps clear so the blocked set releases, then walks straight back onto
+    // a mouth. Still within the cooldown, they are not pulled through again.
+    h.players.get('q')!.position = { x: 0, y: 0, z: 5 };
+    h.im.step(1 / 60);
+    h.players.get('q')!.position = { x: 0, y: 0, z: 10 };
+    h.im.step(1 / 60);
+    expect(h.players.get('q')!.position).toEqual({ x: 0, y: 0, z: 10 });
+    // Once the cooldown lapses, re-entry teleports again (pairs are two-way).
+    vi.setSystemTime(PORTAL_TELEPORT_COOLDOWN_MS + 1);
+    h.im.step(1 / 60);
+    expect(h.players.get('q')!.position.z).toBeLessThan(0);
+    vi.useRealTimers();
   });
 
   it('closes the pair after PORTAL_DURATION_MS and broadcasts portal_close', () => {

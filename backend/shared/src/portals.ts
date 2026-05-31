@@ -20,16 +20,43 @@ export const PORTAL_ENTER_RADIUS = 1.4;
 // larger than PORTAL_ENTER_RADIUS so you don't land back inside the mouth you
 // just arrived at (which would immediately teleport you back).
 export const PORTAL_EXIT_OFFSET = 2.0;
+// After being pulled through, a player can't be teleported by any mouth again
+// for this long. Stops the back-and-forth bounce when someone emerges facing
+// the mouth they just arrived at and walks straight back into it: re-entry is
+// still allowed (pairs are two-way), just not instantly.
+export const PORTAL_TELEPORT_COOLDOWN_MS = 900;
+// Planar footprint radius of a rendered mouth (matches RING_OUTER in
+// game/scripts/portal_renderer.gd, plus a small margin). A mouth is kept at
+// least this far from its wall segment's ends so the ring never overhangs a
+// corner (showing only half) or juts past an opening.
+export const PORTAL_MOUTH_RADIUS = 1.3;
 // How far a look-yaw ray probes before giving up on finding a faced wall.
 const RAY_MAX = 200;
 
 // Wall-anchored mouth points (a/b) plus the off-wall emergence points a player
-// lands on when they arrive at each mouth. Emergence points are canonical.
+// lands on when they arrive at each mouth. Emergence points are canonical. The
+// exit yaws face away from each wall into the open cell, so a player emerges
+// looking where they can walk rather than back into the mouth they arrived at.
 export interface PortalGeom {
   a: Vec3;
   b: Vec3;
   aExit: Vec3;
   bExit: Vec3;
+  aExitYaw: number;
+  bExitYaw: number;
+}
+
+// Off-wall emergence point plus the yaw that faces away from the wall toward it.
+interface Emergence {
+  point: Vec3;
+  yaw: number;
+}
+
+// Body yaw whose forward vector matches a planar direction, inverting
+// forwardFromYaw (yaw = atan2(-x, -z), scale-invariant so an unnormalized
+// direction works).
+function yawFromForward(fx: number, fz: number): number {
+  return Math.atan2(-fx, -fz);
 }
 
 // Forward unit vector for a look yaw, matching the client's body-yaw
@@ -61,6 +88,20 @@ interface WallHit {
   wall: WallSegment;
   x: number;
   z: number;
+}
+
+// Project (px, pz) onto a wall segment and return the closest point, but keep
+// it at least `inset` from each end so a mouth anchored there leaves room for
+// the rendered ring. Segments shorter than 2*inset collapse to their midpoint.
+function clampOntoWall(w: WallSegment, px: number, pz: number, inset: number): Vec2 {
+  const dx = w.bx - w.ax;
+  const dz = w.bz - w.az;
+  const len = Math.hypot(dx, dz);
+  if (len < 1e-9) return { x: w.ax, z: w.az };
+  let t = ((px - w.ax) * dx + (pz - w.az) * dz) / (len * len);
+  const margin = len >= 2 * inset ? inset / len : 0.5;
+  t = Math.max(margin, Math.min(1 - margin, t));
+  return { x: w.ax + dx * t, z: w.az + dz * t };
 }
 
 // Nearest forward wall the ray O + t*D crosses (t in [0, RAY_MAX]), or null.
@@ -119,7 +160,7 @@ function emerge(
   walls: readonly WallSegment[],
   topology: Topology,
   worldWidth: number,
-): Vec3 {
+): Emergence {
   const ex = wall.bx - wall.ax;
   const ez = wall.bz - wall.az;
   const len = Math.hypot(ex, ez) || 1;
@@ -134,8 +175,10 @@ function emerge(
   } else {
     chosen = clearance(walls, plus.x, plus.z) >= clearance(walls, minus.x, minus.z) ? plus : minus;
   }
+  // Face the direction from the mouth out to the chosen side, away from the wall.
+  const yaw = yawFromForward(chosen.x - mx, chosen.z - mz);
   const wrapped = wrapPosition(chosen, topology, worldWidth);
-  return { x: wrapped.x, y: 0, z: wrapped.z };
+  return { point: { x: wrapped.x, y: 0, z: wrapped.z }, yaw };
 }
 
 /**
@@ -161,12 +204,23 @@ export function buildPortalPair(
       exitWall = walls[Math.floor(rng() * walls.length)]!;
     } while (exitWall === entryWall);
   }
-  const bx = (exitWall.ax + exitWall.bx) / 2;
-  const bz = (exitWall.az + exitWall.bz) / 2;
+  // Inset both mouths from their segment ends so the rendered ring sits fully
+  // on the wall rather than overhanging a corner or jutting past an opening.
+  const entry = clampOntoWall(entryWall, hit.x, hit.z, PORTAL_MOUTH_RADIUS);
+  const exitMid = clampOntoWall(
+    exitWall,
+    (exitWall.ax + exitWall.bx) / 2,
+    (exitWall.az + exitWall.bz) / 2,
+    PORTAL_MOUTH_RADIUS,
+  );
+  const aEmerge = emerge(entryWall, entry.x, entry.z, origin, walls, topology, worldWidth);
+  const bEmerge = emerge(exitWall, exitMid.x, exitMid.z, null, walls, topology, worldWidth);
   return {
-    a: { x: hit.x, y: 0, z: hit.z },
-    b: { x: bx, y: 0, z: bz },
-    aExit: emerge(entryWall, hit.x, hit.z, origin, walls, topology, worldWidth),
-    bExit: emerge(exitWall, bx, bz, null, walls, topology, worldWidth),
+    a: { x: entry.x, y: 0, z: entry.z },
+    b: { x: exitMid.x, y: 0, z: exitMid.z },
+    aExit: aEmerge.point,
+    bExit: bEmerge.point,
+    aExitYaw: aEmerge.yaw,
+    bExitYaw: bEmerge.yaw,
   };
 }

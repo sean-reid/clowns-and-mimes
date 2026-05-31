@@ -466,6 +466,7 @@ func _on_room_event(event: Dictionary) -> void:
 		"item_pickup": _handle_item_pickup(event)
 		"portal_open": _handle_portal_open(event)
 		"portal_close": _handle_portal_close(event)
+		"player_teleport": _handle_player_teleport(event)
 
 func _handle_projectile_fired(event: Dictionary) -> void:
 	# Spawn the sphere instantly so the shooter sees their shot a frame after
@@ -503,6 +504,16 @@ func _handle_portal_close(event: Dictionary) -> void:
 	# next snapshot to drop it.
 	if portal_renderer != null:
 		portal_renderer.on_close(String(event.get("id", "")))
+
+func _handle_player_teleport(event: Dictionary) -> void:
+	# Snap the local player's facing away from the exit wall. Only the local
+	# body needs this: its yaw is client-owned (sampled from rotation.y each
+	# input tick), so the server can't turn it through the delta the way it
+	# does for remote bodies. Position still reconciles off the next delta.
+	if String(event.get("playerId", "")) != local_player_id:
+		return
+	if local_player != null:
+		local_player.rotation.y = float(event.get("yaw", local_player.rotation.y))
 
 func _handle_tag_result(event: Dictionary) -> void:
 	if bool(event.get("ok", false)):

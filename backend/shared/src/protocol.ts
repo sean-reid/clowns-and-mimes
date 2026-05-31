@@ -267,7 +267,12 @@ export type GameEvent =
   // Portal lifecycle. `portal_open` carries the new pair (also added to the
   // snapshot for late joiners); `portal_close` fires when the pair expires.
   | { kind: 'portal_open'; portal: Portal }
-  | { kind: 'portal_close'; id: string };
+  | { kind: 'portal_close'; id: string }
+  // A player was pulled through a portal. Position rides the next delta like
+  // any other movement, but yaw is client-owned for the local player, so the
+  // server emits the emergence yaw here for that client to snap its facing
+  // away from the exit wall. Remote bodies pick up the same yaw from the delta.
+  | { kind: 'player_teleport'; playerId: string; yaw: number };
 
 export const BATTLE_CRY_COUNT = 8;
 

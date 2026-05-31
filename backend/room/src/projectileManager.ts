@@ -90,6 +90,32 @@ export class ProjectileManager {
   }
 
   /**
+   * Fire on a bot's behalf. Same validation as onShoot minus the
+   * client-clock skew handling and the shoot_result reply (bots have no
+   * connection to answer): blocked while frozen, off-turn, or on cooldown
+   * unless an overcharge is armed. Returns whether a projectile launched.
+   */
+  botShoot(attacker: PlayerState, dir: { x: number; y: number; z: number }): boolean {
+    if (attacker.frozen) return false;
+    if (this.host.getPhase() !== `turn_${attacker.team}`) return false;
+    const serverNow = Date.now();
+    const overcharged = attacker.overchargeArmed === true;
+    const last = this.lastShotAt.get(attacker.id);
+    if (!overcharged && last !== undefined && serverNow - last < SHOOT_COOLDOWN_MS) return false;
+    const id = crypto.randomUUID();
+    const proj = spawnProjectile(attacker, dir, id, serverNow, serverNow);
+    if (proj === null) return false;
+    if (overcharged) {
+      proj.piercing = true;
+      delete attacker.overchargeArmed;
+    }
+    this.lastShotAt.set(attacker.id, serverNow);
+    this.projectiles.set(id, proj);
+    this.host.broadcast({ t: 'event', kind: { kind: 'projectile_fired', projectile: proj } });
+    return true;
+  }
+
+  /**
    * Advance every projectile one tick. Survivors replace the map; each
    * terminated projectile broadcasts projectile_hit. An enemy hit also
    * freezes the victim via the standard tagged path and checks the win

@@ -309,6 +309,8 @@ export class Room implements DurableObject {
       freezePlayer: (p) => this.tagManager.freezePlayer(p),
       checkWin: () => this.tagManager.checkWin(),
       startMatch: () => this.startMatch(),
+      botShoot: (attacker, dir) => this.projectiles.botShoot(attacker, dir),
+      useBotItem: (player) => this.items.useItemForBot(player),
     };
     this.bots = new BotManager(botsHost);
     const simHost: GameSimulationHost = {

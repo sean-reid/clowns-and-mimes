@@ -62,10 +62,17 @@ const INPUT_TICK_PERIOD := 1.0 / INPUT_TICK_HZ
 # Keepalive ping interval + reconnect ladder constants live in
 # game/scripts/reconnect_controller.gd.
 
-# Environment palettes for the light / dark arena modes. Toggled by the
-# Settings overlay; apply_light_mode swaps between these wholesale.
-# Pulled into named consts so a designer pass on the palette doesn't
-# require fishing through if/else branches.
+# Environment palettes for the two arena looks. Toggled by the Settings
+# overlay; apply_light_mode swaps between these wholesale. Pulled into named
+# consts so a designer pass on the palette doesn't require fishing through
+# if/else branches.
+#
+# FACILITY is the default: a dim, gloomy strip-lit test-chamber look. The maze
+# is dark and moody; the wall-floor LED strips and the self-lit volumetric fog
+# do the visual work rather than broad ambient light. The volumetric fog stays
+# visible in the gloom because it carries its own emission (set in arena.tscn) -
+# scene lighting alone would render it near black under Forward+. LIGHT is a
+# bright outdoor-daylight variant for the toggle.
 const LIGHT_BACKGROUND := Color(0.55, 0.75, 0.95)
 const LIGHT_AMBIENT := Color(0.95, 0.95, 0.92)
 const LIGHT_AMBIENT_ENERGY := 0.6
@@ -73,17 +80,18 @@ const LIGHT_FOG := Color(0.72, 0.82, 0.95)
 const LIGHT_FOG_DENSITY := 0.006
 const LIGHT_SUN_COLOR := Color(1.0, 0.98, 0.92)
 const LIGHT_SUN_ENERGY := 1.0
-const DARK_BACKGROUND := Color(0.04, 0.04, 0.05)
-const DARK_AMBIENT := Color(0.45, 0.4, 0.55)
-const DARK_AMBIENT_ENERGY := 0.18
-const DARK_FOG := Color(0.06, 0.05, 0.09)
-const DARK_FOG_DENSITY := 0.018
-const DARK_SUN_COLOR := Color(1.0, 1.0, 1.0)
-const DARK_SUN_ENERGY := 0.45
+const FACILITY_BACKGROUND := Color(0.05, 0.06, 0.08)
+const FACILITY_AMBIENT := Color(0.42, 0.46, 0.55)
+const FACILITY_AMBIENT_ENERGY := 0.22
+const FACILITY_FOG := Color(0.08, 0.09, 0.12)
+const FACILITY_FOG_DENSITY := 0.012
+const FACILITY_SUN_COLOR := Color(0.82, 0.86, 0.95)
+const FACILITY_SUN_ENERGY := 0.45
 # Volumetric fog albedo per mode (separate from the classic distance fog
-# above). Lighter daylight tint reads as haze; dusk keeps the moody violet.
+# above). Facility is a muted cool tone that, paired with the emission in the
+# scene, reads as a moody haze in the gloom; daylight is a brighter blue.
 const LIGHT_VOL_FOG := Color(0.78, 0.85, 0.95)
-const DARK_VOL_FOG := Color(0.06, 0.05, 0.09)
+const FACILITY_VOL_FOG := Color(0.30, 0.34, 0.42)
 
 const MIME_BATTLE_CRIES := [
 	"MIMES- ATTACK!", "MIMES- STRIKE!", "MIMES- POUNCE!", "MIMES- ENTRAP!",
@@ -238,10 +246,10 @@ func _setup_menu() -> void:
 	menu.quit_to_menu_requested.connect(_on_menu_quit)
 
 func apply_light_mode(enabled: bool) -> void:
-	# Re-skin the arena Environment + DirectionalLight to either the
-	# default moody dusk palette or a bright daylight palette. Called once
-	# on _ready and again whenever Settings.light_mode toggles while a
-	# match is in progress.
+	# Re-skin the arena Environment + DirectionalLight to either the default
+	# dim facility palette or the bright daylight palette. Called once on
+	# _ready and again whenever Settings.light_mode toggles while a match is
+	# in progress.
 	var env_node: WorldEnvironment = get_node_or_null("Environment")
 	var sun: DirectionalLight3D = get_node_or_null("DirectionalLight")
 	if env_node == null or env_node.environment == null or sun == null:
@@ -257,14 +265,14 @@ func apply_light_mode(enabled: bool) -> void:
 		sun.light_energy = LIGHT_SUN_ENERGY
 		sun.light_color = LIGHT_SUN_COLOR
 	else:
-		env.background_color = DARK_BACKGROUND
-		env.ambient_light_color = DARK_AMBIENT
-		env.ambient_light_energy = DARK_AMBIENT_ENERGY
-		env.fog_light_color = DARK_FOG
-		env.fog_density = DARK_FOG_DENSITY
-		env.volumetric_fog_albedo = DARK_VOL_FOG
-		sun.light_energy = DARK_SUN_ENERGY
-		sun.light_color = DARK_SUN_COLOR
+		env.background_color = FACILITY_BACKGROUND
+		env.ambient_light_color = FACILITY_AMBIENT
+		env.ambient_light_energy = FACILITY_AMBIENT_ENERGY
+		env.fog_light_color = FACILITY_FOG
+		env.fog_density = FACILITY_FOG_DENSITY
+		env.volumetric_fog_albedo = FACILITY_VOL_FOG
+		sun.light_energy = FACILITY_SUN_ENERGY
+		sun.light_color = FACILITY_SUN_COLOR
 
 func _unhandled_input(event: InputEvent) -> void:
 	if event.is_action_pressed("ui_pause") and not menu.visible:

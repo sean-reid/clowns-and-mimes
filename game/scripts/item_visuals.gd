@@ -50,7 +50,7 @@ const _LABEL := {
 	"surge": "SURGE",
 	"clone": "CLONE",
 	"radar": "RADAR",
-	"overcharge": "OVER",
+	"overcharge": "PIERCE",
 	"cloak": "CLOAK",
 }
 

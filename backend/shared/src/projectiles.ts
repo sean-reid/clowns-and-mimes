@@ -143,6 +143,7 @@ export function stepProjectiles(
       z: proj.position.z + proj.velocity.z * ctx.dt,
     };
     if (
+      proj.piercing !== true &&
       ctx.walls.length > 0 &&
       pathCrossesWall(ctx.walls, proj.position.x, proj.position.z, candidate.x, candidate.z)
     ) {

@@ -108,6 +108,20 @@ describe('ProjectileManager.onShoot', () => {
     expect(h.pm.getProjectiles()).toHaveLength(1);
     expect(h.broadcasts[0]).toMatchObject({ t: 'event', kind: { kind: 'projectile_fired' } });
   });
+
+  it('an overcharged shot bypasses the cooldown, pierces, and consumes the flag', () => {
+    const shooter = makePlayer('m', 'mime', 0, { overchargeArmed: true });
+    const h = harness(shooter);
+    h.pm.onShoot(h.ws, { x: 1, y: 0, z: 0 }, Date.now());
+    // Back-to-back second shot would normally be rejected for cooldown.
+    h.pm.onShoot(h.ws, { x: 1, y: 0, z: 0 }, Date.now());
+    expect((h.sent[0] as { ok: boolean }).ok).toBe(true);
+    const fired = h.broadcasts[0] as { kind: { projectile: { piercing?: boolean } } };
+    expect(fired.kind.projectile.piercing).toBe(true);
+    // Flag consumed: the very next shot falls back to the normal cooldown gate.
+    expect(shooter.overchargeArmed).toBeUndefined();
+    expect((h.sent[1] as { ok: boolean; reason?: string }).reason).toBe('cooldown');
+  });
 });
 
 describe('ProjectileManager.step', () => {

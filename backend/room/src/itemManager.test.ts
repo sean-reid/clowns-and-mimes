@@ -195,6 +195,15 @@ describe('ItemManager.onUseItem', () => {
     expect(radarUntil).toBeGreaterThanOrEqual(before + RADAR_DURATION_MS);
     expect(radarUntil).toBeLessThanOrEqual(Date.now() + RADAR_DURATION_MS);
   });
+
+  it('arms the next shot when an overcharge is used', () => {
+    const h = harness();
+    const ws = {} as WebSocket;
+    h.players.set('p', makePlayer('p', 'mime', { x: 0, y: 0, z: 0 }, { activeItem: 'overcharge' }));
+    h.connections.set(ws, { playerId: 'p' });
+    h.im.onUseItem(ws);
+    expect(h.players.get('p')!.overchargeArmed).toBe(true);
+  });
 });
 
 describe('ItemManager portal', () => {

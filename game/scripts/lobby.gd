@@ -48,7 +48,13 @@ func _ready() -> void:
 	copy_button.pressed.connect(_on_copy_pressed)
 	start_button.pressed.connect(_on_start_pressed)
 	_render()
-	_start_matchmaking()
+	# Re-entry from a host Play Again leaves the WebSocket open under NetClient
+	# with the room already reset to `filling`. Adopt that connection instead of
+	# matchmaking, which would otherwise spin up a brand-new empty room.
+	if NetClient.is_open():
+		_adopt_live_connection()
+	else:
+		_start_matchmaking()
 
 func _exit_tree() -> void:
 	# Cover the case where the player exits the lobby without going through
@@ -113,6 +119,43 @@ func _start_matchmaking() -> void:
 			_go_offline("offline")
 			return
 	_schedule_fallback_timer()
+
+# Re-attach to the WebSocket the previous arena left open after a host Play
+# Again. The server has already reset the room to `filling` with the same
+# roster, so there is no matchmaker call and no fresh join - just re-wire the
+# roster / phase handlers and restore the host (or waiting) UI. Mirrors the
+# signal set _open_ws connects on the normal path.
+func _adopt_live_connection() -> void:
+	network_resolved = true
+	var rc: Node = NetClient.room_client
+	if rc == null:
+		_go_offline("net client unavailable")
+		return
+	_room_signal_handlers = [
+		[rc, "snapshot_received", _on_snapshot],
+		[rc, "delta_received", _on_delta],
+		[rc, "event_received", _on_event],
+		[rc, "error_received", _on_room_error],
+		[rc, "disconnected", _on_room_disconnected],
+	]
+	for entry in _room_signal_handlers:
+		entry[0].connect(entry[1], entry[2])
+	# The host keeps its token across the restart, so re-show the code + Start
+	# controls; everyone else waits on the host to start the next match.
+	if not GameState.host_token.is_empty():
+		code_label.text = "Code: %s" % _placeholder_code_if_missing()
+		status_label.text = "Match reset. Start again when everyone is ready."
+		code_actions.visible = true
+		start_button.disabled = false
+		start_button.grab_focus()
+	else:
+		status_label.text = "Waiting for the host to start the next match."
+	# Paint the roster from the snapshot the arena left cached so the list is not
+	# empty until the first post-reset delta lands.
+	if not NetClient.cached_snapshot.is_empty():
+		_render_roster_from(NetClient.cached_snapshot.get("players", []))
+	else:
+		_seed_player_list()
 
 func _schedule_fallback_timer() -> void:
 	await get_tree().create_timer(NETWORK_TIMEOUT).timeout

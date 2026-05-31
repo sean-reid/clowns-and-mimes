@@ -143,4 +143,24 @@ describe('parseClientMessage', () => {
       expect(parseClientMessage({ t: 'ping', clientTime: 12345 })?.t).toBe('ping');
     });
   });
+
+  describe('restart_room', () => {
+    it('accepts a bare restart with no topology', () => {
+      expect(parseClientMessage({ t: 'restart_room' })).toEqual({
+        t: 'restart_room',
+        topology: undefined,
+      });
+    });
+
+    it('passes a valid topology through', () => {
+      expect(parseClientMessage({ t: 'restart_room', topology: 'klein' })).toEqual({
+        t: 'restart_room',
+        topology: 'klein',
+      });
+    });
+
+    it('rejects an unknown topology', () => {
+      expect(parseClientMessage({ t: 'restart_room', topology: 'sphere' })).toBeNull();
+    });
+  });
 });

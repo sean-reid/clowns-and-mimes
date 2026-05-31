@@ -133,6 +133,9 @@ var rules: GameRulesScript = null
 var room_client: Node = null
 var online_mode: bool = false
 var snapshot_received: bool = false
+# Set once we begin swapping back to the lobby on a Play Again restart, so a
+# second phase/snapshot in the same frame doesn't emit the screen change twice.
+var returning_to_lobby: bool = false
 var phase_label: String = ""
 var turn_ends_at_ms: int = 0
 var input_seq: int = 0
@@ -227,6 +230,7 @@ func _ready() -> void:
 	online_mode = not GameState.server_url.is_empty()
 	apply_light_mode(Settings.light_mode)
 	_setup_menu()
+	hud.play_again_requested.connect(_on_play_again)
 	reconnect = ReconnectControllerScript.new()
 	add_child(reconnect)
 	reconnect.attach(self)
@@ -554,6 +558,12 @@ func _surface_tag_reject(reason: String) -> void:
 	hud.append_log(hint)
 
 func _handle_phase_event(phase: String, cry_index: int) -> void:
+	# A drop back to `filling` means the host hit Play Again: the server reset
+	# the room to a fresh lobby with the same roster. Swap back to the lobby
+	# scene (keeping the live connection) rather than staying on the arena.
+	if phase == "filling":
+		_return_to_lobby()
+		return
 	# Server sends 'turn_mime' / 'turn_clown' for the active-turn phases plus a
 	# server-picked cryIndex so every client renders the same banner text. If
 	# the server omits cryIndex (pre-cryIndex room build), falls back to slot 0
@@ -880,8 +890,21 @@ func _handle_saved(event: Dictionary) -> void:
 func _handle_win(event: Dictionary) -> void:
 	var team: String = event.get("team", "")
 	var victory: bool = local_player != null and team == local_player.team
-	hud.show_end(victory)
+	# Only the private-lobby host gets Play Again; the server gates the
+	# restart_room message to the host player anyway, so a non-host who
+	# never sees the button can't trigger a restart. OPEN matches have no
+	# host token, so the button stays hidden for them too.
+	var is_host: bool = online_mode and not GameState.host_token.is_empty()
+	hud.show_end(victory, is_host)
 	_play_stinger(victory)
+
+func _on_play_again() -> void:
+	if room_client == null or not room_client.is_connected_to_server():
+		return
+	# Disable to swallow a double-click; the server's phase->filling
+	# broadcast swaps us to the lobby a moment later.
+	hud.set_play_again_enabled(false)
+	room_client.send_restart_room()
 
 # ---------------------------------------------------------------------------
 # Shared helpers
@@ -996,6 +1019,38 @@ func _on_back_to_menu() -> void:
 	NetClient.close()
 	room_client = null
 	requested_screen.emit("menu")
+
+# Host hit Play Again: the server reset the room to `filling` and re-broadcast
+# the lobby roster. Hand the still-open connection back to the lobby scene,
+# which adopts it (see lobby.gd's NetClient.is_open() branch) instead of
+# kicking off a fresh matchmaker call. We must NOT call NetClient.close() here -
+# that path is for leaving the match entirely.
+func _return_to_lobby() -> void:
+	if returning_to_lobby:
+		return
+	returning_to_lobby = true
+	Input.set_mouse_mode(Input.MOUSE_MODE_VISIBLE)
+	if reconnect != null:
+		reconnect.stop()
+	# Detach our own handlers before the swap so a delta landing in the same
+	# frame doesn't drive a half-torn-down arena, and so the surviving
+	# RoomClient has no dangling connections to this freed scene.
+	_disconnect_room_handlers()
+	room_client = null
+	requested_screen.emit("lobby")
+
+# Disconnect every RoomClient signal _start_online wired up. Used on the Play
+# Again hand-off so the RoomClient (which outlives this scene under NetClient)
+# carries no connections into the freed arena.
+func _disconnect_room_handlers() -> void:
+	if room_client == null:
+		return
+	room_client.connected.disconnect(_on_room_connected)
+	room_client.disconnected.disconnect(_on_room_disconnected)
+	room_client.snapshot_received.disconnect(_on_snapshot)
+	room_client.delta_received.disconnect(_on_delta)
+	room_client.event_received.disconnect(_on_room_event)
+	room_client.error_received.disconnect(_on_room_error)
 
 func _on_menu_resume() -> void:
 	menu.close()

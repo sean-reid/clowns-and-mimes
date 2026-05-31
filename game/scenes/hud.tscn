@@ -1,6 +1,7 @@
-[gd_scene load_steps=2 format=3]
+[gd_scene load_steps=3 format=3]
 
 [ext_resource type="Script" path="res://scripts/hud.gd" id="1_hud"]
+[ext_resource type="PackedScene" path="res://scenes/hud_minimap.tscn" id="2_minimap"]
 
 [node name="HUD" type="CanvasLayer"]
 script = ExtResource("1_hud")
@@ -45,12 +46,11 @@ theme_override_font_sizes/font_size = 16
 mouse_filter = 2
 text = ""
 
-[node name="TeamStatus" type="HBoxContainer" parent="Margins"]
-anchor_left = 0.6
+[node name="Minimap" parent="Margins" instance=ExtResource("2_minimap")]
+anchor_left = 0.82
 anchor_right = 0.98
-anchor_top = 0.88
-anchor_bottom = 0.95
-alignment = 2
+anchor_top = 0.66
+anchor_bottom = 0.97
 
 [node name="TeamBadge" type="Label" parent="Margins"]
 anchor_left = 0.02

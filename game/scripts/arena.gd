@@ -887,6 +887,7 @@ func _spawn_player(id: String, p_name: String, team: String, is_bot: bool, is_lo
 		p.predicted_externally = online_mode
 		p.sprint_changed.connect(hud.set_sprint)
 		p.frozen_changed.connect(_on_local_frozen_changed)
+		hud.set_local_player_id(id)
 		hud.set_local_team(team)
 
 func _team_spawn_offset(team: String) -> Vector3:

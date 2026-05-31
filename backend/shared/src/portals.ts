@@ -9,7 +9,7 @@
 // puts on the wire).
 
 import type { Topology, Vec2, Vec3 } from './protocol.ts';
-import type { WallSegment } from './labyrinth.ts';
+import { WALL_CLEARANCE, type WallSegment } from './labyrinth.ts';
 import { wrapPosition } from './topology.ts';
 
 // A pair stays open this long before both mouths close.
@@ -148,10 +148,22 @@ function nearestWall(walls: readonly WallSegment[], x: number, z: number): WallH
   return best!;
 }
 
+// Off-wall offsets and tangential slides tried, in order, when the standard
+// emergence point lands in a wall. The slides let a point dodge a perpendicular
+// wall at a corner; the larger/smaller offsets handle a tight cell.
+const EMERGE_OFFSETS = [PORTAL_EXIT_OFFSET, PORTAL_EXIT_OFFSET * 1.5, PORTAL_EXIT_OFFSET * 0.75];
+const EMERGE_SLIDES = [0, PORTAL_MOUTH_RADIUS, -PORTAL_MOUTH_RADIUS];
+
 // Emergence point off a wall mouth. When `toward` is given (the entry mouth, set
-// to the activating player's position) we drop on that player's side, which is
-// known walkable; otherwise (the random exit) we pick the side with more
-// clearance from neighboring walls.
+// to the activating player's position) we prefer that player's side, which is
+// known walkable; otherwise (the random exit) either side is fair game.
+//
+// Clearance is judged on the WRAPPED point, because wrapPosition clamps a plane
+// edge (and the möbius z edges) back onto the perimeter: a point pushed past the
+// boundary lands *on* the boundary wall. We search offsets/sides/slides for a
+// wrapped point that clears every wall, so a portal can't deposit a player
+// inside the map edge. Falls back to the best-clearance candidate if a
+// degenerate cell has none fully clear.
 function emerge(
   wall: WallSegment,
   mx: number,
@@ -166,19 +178,36 @@ function emerge(
   const len = Math.hypot(ex, ez) || 1;
   const nx = -ez / len;
   const nz = ex / len;
-  const plus = { x: mx + nx * PORTAL_EXIT_OFFSET, z: mz + nz * PORTAL_EXIT_OFFSET };
-  const minus = { x: mx - nx * PORTAL_EXIT_OFFSET, z: mz - nz * PORTAL_EXIT_OFFSET };
-  let chosen: Vec2;
+  const tx = ex / len;
+  const tz = ez / len;
+  // Prefer the player's side for the entry mouth; otherwise try both.
+  let sides: number[] = [1, -1];
   if (toward) {
     const side = (toward.x - mx) * nx + (toward.z - mz) * nz;
-    chosen = side >= 0 ? plus : minus;
-  } else {
-    chosen = clearance(walls, plus.x, plus.z) >= clearance(walls, minus.x, minus.z) ? plus : minus;
+    sides = side >= 0 ? [1, -1] : [-1, 1];
   }
-  // Face the direction from the mouth out to the chosen side, away from the wall.
-  const yaw = yawFromForward(chosen.x - mx, chosen.z - mz);
-  const wrapped = wrapPosition(chosen, topology, worldWidth);
-  return { point: { x: wrapped.x, y: 0, z: wrapped.z }, yaw };
+  let best: { point: Vec2; clear: number; side: number } | null = null;
+  for (const side of sides) {
+    for (const off of EMERGE_OFFSETS) {
+      for (const slide of EMERGE_SLIDES) {
+        const raw = {
+          x: mx + nx * off * side + tx * slide,
+          z: mz + nz * off * side + tz * slide,
+        };
+        const w = wrapPosition(raw, topology, worldWidth);
+        const clr = clearance(walls, w.x, w.z);
+        if (best === null || clr > best.clear) best = { point: w, clear: clr, side };
+        if (clr >= WALL_CLEARANCE) {
+          return { point: { x: w.x, y: 0, z: w.z }, yaw: yawFromForward(nx * side, nz * side) };
+        }
+      }
+    }
+  }
+  const fallback = best!;
+  return {
+    point: { x: fallback.point.x, y: 0, z: fallback.point.z },
+    yaw: yawFromForward(nx * fallback.side, nz * fallback.side),
+  };
 }
 
 /**

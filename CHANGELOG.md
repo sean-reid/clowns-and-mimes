@@ -6,6 +6,35 @@ When cutting a release: rename the `[Unreleased]` heading below to the version b
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-05-31
+
+The combat-and-carnival release. Tag is no longer just running into people: every match now has seven floor power-ups and a left-click freeze shot, the arena is lit like a fog-filled funhouse, and the main menu is a proper carnival with parties so friends queue onto the same team. Bots play the full mechanic set, a minimap replaces the old team-status bars, and private rooms survive the host leaving. The protocol bumps to v3, so online play needs an updated client on both ends.
+
+### Added
+
+- Seven power-ups spawn on the maze floor and fire with E: **leap** (a boosted jump over wall height), **portal** (a wall-anchored teleport pair), **surge** (a short sprint-speed burst), **clone** (a temporary ally bot for 30 s), **radar** (reveals the enemy team for 5 s), **overcharge** (one cooldown-free, wall-piercing shot), and **cloak** (hides you from other players for 4 s). Each has its own world mesh and HUD-slot glyph so same-category items read apart.
+- Left-click fires a server-authoritative freeze projectile down your aim; the first eligible opponent it reaches is frozen like a contact tag.
+- A minimap with a both-team tally replaces the team-status bars, drawn for your topology so dots near a seam fold instead of jumping.
+- Parties: create or join a party and queue into an open match together on the same team.
+- Carnival main-menu redesign with two primary actions — Open match and Private match. Joining by code now discloses the room's topology before you commit.
+- First-match tutorial overlay that introduces the controls.
+- Atmosphere pass: volumetric fog with denser scattered pockets, plus team-tinted wall-base uplighting strips for a strip-lit chamber look.
+- Button hover and click sound effects across every screen.
+- Host migration keeps a private room going when the host leaves — another player is promoted and gets the Start / Play Again controls.
+- Play Again: a private-room host can reset straight into a fresh lobby with the same group instead of re-matchmaking.
+- Opt-in, no-PII telemetry, off by default and asked once on first launch.
+
+### Changed
+
+- Bots fire freeze projectiles and pick up and use every power-up, so bot-heavy matches play with the full mechanic set instead of contact-tag only.
+- Network protocol bumped to v3. Clients older than v3 are turned away before the match starts; update on both ends to play online.
+
+### Fixed
+
+- Inputs stay acked and deltas stay coalesced under 60 Hz tick jitter, and a fast input stream no longer drains the rate-limit bucket and crashes the client.
+- Portal fixes: no more bounce-back, corner overhang, wrong exit facing, or getting stranded against a boundary wall.
+- The mouse is released at match end so the end-of-match overlay is clickable.
+
 ## [0.5.7] - 2026-05-29
 
 Patch release. One fix.

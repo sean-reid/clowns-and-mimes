@@ -331,6 +331,80 @@ describe('Room.simulate', () => {
     expect(bots.bots.botMinds.get('b1')!.engagedTargetId).toBeNull();
   });
 
+  it('fires a projectile at a visible enemy during its own turn', () => {
+    const room = makeRoom();
+    setPhase(room, 'turn_mime');
+    const bot = placeHuman(room, 'b1', 'mime', 0, 0);
+    bot.bot = true;
+    placeHuman(room, 'c1', 'clown', 5, 0);
+    const projectiles = room as unknown as {
+      projectiles: { getProjectiles: () => Array<{ ownerId: string; team: string }> };
+      bots: { simulate: (dt: number) => void };
+    };
+    projectiles.bots.simulate(1 / 60);
+    const shots = projectiles.projectiles.getProjectiles();
+    expect(shots).toHaveLength(1);
+    expect(shots[0]!.ownerId).toBe('b1');
+    expect(shots[0]!.team).toBe('mime');
+  });
+
+  it('does not fire on the enemy team turn', () => {
+    const room = makeRoom();
+    setPhase(room, 'turn_clown');
+    const bot = placeHuman(room, 'b1', 'mime', 0, 0);
+    bot.bot = true;
+    placeHuman(room, 'c1', 'clown', 5, 0);
+    const harness = room as unknown as {
+      projectiles: { getProjectiles: () => unknown[] };
+      bots: { simulate: (dt: number) => void };
+    };
+    harness.bots.simulate(1 / 60);
+    expect(harness.projectiles.getProjectiles()).toHaveLength(0);
+  });
+
+  it('dumps a radar power-up immediately to free the slot', () => {
+    const room = makeRoom();
+    setPhase(room, 'free_roam');
+    const bot = placeHuman(room, 'b1', 'mime', 0, 0);
+    bot.bot = true;
+    bot.activeItem = 'radar';
+    (room as unknown as { bots: { simulate: (dt: number) => void } }).bots.simulate(1 / 60);
+    expect(bot.activeItem).toBeUndefined();
+    expect(bot.radarUntil).toBeGreaterThan(Date.now());
+  });
+
+  it('arms overcharge and fires a piercing shot in the same tick', () => {
+    const room = makeRoom();
+    setPhase(room, 'turn_mime');
+    const bot = placeHuman(room, 'b1', 'mime', 0, 0);
+    bot.bot = true;
+    bot.activeItem = 'overcharge';
+    placeHuman(room, 'c1', 'clown', 5, 0);
+    const harness = room as unknown as {
+      projectiles: { getProjectiles: () => Array<{ piercing?: boolean }> };
+      bots: { simulate: (dt: number) => void };
+    };
+    harness.bots.simulate(1 / 60);
+    expect(bot.activeItem).toBeUndefined();
+    const shots = harness.projectiles.getProjectiles();
+    expect(shots).toHaveLength(1);
+    expect(shots[0]!.piercing).toBe(true);
+  });
+
+  it('spends a leap power-up to boost the jump it takes while fleeing', () => {
+    const room = makeRoom();
+    setPhase(room, 'turn_clown');
+    const bot = placeHuman(room, 'b1', 'mime', 0, 0);
+    bot.bot = true;
+    bot.activeItem = 'leap';
+    // Enemy within the flee-evade jump trigger distance so wantJump latches.
+    placeHuman(room, 'c1', 'clown', 1.5, 0);
+    (room as unknown as { bots: { simulate: (dt: number) => void } }).bots.simulate(1 / 60);
+    expect(bot.activeItem).toBeUndefined();
+    expect(bot.jumpStartedAt).not.toBeNull();
+    expect(bot.leaping).toBe(true);
+  });
+
   it('drains a backlog of queued inputs in one tick (up to the per-tick cap)', () => {
     // A Cloudflare DO setInterval cannot hold a precise 60 Hz, so a slow
     // tick can leave several inputs queued. A one-per-tick drain would let

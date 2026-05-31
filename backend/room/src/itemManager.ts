@@ -140,7 +140,17 @@ export class ItemManager {
     const conn = this.host.connections.get(ws);
     if (!conn) return;
     const player = this.host.players.get(conn.playerId);
-    if (!player || player.activeItem === undefined) return;
+    if (!player) return;
+    this.activate(player);
+  }
+
+  /** Bot-side activation: same effect + event as onUseItem, no connection. */
+  useItemForBot(player: PlayerState): void {
+    this.activate(player);
+  }
+
+  private activate(player: PlayerState): void {
+    if (player.activeItem === undefined) return;
     const itemType = player.activeItem;
     delete player.activeItem;
     this.applyEffect(player, itemType);

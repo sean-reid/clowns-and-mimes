@@ -51,6 +51,13 @@ const BOT_JUMP_REFRACTORY_MS = 1500;
 const BOT_JUMP_NOISE_PER_SECOND = 0.05;
 const BOT_JUMP_EVADE_BUFFER = 0.5;
 const BOT_JUMP_CORNER_THREAT_RADIUS = 4.0;
+// Bots fire at a visible enemy within this range during their turn. Inside
+// BOT_VISION_RADIUS but tighter, so shots have a realistic chance to connect
+// before the projectile expires.
+const BOT_SHOOT_RANGE = 18;
+// Random angular spread (radians) added to each bot shot so aim isn't pixel
+// perfect; keeps bots beatable and shots from feeling robotic.
+const BOT_SHOOT_AIM_JITTER = 0.09;
 // Clone power-up: a temporary ally bot lives this long, then despawns.
 const CLONE_DURATION_MS = 30_000;
 // Clone spawns this far from its owner, on the first unobstructed bearing.
@@ -106,6 +113,10 @@ export interface BotManagerHost {
   freezePlayer(p: PlayerState): void;
   checkWin(): void;
   startMatch(): void;
+  // Fire a projectile on the bot's behalf; returns whether it launched.
+  botShoot(attacker: PlayerState, dir: Vec3): boolean;
+  // Activate the bot's held power-up (clears the slot, applies the effect).
+  useBotItem(player: PlayerState): void;
 }
 
 export class BotManager {
@@ -458,6 +469,13 @@ export class BotManager {
       const fleeing =
         target !== null && enemyDist < BOT_VISION_RADIUS && active && active !== bot.team;
       const rescuing = rescueTarget !== null;
+      // Fire only on the bot's own turn, at a visible enemy in range. botShoot
+      // re-validates phase + cooldown, so this is the AI gate, not the rule.
+      const canShoot =
+        chasing &&
+        target !== null &&
+        enemyDist <= BOT_SHOOT_RANGE &&
+        this.botCanSee(bot.position, target.position);
 
       const sinceLastJump = now - mind.lastJumpedAt;
       const jumpEligible = bot.jumpStartedAt === null && sinceLastJump >= BOT_JUMP_REFRACTORY_MS;
@@ -487,9 +505,31 @@ export class BotManager {
           }
         }
       }
+      // Power-up use is decided before the jump applies so a Leap arms the
+      // very jump this tick. Other effects (surge / overcharge / cloak /
+      // clone / portal) take hold immediately; radar is dumped as dead weight.
+      if (
+        bot.activeItem !== undefined &&
+        this.botShouldUseItem(bot, {
+          chasing,
+          fleeing: fleeing === true,
+          wantJump,
+          canShoot,
+          enemyDist,
+        })
+      ) {
+        this.host.useBotItem(bot);
+      }
+
       if (wantJump) {
         bot.jumpStartedAt = now;
         mind.lastJumpedAt = now;
+        // A banked Leap turns this takeoff into the boosted arc, mirroring the
+        // human stepJump path. advanceIdleJumpState clears leaping on landing.
+        if (bot.leapArmed) {
+          bot.leaping = true;
+          bot.leapArmed = false;
+        }
       }
 
       let dir = { x: 0, z: 0 };
@@ -638,6 +678,18 @@ export class BotManager {
         this.host.checkWin();
       }
 
+      if (canShoot && target) {
+        const aim = wrappedUnitDelta(bot.position, target.position, topology, WORLD_WIDTH);
+        const jitter = (Math.random() - 0.5) * 2 * BOT_SHOOT_AIM_JITTER;
+        const cos = Math.cos(jitter);
+        const sin = Math.sin(jitter);
+        this.host.botShoot(bot, {
+          x: aim.x * cos - aim.z * sin,
+          y: 0,
+          z: aim.x * sin + aim.z * cos,
+        });
+      }
+
       if (
         rescuing &&
         rescueTarget &&
@@ -664,6 +716,47 @@ export class BotManager {
         0,
         MAX_SPRINT,
       );
+    }
+  }
+
+  /**
+   * Strategic power-up use, one held item at a time (no stacking). Each type
+   * fires only when its effect helps the bot's current intent; radar is dead
+   * weight for an AI that perceives players directly, so it's dumped to free
+   * the slot for something actionable.
+   */
+  private botShouldUseItem(
+    bot: PlayerState,
+    opts: {
+      chasing: boolean;
+      fleeing: boolean;
+      wantJump: boolean;
+      canShoot: boolean;
+      enemyDist: number;
+    },
+  ): boolean {
+    const { chasing, fleeing, wantJump, canShoot, enemyDist } = opts;
+    switch (bot.activeItem) {
+      case 'radar':
+        return true;
+      case 'leap':
+        return wantJump;
+      case 'surge':
+        return (
+          (chasing || fleeing) &&
+          enemyDist < BOT_SPRINT_TRIGGER_RADIUS &&
+          bot.sprintEnergy < MAX_SPRINT * 0.5
+        );
+      case 'overcharge':
+        return canShoot;
+      case 'cloak':
+        return fleeing && enemyDist <= BOT_SPRINT_TRIGGER_RADIUS;
+      case 'clone':
+        return chasing || fleeing;
+      case 'portal':
+        return fleeing && enemyDist <= TAG_RADIUS_BOT + BOT_JUMP_EVADE_BUFFER * 2;
+      default:
+        return false;
     }
   }
 

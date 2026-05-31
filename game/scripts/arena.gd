@@ -59,6 +59,16 @@ const SPAWN_RADIUS := 2.5
 const INPUT_TICK_HZ := 60.0
 const INPUT_TICK_PERIOD := 1.0 / INPUT_TICK_HZ
 
+# Hard cap on un-acked inputs held for reconciliation replay. Normal RTT
+# keeps this under a dozen entries; this only bites when the server stops
+# advancing ackSeq (rate-limit rejection, overload, partition). Without it
+# the buffer grows every tick and reconcile() replays the whole array each
+# delta, so frame cost climbs until the client locks up. 240 = 4 s at
+# INPUT_TICK_HZ, well beyond any real RTT; past that the oldest (already
+# unrecoverable) inputs are dropped, matching the server's MAX_INPUT_QUEUE
+# and the send queue's SEND_QUEUE_MAX bounding philosophy.
+const MAX_PENDING_INPUTS := 240
+
 # Keepalive ping interval + reconnect ladder constants live in
 # game/scripts/reconnect_controller.gd.
 
@@ -745,6 +755,12 @@ func _stream_input(delta: float) -> void:
 		"jump": jump_pressed,
 		"now_ms": input_now_ms,
 	})
+	# Drop the oldest un-acked input when the buffer is over budget. Only
+	# happens when the server has stopped acking; the dropped frames are
+	# already too stale to reconcile against, and the cap keeps replay cost
+	# bounded so a stalled ack can never spiral into a crash.
+	while pending_inputs.size() > MAX_PENDING_INPUTS:
+		pending_inputs.pop_front()
 	room_client.send_input(
 		input_seq,
 		INPUT_TICK_PERIOD,

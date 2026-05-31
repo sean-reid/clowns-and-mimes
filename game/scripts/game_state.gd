@@ -36,6 +36,11 @@ var prefer_team: String = ""
 # lobby create (the server only ever sees real topologies); the flag persists
 # so the replay path can re-roll a fresh shape on each new game in the room.
 var host_random_topology: bool = false
+# How the party screen should open: "create" auto-creates a party, "join"
+# auto-joins party_join_code, "" shows the manual entry view. Set by the menu
+# so the create/join choice lives in the navigation tree, not the party screen.
+var party_intent: String = ""
+var party_join_code: String = ""
 
 func _ready() -> void:
 	randomize()

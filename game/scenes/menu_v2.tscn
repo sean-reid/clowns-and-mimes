@@ -5,10 +5,6 @@
 [ext_resource type="Texture2D" uid="uid://d2dvcywxfev6h" path="res://assets/textures/clown_head.png" id="3_clown"]
 [ext_resource type="Texture2D" uid="uid://76ft2q7p6x2d" path="res://assets/textures/mime_head.png" id="4_mime"]
 
-[sub_resource type="Theme" id="Theme_menu2"]
-default_font = ExtResource("2_bungee")
-default_font_size = 18
-
 [sub_resource type="Shader" id="Shader_harlequin"]
 code = "shader_type canvas_item;
 
@@ -30,25 +26,32 @@ shader = SubResource("Shader_harlequin")
 
 [sub_resource type="StyleBoxFlat" id="Style_primary"]
 bg_color = Color(0.85, 0.16, 0.22, 1)
-corner_radius_top_left = 16
-corner_radius_top_right = 16
-corner_radius_bottom_right = 16
-corner_radius_bottom_left = 16
-content_margin_left = 24.0
-content_margin_top = 16.0
-content_margin_right = 24.0
-content_margin_bottom = 16.0
+corner_radius_top_left = 14
+corner_radius_top_right = 14
+corner_radius_bottom_right = 14
+corner_radius_bottom_left = 14
+content_margin_left = 20.0
+content_margin_top = 12.0
+content_margin_right = 20.0
+content_margin_bottom = 12.0
 
-[sub_resource type="StyleBoxFlat" id="Style_flyout"]
-bg_color = Color(0.1, 0.08, 0.12, 0.94)
-corner_radius_top_left = 12
-corner_radius_top_right = 12
-corner_radius_bottom_right = 12
-corner_radius_bottom_left = 12
-content_margin_left = 18.0
-content_margin_top = 18.0
-content_margin_right = 18.0
-content_margin_bottom = 18.0
+[sub_resource type="StyleBoxFlat" id="Style_hover"]
+bg_color = Color(0.95, 0.28, 0.34, 1)
+corner_radius_top_left = 14
+corner_radius_top_right = 14
+corner_radius_bottom_right = 14
+corner_radius_bottom_left = 14
+content_margin_left = 20.0
+content_margin_top = 12.0
+content_margin_right = 20.0
+content_margin_bottom = 12.0
+
+[sub_resource type="Theme" id="Theme_menu2"]
+default_font = ExtResource("2_bungee")
+default_font_size = 20
+Button/styles/hover = SubResource("Style_hover")
+Button/styles/normal = SubResource("Style_primary")
+Button/styles/pressed = SubResource("Style_primary")
 
 [node name="MenuV2" type="Control"]
 anchor_right = 1.0
@@ -62,10 +65,9 @@ anchor_right = 1.0
 anchor_bottom = 1.0
 
 [node name="ClownMascot" type="TextureRect" parent="."]
-modulate = Color(1, 1, 1, 0.5)
 anchor_top = 0.25
 anchor_bottom = 0.95
-anchor_right = 0.26
+anchor_right = 0.24
 offset_left = 16.0
 texture = ExtResource("3_clown")
 expand_mode = 1
@@ -73,8 +75,7 @@ stretch_mode = 5
 mouse_filter = 2
 
 [node name="MimeMascot" type="TextureRect" parent="."]
-modulate = Color(1, 1, 1, 0.5)
-anchor_left = 0.74
+anchor_left = 0.76
 anchor_top = 0.25
 anchor_right = 1.0
 anchor_bottom = 0.95
@@ -115,8 +116,8 @@ text = "Playing as ..."
 theme_override_font_sizes/font_size = 18
 
 [node name="EditLink" type="Button" parent="TopBar/UserRow"]
-text = "Edit"
 flat = true
+text = "Edit"
 theme_override_font_sizes/font_size = 16
 
 [node name="EditRow" type="HBoxContainer" parent="TopBar"]
@@ -136,79 +137,212 @@ theme_override_font_sizes/font_size = 16
 text = "Save"
 theme_override_font_sizes/font_size = 16
 
-[node name="Center" type="VBoxContainer" parent="."]
+[node name="Panels" type="Control" parent="."]
+anchor_right = 1.0
+anchor_bottom = 1.0
+mouse_filter = 2
+
+[node name="RootPanel" type="VBoxContainer" parent="Panels"]
 anchor_left = 0.5
 anchor_top = 0.5
 anchor_right = 0.5
 anchor_bottom = 0.5
 offset_left = -200.0
-offset_top = -120.0
+offset_top = -90.0
 offset_right = 200.0
-offset_bottom = 220.0
+offset_bottom = 90.0
 alignment = 1
 theme_override_constants/separation = 18
 
-[node name="Primary" type="VBoxContainer" parent="Center"]
+[node name="OpenButton" type="Button" parent="Panels/RootPanel"]
+custom_minimum_size = Vector2(380, 64)
+text = "Open Match"
+theme_override_font_sizes/font_size = 28
+
+[node name="PrivateButton" type="Button" parent="Panels/RootPanel"]
+custom_minimum_size = Vector2(380, 64)
+text = "Private Match"
+theme_override_font_sizes/font_size = 28
+
+[node name="OpenPanel" type="VBoxContainer" parent="Panels"]
+anchor_left = 0.5
+anchor_top = 0.5
+anchor_right = 0.5
+anchor_bottom = 0.5
+offset_left = -200.0
+offset_top = -110.0
+offset_right = 200.0
+offset_bottom = 110.0
+alignment = 1
 theme_override_constants/separation = 16
 
-[node name="FindMatchButton" type="Button" parent="Center/Primary"]
-custom_minimum_size = Vector2(400, 72)
-text = "Find Match"
-theme_override_font_sizes/font_size = 30
-theme_override_styles/normal = SubResource("Style_primary")
-theme_override_styles/hover = SubResource("Style_primary")
-theme_override_styles/pressed = SubResource("Style_primary")
+[node name="PartyButton" type="Button" parent="Panels/OpenPanel"]
+custom_minimum_size = Vector2(380, 64)
+text = "Party up with friends"
+theme_override_font_sizes/font_size = 24
 
-[node name="FriendsButton" type="Button" parent="Center/Primary"]
-custom_minimum_size = Vector2(400, 72)
-text = "Play with Friends"
-theme_override_font_sizes/font_size = 30
-theme_override_styles/normal = SubResource("Style_primary")
-theme_override_styles/hover = SubResource("Style_primary")
-theme_override_styles/pressed = SubResource("Style_primary")
+[node name="SoloButton" type="Button" parent="Panels/OpenPanel"]
+custom_minimum_size = Vector2(380, 64)
+text = "Play solo"
+theme_override_font_sizes/font_size = 28
 
-[node name="Flyout" type="PanelContainer" parent="Center"]
-custom_minimum_size = Vector2(400, 0)
-theme_override_styles/panel = SubResource("Style_flyout")
-
-[node name="FlyoutBox" type="VBoxContainer" parent="Center/Flyout"]
-theme_override_constants/separation = 12
-
-[node name="TopologyRow" type="HBoxContainer" parent="Center/Flyout/FlyoutBox"]
-
-[node name="Label" type="Label" parent="Center/Flyout/FlyoutBox/TopologyRow"]
-text = "Topology"
-size_flags_horizontal = 3
-theme_override_font_sizes/font_size = 16
-
-[node name="Topology" type="OptionButton" parent="Center/Flyout/FlyoutBox/TopologyRow"]
-size_flags_horizontal = 3
-theme_override_font_sizes/font_size = 16
-
-[node name="HostButton" type="Button" parent="Center/Flyout/FlyoutBox"]
-custom_minimum_size = Vector2(0, 44)
-text = "Host a private game"
+[node name="Back" type="Button" parent="Panels/OpenPanel"]
+flat = true
+text = "Back"
 theme_override_font_sizes/font_size = 18
 
-[node name="CodeRow" type="HBoxContainer" parent="Center/Flyout/FlyoutBox"]
-theme_override_constants/separation = 8
+[node name="PrivatePanel" type="VBoxContainer" parent="Panels"]
+anchor_left = 0.5
+anchor_top = 0.5
+anchor_right = 0.5
+anchor_bottom = 0.5
+offset_left = -200.0
+offset_top = -110.0
+offset_right = 200.0
+offset_bottom = 110.0
+alignment = 1
+theme_override_constants/separation = 16
 
-[node name="CodeLabel" type="Label" parent="Center/Flyout/FlyoutBox/CodeRow"]
-text = "Code"
-theme_override_font_sizes/font_size = 16
+[node name="HostButton" type="Button" parent="Panels/PrivatePanel"]
+custom_minimum_size = Vector2(380, 64)
+text = "Host match"
+theme_override_font_sizes/font_size = 28
 
-[node name="CodeEntry" type="LineEdit" parent="Center/Flyout/FlyoutBox/CodeRow"]
+[node name="JoinButton" type="Button" parent="Panels/PrivatePanel"]
+custom_minimum_size = Vector2(380, 64)
+text = "Join match"
+theme_override_font_sizes/font_size = 28
+
+[node name="Back" type="Button" parent="Panels/PrivatePanel"]
+flat = true
+text = "Back"
+theme_override_font_sizes/font_size = 18
+
+[node name="PartyPanel" type="VBoxContainer" parent="Panels"]
+anchor_left = 0.5
+anchor_top = 0.5
+anchor_right = 0.5
+anchor_bottom = 0.5
+offset_left = -200.0
+offset_top = -110.0
+offset_right = 200.0
+offset_bottom = 110.0
+alignment = 1
+theme_override_constants/separation = 16
+
+[node name="CreateButton" type="Button" parent="Panels/PartyPanel"]
+custom_minimum_size = Vector2(380, 64)
+text = "Create party"
+theme_override_font_sizes/font_size = 28
+
+[node name="JoinButton" type="Button" parent="Panels/PartyPanel"]
+custom_minimum_size = Vector2(380, 64)
+text = "Join party"
+theme_override_font_sizes/font_size = 28
+
+[node name="Back" type="Button" parent="Panels/PartyPanel"]
+flat = true
+text = "Back"
+theme_override_font_sizes/font_size = 18
+
+[node name="HostPanel" type="VBoxContainer" parent="Panels"]
+anchor_left = 0.5
+anchor_top = 0.5
+anchor_right = 0.5
+anchor_bottom = 0.5
+offset_left = -210.0
+offset_top = -110.0
+offset_right = 210.0
+offset_bottom = 110.0
+alignment = 1
+theme_override_constants/separation = 16
+
+[node name="TopologyRow" type="HBoxContainer" parent="Panels/HostPanel"]
+theme_override_constants/separation = 12
+
+[node name="Label" type="Label" parent="Panels/HostPanel/TopologyRow"]
+text = "Topology"
 size_flags_horizontal = 3
+theme_override_font_sizes/font_size = 18
+
+[node name="Topology" type="OptionButton" parent="Panels/HostPanel/TopologyRow"]
+custom_minimum_size = Vector2(220, 0)
+theme_override_font_sizes/font_size = 16
+
+[node name="StartButton" type="Button" parent="Panels/HostPanel"]
+custom_minimum_size = Vector2(420, 64)
+text = "Host match"
+theme_override_font_sizes/font_size = 28
+
+[node name="Back" type="Button" parent="Panels/HostPanel"]
+flat = true
+text = "Back"
+theme_override_font_sizes/font_size = 18
+
+[node name="JoinMatchPanel" type="VBoxContainer" parent="Panels"]
+anchor_left = 0.5
+anchor_top = 0.5
+anchor_right = 0.5
+anchor_bottom = 0.5
+offset_left = -200.0
+offset_top = -110.0
+offset_right = 200.0
+offset_bottom = 110.0
+alignment = 1
+theme_override_constants/separation = 14
+
+[node name="Prompt" type="Label" parent="Panels/JoinMatchPanel"]
+horizontal_alignment = 1
+text = "Enter match code"
+theme_override_font_sizes/font_size = 18
+
+[node name="CodeEntry" type="LineEdit" parent="Panels/JoinMatchPanel"]
+custom_minimum_size = Vector2(300, 0)
+alignment = 1
 placeholder_text = "ABCDEF"
-theme_override_font_sizes/font_size = 16
+theme_override_font_sizes/font_size = 22
 
-[node name="JoinButton" type="Button" parent="Center/Flyout/FlyoutBox/CodeRow"]
+[node name="JoinButton" type="Button" parent="Panels/JoinMatchPanel"]
+custom_minimum_size = Vector2(300, 60)
 text = "Join"
-theme_override_font_sizes/font_size = 16
+theme_override_font_sizes/font_size = 26
 
-[node name="PartyButton" type="Button" parent="Center/Flyout/FlyoutBox"]
-custom_minimum_size = Vector2(0, 44)
-text = "Party up with friends"
+[node name="Back" type="Button" parent="Panels/JoinMatchPanel"]
+flat = true
+text = "Back"
+theme_override_font_sizes/font_size = 18
+
+[node name="JoinPartyPanel" type="VBoxContainer" parent="Panels"]
+anchor_left = 0.5
+anchor_top = 0.5
+anchor_right = 0.5
+anchor_bottom = 0.5
+offset_left = -200.0
+offset_top = -110.0
+offset_right = 200.0
+offset_bottom = 110.0
+alignment = 1
+theme_override_constants/separation = 14
+
+[node name="Prompt" type="Label" parent="Panels/JoinPartyPanel"]
+horizontal_alignment = 1
+text = "Enter party code"
+theme_override_font_sizes/font_size = 18
+
+[node name="CodeEntry" type="LineEdit" parent="Panels/JoinPartyPanel"]
+custom_minimum_size = Vector2(300, 0)
+alignment = 1
+placeholder_text = "ABCDEF"
+theme_override_font_sizes/font_size = 22
+
+[node name="JoinButton" type="Button" parent="Panels/JoinPartyPanel"]
+custom_minimum_size = Vector2(300, 60)
+text = "Join"
+theme_override_font_sizes/font_size = 26
+
+[node name="Back" type="Button" parent="Panels/JoinPartyPanel"]
+flat = true
+text = "Back"
 theme_override_font_sizes/font_size = 18
 
 [node name="SettingsButton" type="Button" parent="."]

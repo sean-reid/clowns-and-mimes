@@ -1,10 +1,13 @@
 extends Control
 
-## Carnival main menu. Collapses the old vertical button stack into two primary
-## actions — "Find Match" (open queue) and "Play with Friends" (a flyout that
-## folds in Host / Join-by-code / Party) — with the username promoted to an
-## edit-in-place line at the top and Settings tucked into a corner gear.
-## The old layout still ships behind Settings.use_v1_menu.
+## Carnival main menu built as a small panel navigator. The click tree is:
+##   Open Match   -> Party up with friends -> Create party / Join party
+##                -> Play solo
+##   Private Match -> Host match (pick topology) / Join match (enter code)
+## Leaf actions hand off to the lobby (solo / host / join) or the party screen
+## (create / join), which own the matchmaker calls, code display, and start.
+## The mascots, title, and background stay scene-level so every panel keeps the
+## same carnival frame. The old flat menu still ships behind Settings.use_v1_menu.
 
 signal requested_screen(screen: String)
 
@@ -21,38 +24,73 @@ const RANDOM_TOPOLOGY_ID := 100
 @onready var username_input: LineEdit = $TopBar/EditRow/Username
 @onready var random_button: Button = $TopBar/EditRow/Random
 @onready var save_button: Button = $TopBar/EditRow/Save
-@onready var find_match_button: Button = $Center/Primary/FindMatchButton
-@onready var friends_button: Button = $Center/Primary/FriendsButton
-@onready var flyout: PanelContainer = $Center/Flyout
-@onready var topology_picker: OptionButton = $Center/Flyout/FlyoutBox/TopologyRow/Topology
-@onready var host_button: Button = $Center/Flyout/FlyoutBox/HostButton
-@onready var code_input: LineEdit = $Center/Flyout/FlyoutBox/CodeRow/CodeEntry
-@onready var join_button: Button = $Center/Flyout/FlyoutBox/CodeRow/JoinButton
-@onready var party_button: Button = $Center/Flyout/FlyoutBox/PartyButton
 @onready var settings_button: Button = $SettingsButton
 @onready var confetti: CPUParticles2D = $Confetti
+@onready var topology_picker: OptionButton = $Panels/HostPanel/TopologyRow/Topology
+@onready var match_code: LineEdit = $Panels/JoinMatchPanel/CodeEntry
+@onready var party_code: LineEdit = $Panels/JoinPartyPanel/CodeEntry
 
-# See main_menu.gd: only typed names persist; Random names are session-only.
+# Panel name -> the panel above it, for Back. Root has no parent.
+const BACK_TARGET := {
+	"open": "root",
+	"private": "root",
+	"party": "open",
+	"host": "private",
+	"joinmatch": "private",
+	"joinparty": "party",
+}
+
+var _panels: Dictionary = {}
 var _username_was_typed: bool = false
 var _suppress_username_signal: bool = false
 
 func _ready() -> void:
-	find_match_button.pressed.connect(_find_match)
-	friends_button.pressed.connect(_toggle_flyout)
-	host_button.pressed.connect(_host)
-	join_button.pressed.connect(_join_code)
-	party_button.pressed.connect(_open_party)
-	settings_button.pressed.connect(_open_settings)
+	_panels = {
+		"root": $Panels/RootPanel,
+		"open": $Panels/OpenPanel,
+		"private": $Panels/PrivatePanel,
+		"party": $Panels/PartyPanel,
+		"host": $Panels/HostPanel,
+		"joinmatch": $Panels/JoinMatchPanel,
+		"joinparty": $Panels/JoinPartyPanel,
+	}
+	# Root navigation.
+	$Panels/RootPanel/OpenButton.pressed.connect(func(): _show_panel("open"))
+	$Panels/RootPanel/PrivateButton.pressed.connect(func(): _show_panel("private"))
+	# Open match.
+	$Panels/OpenPanel/PartyButton.pressed.connect(func(): _show_panel("party"))
+	$Panels/OpenPanel/SoloButton.pressed.connect(_play_solo)
+	# Private match.
+	$Panels/PrivatePanel/HostButton.pressed.connect(func(): _show_panel("host"))
+	$Panels/PrivatePanel/JoinButton.pressed.connect(func(): _show_panel("joinmatch"))
+	# Party.
+	$Panels/PartyPanel/CreateButton.pressed.connect(_create_party)
+	$Panels/PartyPanel/JoinButton.pressed.connect(func(): _show_panel("joinparty"))
+	# Host / join leaves.
+	$Panels/HostPanel/StartButton.pressed.connect(_host)
+	$Panels/JoinMatchPanel/JoinButton.pressed.connect(_join_match)
+	$Panels/JoinPartyPanel/JoinButton.pressed.connect(_join_party)
+	# Back buttons (named "Back" under each panel that has a parent).
+	for panel_name in BACK_TARGET:
+		var back: Button = _panels[panel_name].get_node("Back")
+		var target: String = BACK_TARGET[panel_name]
+		back.pressed.connect(func(): _show_panel(target))
+	# Code fields uppercase + submit-to-join.
+	match_code.text_changed.connect(func(t): _uppercase(match_code, t))
+	match_code.text_submitted.connect(func(_t): _join_match())
+	party_code.text_changed.connect(func(t): _uppercase(party_code, t))
+	party_code.text_submitted.connect(func(_t): _join_party())
+	# Username edit-in-place + settings.
 	edit_link.pressed.connect(_begin_edit)
 	save_button.pressed.connect(_commit_edit)
 	random_button.pressed.connect(_randomize_name)
-	code_input.text_changed.connect(_uppercase_code_field)
-	code_input.text_submitted.connect(func(_t): _join_code())
+	settings_button.pressed.connect(_open_settings)
 	username_input.text_changed.connect(_on_username_text_changed)
 	username_input.text_submitted.connect(func(_t): _commit_edit())
-	_wire_button_sfx()
+
 	_populate_topologies()
-	flyout.visible = false
+	_wire_button_sfx(self)
+	_show_panel("root")
 	edit_row.visible = false
 	if not Settings.custom_username.is_empty():
 		GameState.username = Settings.custom_username
@@ -67,13 +105,16 @@ func _ready() -> void:
 	_check_for_updates()
 	_maybe_show_telemetry_opt_in()
 
-func _wire_button_sfx() -> void:
-	for button in [
-		find_match_button, friends_button, host_button, join_button,
-		party_button, settings_button, edit_link, random_button, save_button,
-	]:
-		button.pressed.connect(func(): AudioBus.play_ui(AssetPaths.UI_CLICK))
-		button.mouse_entered.connect(func(): AudioBus.play_ui(AssetPaths.UI_HOVER))
+func _show_panel(panel_name: String) -> void:
+	for key in _panels:
+		_panels[key].visible = key == panel_name
+
+func _wire_button_sfx(node: Node) -> void:
+	for child in node.get_children():
+		if child is Button:
+			child.pressed.connect(func(): AudioBus.play_ui(AssetPaths.UI_CLICK))
+			child.mouse_entered.connect(func(): AudioBus.play_ui(AssetPaths.UI_HOVER))
+		_wire_button_sfx(child)
 
 func _populate_topologies() -> void:
 	topology_picker.clear()
@@ -83,10 +124,70 @@ func _populate_topologies() -> void:
 	topology_picker.add_item("Klein bottle", GameState.Topology.KLEIN)
 	topology_picker.add_item("Random", RANDOM_TOPOLOGY_ID)
 
-func _refresh_user_label() -> void:
-	user_label.text = "Playing as %s" % GameState.username
+# --- leaf actions ----------------------------------------------------------
+
+func _play_solo() -> void:
+	_burst_confetti()
+	# Drop any stale party handle so /open/join doesn't route us into a party
+	# room we already left.
+	GameState.party_id = ""
+	GameState.party_member_id = ""
+	GameState.party_intent = ""
+	GameState.host_random_topology = false
+	GameState.set_mode(GameState.Mode.OPEN)
+	requested_screen.emit("lobby")
+
+func _host() -> void:
+	_burst_confetti()
+	var idx := topology_picker.get_selected_id()
+	GameState.host_random_topology = idx == RANDOM_TOPOLOGY_ID
+	if GameState.host_random_topology:
+		GameState.roll_random_topology()
+	else:
+		GameState.set_topology(idx)
+	GameState.set_mode(GameState.Mode.HOST)
+	requested_screen.emit("lobby")
+
+func _join_match() -> void:
+	var code := match_code.text.strip_edges().to_upper()
+	if code.length() < 4:
+		match_code.grab_focus()
+		return
+	GameState.host_random_topology = false
+	GameState.set_mode(GameState.Mode.JOIN)
+	GameState.lobby_code = code
+	requested_screen.emit("lobby")
+
+func _create_party() -> void:
+	_burst_confetti()
+	GameState.party_id = ""
+	GameState.party_member_id = ""
+	GameState.party_intent = "create"
+	requested_screen.emit("party")
+
+func _join_party() -> void:
+	var code := party_code.text.strip_edges().to_upper()
+	if code.length() < 4:
+		party_code.grab_focus()
+		return
+	GameState.party_id = ""
+	GameState.party_member_id = ""
+	GameState.party_intent = "join"
+	GameState.party_join_code = code
+	requested_screen.emit("party")
+
+func _uppercase(field: LineEdit, new_text: String) -> void:
+	var upper := new_text.to_upper()
+	if upper == new_text:
+		return
+	var caret := field.caret_column
+	field.text = upper
+	field.caret_column = caret
 
 # --- username edit-in-place ------------------------------------------------
+
+func _refresh_user_label() -> void:
+	user_label.text = "Playing as %s" % GameState.username
 
 func _begin_edit() -> void:
 	_suppress_username_signal = true
@@ -123,54 +224,6 @@ func _on_username_text_changed(_new_text: String) -> void:
 	if _suppress_username_signal:
 		return
 	_username_was_typed = true
-
-# --- primary actions -------------------------------------------------------
-
-func _find_match() -> void:
-	flyout.visible = false
-	_burst_confetti()
-	# Solo open-join: drop any stale party handle so /open/join doesn't route us
-	# into a party room we already left.
-	GameState.party_id = ""
-	GameState.party_member_id = ""
-	GameState.host_random_topology = false
-	GameState.set_mode(GameState.Mode.OPEN)
-	requested_screen.emit("lobby")
-
-func _toggle_flyout() -> void:
-	flyout.visible = not flyout.visible
-
-func _host() -> void:
-	_burst_confetti()
-	var idx := topology_picker.get_selected_id()
-	GameState.host_random_topology = idx == RANDOM_TOPOLOGY_ID
-	if GameState.host_random_topology:
-		GameState.roll_random_topology()
-	else:
-		GameState.set_topology(idx)
-	GameState.set_mode(GameState.Mode.HOST)
-	requested_screen.emit("lobby")
-
-func _join_code() -> void:
-	var code := code_input.text.strip_edges().to_upper()
-	if code.length() < 4:
-		code_input.grab_focus()
-		return
-	GameState.host_random_topology = false
-	GameState.set_mode(GameState.Mode.JOIN)
-	GameState.lobby_code = code
-	requested_screen.emit("lobby")
-
-func _uppercase_code_field(new_text: String) -> void:
-	var upper := new_text.to_upper()
-	if upper == new_text:
-		return
-	var caret := code_input.caret_column
-	code_input.text = upper
-	code_input.caret_column = caret
-
-func _open_party() -> void:
-	requested_screen.emit("party")
 
 func _open_settings() -> void:
 	add_child(SettingsPanel.instantiate())

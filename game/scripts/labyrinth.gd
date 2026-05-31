@@ -207,10 +207,11 @@ func _ensure_wall_material() -> void:
 		return
 	_wall_material = ShaderMaterial.new()
 	_wall_material.shader = WALL_SHADER
-	# half_height/falloff: box is centered on its origin so its bottom face is
-	# at -WALL_HEIGHT/2; the glow fades over the first ~3 m above the floor.
+	# half_height: box is centered on its origin so its bottom face is at
+	# -WALL_HEIGHT/2; the shader measures strip height up from the floor. The
+	# strip placement defaults in the shader read as a crisp low LED line, so we
+	# only need to seed the tint here.
 	_wall_material.set_shader_parameter("half_height", WALL_HEIGHT * 0.5)
-	_wall_material.set_shader_parameter("falloff_height", 3.0)
 	_wall_material.set_shader_parameter("tint_color", TINT_NEUTRAL)
 
 # Pure phase-name -> tint Color mapping. Static so it can be unit-tested
@@ -264,8 +265,8 @@ func _ensure_floor() -> void:
 	plane.size = Vector2(ext_x, ext_z)
 	floor_node.mesh = plane
 	var mat := StandardMaterial3D.new()
-	mat.albedo_color = Color(0.09, 0.09, 0.11)
-	mat.roughness = 0.95
+	mat.albedo_color = Color(0.13, 0.14, 0.17)
+	mat.roughness = 0.85
 	floor_node.material_override = mat
 
 func _clear_walls() -> void:

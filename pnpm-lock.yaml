@@ -83,9 +83,15 @@ importers:
       '@cloudflare/workers-types':
         specifier: 4.20260528.1
         version: 4.20260528.1
+      '@types/node':
+        specifier: 25.9.1
+        version: 25.9.1
       '@vitest/coverage-v8':
         specifier: 4.1.7
         version: 4.1.7(vitest@4.1.7)
+      tsx:
+        specifier: 4.22.3
+        version: 4.22.3
       typescript:
         specifier: 5.6.3
         version: 5.6.3

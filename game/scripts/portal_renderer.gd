@@ -100,10 +100,11 @@ func on_close(id: String) -> void:
 	if not id.is_empty():
 		_release(id)
 
-## Pulse every live ring (a breathing glow + gentle scale), face it at the
-## viewer, and reproject both mouths to their wrap-nearest copy so a seam
-## crossing doesn't teleport them. Deliberately no spin: the ring stands upright
-## on the wall face, so spinning it would sweep it in and out through the wall.
+## Pulse every live ring (a breathing glow + gentle scale) and reproject both
+## mouths to their wrap-nearest copy so a seam crossing doesn't teleport them.
+## The ring is held flush with the wall it sits on (never billboarded/tilted)
+## and offset onto whichever face the viewer is on. No spin: the ring stands
+## upright on the wall face, so spinning it would sweep it through the wall.
 ## Cheap writes; runs at render rate for smooth motion between state changes.
 func tick(_delta: float) -> void:
 	if _active.is_empty():
@@ -114,17 +115,23 @@ func tick(_delta: float) -> void:
 	var scale := 1.0 + wave * PULSE_AMPLITUDE
 	for id in _active:
 		var entry: Dictionary = _pool[_active[id]["slot"]]
-		_place_mouth(entry["a_root"], _active[id]["a_canonical"], scale)
-		_place_mouth(entry["b_root"], _active[id]["b_canonical"], scale)
+		_place_mouth(entry["a_root"], _active[id]["a_canonical"], _active[id]["a_normal"], scale)
+		_place_mouth(entry["b_root"], _active[id]["b_canonical"], _active[id]["b_normal"], scale)
 
-func _place_mouth(root: Node3D, canonical: Vector3, scale: float) -> void:
+func _place_mouth(root: Node3D, canonical: Vector3, normal: Vector3, scale: float) -> void:
 	var near := _to_camera_nearest_copy(canonical)
 	var base := Vector3(near.x, MOUTH_HEIGHT, near.z)
-	# Horizontal direction from the mouth to the local camera. The torus axis is
-	# aimed along it (so the hoop faces the player) and the mouth is nudged that
-	# way to clear the wall face it sits on.
 	var to_cam := _camera_horizontal_dir(base)
-	root.global_transform = Transform3D(_facing_basis(to_cam).scaled(Vector3(scale, scale, scale)), base + to_cam * FACE_OFFSET)
+	# Aim the torus axis along the wall normal so the ring's plane stays flush
+	# with the wall, then flip it to the face the viewer is on and offset it that
+	# far off the centerline so it clears the solid wall. When no wall is found
+	# (shouldn't happen for a wall-anchored mouth) fall back to facing the camera.
+	var axis := to_cam
+	if normal != Vector3.ZERO:
+		axis = normal if normal.dot(to_cam) >= 0.0 else -normal
+	root.global_transform = Transform3D(
+		_facing_basis(axis).scaled(Vector3(scale, scale, scale)), base + axis * FACE_OFFSET
+	)
 
 ## Hide all rings and reclaim every slot. Called on match (re)start.
 func clear() -> void:
@@ -146,12 +153,21 @@ func _upsert(entry: Dictionary) -> void:
 		# Pool exhausted (shouldn't happen at MAX_PAIRS headroom). Drop the open
 		# rather than evict a live pair arbitrarily.
 		return
-	_active[id] = {"slot": slot, "a_canonical": a_canonical, "b_canonical": b_canonical}
+	# Walls are static, so resolve each mouth's wall normal once here and cache it.
+	var a_normal := _wall_normal_at(a_canonical)
+	var b_normal := _wall_normal_at(b_canonical)
+	_active[id] = {
+		"slot": slot,
+		"a_canonical": a_canonical,
+		"b_canonical": b_canonical,
+		"a_normal": a_normal,
+		"b_normal": b_normal,
+	}
 	var pool_entry: Dictionary = _pool[slot]
 	# Place once now so the pair is correct the frame it opens; tick() refines it
 	# as the camera moves.
-	_place_mouth(pool_entry["a_root"], a_canonical, 1.0)
-	_place_mouth(pool_entry["b_root"], b_canonical, 1.0)
+	_place_mouth(pool_entry["a_root"], a_canonical, a_normal, 1.0)
+	_place_mouth(pool_entry["b_root"], b_canonical, b_normal, 1.0)
 	pool_entry["a_root"].visible = true
 	pool_entry["b_root"].visible = true
 
@@ -166,6 +182,36 @@ func _release(id: String) -> void:
 
 func _read_vec3(d: Dictionary) -> Vector3:
 	return Vector3(float(d.get("x", 0.0)), float(d.get("y", 0.0)), float(d.get("z", 0.0)))
+
+# Horizontal unit normal of the wall the mouth sits on (the mouth is anchored on
+# a wall centerline, so the nearest segment is that wall). Vector3.ZERO when no
+# walls are known. Reads the same {ax,az,bx,bz} endpoints the predictor uses.
+func _wall_normal_at(point: Vector3) -> Vector3:
+	var lab: Object = _arena.labyrinth
+	if lab == null:
+		return Vector3.ZERO
+	var endpoints: Array = lab.wall_endpoints()
+	var best := Vector3.ZERO
+	var best_d := INF
+	for w in endpoints:
+		var ax: float = w["ax"]
+		var az: float = w["az"]
+		var bx: float = w["bx"]
+		var bz: float = w["bz"]
+		var dx := bx - ax
+		var dz := bz - az
+		var len_sq := dx * dx + dz * dz
+		var t := 0.0
+		if len_sq > 0.000001:
+			t = clampf(((point.x - ax) * dx + (point.z - az) * dz) / len_sq, 0.0, 1.0)
+		var cx := ax + dx * t
+		var cz := az + dz * t
+		var d := Vector2(point.x - cx, point.z - cz).length_squared()
+		if d < best_d:
+			best_d = d
+			var n := Vector3(-dz, 0.0, dx)
+			best = n.normalized() if n.length() > 0.000001 else Vector3.ZERO
+	return best
 
 # Horizontal unit vector from a world point toward the local camera. Defaults to
 # +Z when the camera is unavailable or directly overhead.

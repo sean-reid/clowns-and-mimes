@@ -13,6 +13,8 @@ import { MOBIUS_HALF_X, MOBIUS_HALF_Z } from './mobius.ts';
 export const ITEM_RESPAWN_MS = 30_000;
 // A player within this planar distance of an available item picks it up.
 export const ITEM_PICKUP_RADIUS = 1.6;
+// Radar power-up: the minimap reveals the enemy team for this long after use.
+export const RADAR_DURATION_MS = 5_000;
 
 // surge + radar are guaranteed every match; the rest are drawn from the seed.
 export const ITEM_TYPES_ALWAYS: ItemType[] = ['surge', 'radar'];

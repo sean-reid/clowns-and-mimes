@@ -19,7 +19,12 @@ import type {
   Vec3,
 } from '@cm/shared';
 import type { WallSegment } from '@cm/shared/labyrinth';
-import { ITEM_PICKUP_RADIUS, ITEM_RESPAWN_MS, itemSpawnLayout } from '@cm/shared/items';
+import {
+  ITEM_PICKUP_RADIUS,
+  ITEM_RESPAWN_MS,
+  RADAR_DURATION_MS,
+  itemSpawnLayout,
+} from '@cm/shared/items';
 import { SURGE_DURATION_MS } from '@cm/shared/movement';
 import { buildPortalPair, PORTAL_DURATION_MS, PORTAL_ENTER_RADIUS } from '@cm/shared/portals';
 import { topologyDistance } from '@cm/shared/topology';
@@ -147,6 +152,12 @@ export class ItemManager {
         break;
       case 'clone':
         this.host.spawnClone(player);
+        break;
+      case 'radar':
+        // Reveal the enemy team on the activating player's minimap for a fixed
+        // window. Like surge, stored as an absolute deadline that rides the
+        // snapshot; the minimap HUD reads it.
+        player.radarUntil = Date.now() + RADAR_DURATION_MS;
         break;
       default:
         break;

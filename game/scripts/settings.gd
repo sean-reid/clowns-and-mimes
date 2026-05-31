@@ -5,7 +5,7 @@ extends Node
 ##
 ## Audio:
 ##   - music_muted: silences the Music bus (title theme + lobby + match)
-##   - sfx_muted: silences the SFX bus (footsteps, tags, ambience)
+##   - sfx_muted: silences the SFX and UI buses (footsteps, tags, ambience, menu clicks)
 ##
 ## Graphics:
 ##   - light_mode: swaps the arena Environment + DirectionalLight to
@@ -99,6 +99,8 @@ func set_telemetry_id(value: String) -> void:
 func _apply_audio() -> void:
 	AudioBus.mute_bus("Music", music_muted)
 	AudioBus.mute_bus("SFX", sfx_muted)
+	# UI clicks/hovers count as sound effects, so the SFX toggle silences them too.
+	AudioBus.mute_bus("UI", sfx_muted)
 
 func _load() -> void:
 	var cfg := ConfigFile.new()

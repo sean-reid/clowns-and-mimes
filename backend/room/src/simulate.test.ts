@@ -310,6 +310,27 @@ describe('Room.simulate', () => {
     expect(players.has(clone!.id)).toBe(false);
   });
 
+  it('a bot does not see or react to a cloaked enemy', () => {
+    const room = makeRoom();
+    setPhase(room, 'free_roam');
+    const bot = placeHuman(room, 'b1', 'mime', 0, 0);
+    bot.bot = true;
+    const enemy = placeHuman(room, 'c1', 'clown', 3, 0);
+    const bots = room as unknown as {
+      bots: {
+        simulate: (dt: number) => void;
+        botMinds: Map<string, { engagedTargetId: string | null }>;
+      };
+    };
+    // In plain sight the bot engages the enemy.
+    bots.bots.simulate(1 / 60);
+    expect(bots.bots.botMinds.get('b1')!.engagedTargetId).toBe('c1');
+    // Once the enemy cloaks, the bot drops the target outright (no investigate).
+    enemy.cloakUntil = Date.now() + 2_000;
+    bots.bots.simulate(1 / 60);
+    expect(bots.bots.botMinds.get('b1')!.engagedTargetId).toBeNull();
+  });
+
   it('still advances lastAppliedSeq for a frozen player so the client can prune', () => {
     // Regression for the 2026-05-29 freeze: a frozen player's inputs were
     // drained without updating lastAppliedSeq, so every delta's ackSeq

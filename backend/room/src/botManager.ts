@@ -23,6 +23,13 @@ import type { BotPathfinder } from './botPathfinder.ts';
 // World half-extent (kept private here; Room owns the canonical constant).
 const WORLD_WIDTH = 80;
 
+// A player is hidden from bot perception while a Cloak power-up is active.
+// Mirrors the client's visual hide so bots can't see or react to a cloaked
+// enemy, matching what the cloaked player's opponents observe on screen.
+function isCloaked(p: PlayerState, now: number): boolean {
+  return p.cloakUntil !== undefined && p.cloakUntil > now;
+}
+
 // Bot AI constants. All bot tuning lives here so a single read explains
 // the AI's behavior.
 const TEAM_TARGET = 4;
@@ -384,7 +391,7 @@ export class BotManager {
     return out;
   }
 
-  private nearestVisibleEnemy(bot: PlayerState): PlayerState | null {
+  private nearestVisibleEnemy(bot: PlayerState, now: number): PlayerState | null {
     let best: PlayerState | null = null;
     let bestDist = Infinity;
     const topology = this.host.getTopology();
@@ -392,6 +399,7 @@ export class BotManager {
       if (other.id === bot.id) continue;
       if (other.team === bot.team) continue;
       if (other.frozen) continue;
+      if (isCloaked(other, now)) continue;
       if (!this.botCanSee(bot.position, other.position)) continue;
       const d = topologyDistance(bot.position, other.position, topology, WORLD_WIDTH);
       if (d < bestDist) {
@@ -442,7 +450,7 @@ export class BotManager {
       };
       this.botMinds.set(bot.id, mind);
 
-      const candidate = this.nearestVisibleEnemy(bot);
+      const candidate = this.nearestVisibleEnemy(bot, now);
       const candidateDist = candidate
         ? topologyDistance(bot.position, candidate.position, topology, WORLD_WIDTH)
         : Infinity;
@@ -450,7 +458,15 @@ export class BotManager {
       let enemyDist = candidateDist;
       if (mind.engagedTargetId) {
         const existing = this.host.players.get(mind.engagedTargetId);
-        if (existing && !existing.frozen && existing.team !== bot.team) {
+        // A target that activates Cloak vanishes from bot perception entirely:
+        // engagement is dropped (the `else` below), with no investigate-the-
+        // last-known-position reaction a wall occlusion would trigger.
+        if (
+          existing &&
+          !existing.frozen &&
+          existing.team !== bot.team &&
+          !isCloaked(existing, now)
+        ) {
           const existingVisible = this.botCanSee(bot.position, existing.position);
           const existingDist = topologyDistance(
             bot.position,

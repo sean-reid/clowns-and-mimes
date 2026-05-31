@@ -26,6 +26,7 @@ const TEST_SCRIPTS: Array[String] = [
 	"res://tests/test_portal_renderer.gd",
 	"res://tests/test_hud_minimap.gd",
 	"res://tests/test_wall_uplight_tint.gd",
+	"res://tests/test_tutorial_overlay.gd",
 ]
 
 func _initialize() -> void:

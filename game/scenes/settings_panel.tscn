@@ -53,6 +53,15 @@ theme_override_colors/font_color = Color(0.7, 0.7, 0.75, 1)
 text = "Light mode (blue skies, brighter arena)"
 theme_override_font_sizes/font_size = 18
 
+[node name="HelpHeader" type="Label" parent="Content"]
+text = "Help"
+theme_override_font_sizes/font_size = 18
+theme_override_colors/font_color = Color(0.7, 0.7, 0.75, 1)
+
+[node name="ReplayTutorial" type="Button" parent="Content"]
+text = "Replay tutorial"
+theme_override_font_sizes/font_size = 18
+
 [node name="Spacer" type="Control" parent="Content"]
 custom_minimum_size = Vector2(0, 10)
 

@@ -24,9 +24,10 @@ const MAX_PAIRS := 8
 const MOUTH_HEIGHT := 1.0
 const RING_OUTER := 1.2
 const RING_INNER := 0.95
-const SPIN_SPEED := 1.5
 const PULSE_SPEED := 3.0
 const PULSE_AMPLITUDE := 0.12
+const EMISSION_BASE := 2.0
+const EMISSION_PULSE := 1.0
 const PORTAL_COLOR := Color(0.6, 0.4, 1.0)
 
 var _arena: Object
@@ -94,24 +95,26 @@ func on_close(id: String) -> void:
 	if not id.is_empty():
 		_release(id)
 
-## Spin + pulse every live ring and reproject both mouths to their wrap-nearest
-## copy so a seam crossing doesn't teleport them. Cheap transform writes; runs at
-## render rate for smooth motion between the (infrequent) portal state changes.
+## Pulse every live ring (a breathing glow + gentle scale) and reproject both
+## mouths to their wrap-nearest copy so a seam crossing doesn't teleport them.
+## Deliberately no spin: the ring stands upright in the wall, so rotating it
+## about any in-plane axis would sweep it in and out through the wall it sits in.
+## Cheap writes; runs at render rate for smooth motion between state changes.
 func tick(delta: float) -> void:
 	if _active.is_empty():
 		return
 	_pulse_phase += delta * PULSE_SPEED
+	var wave := sin(_pulse_phase)
+	_material.emission_energy_multiplier = EMISSION_BASE + wave * EMISSION_PULSE
+	var scale := 1.0 + wave * PULSE_AMPLITUDE
 	for id in _active:
-		var state: Dictionary = _active[id]
-		var entry: Dictionary = _pool[state["slot"]]
-		var scale := 1.0 + sin(_pulse_phase) * PULSE_AMPLITUDE
-		_place_mouth(entry["a_root"], state["a_canonical"], delta, scale)
-		_place_mouth(entry["b_root"], state["b_canonical"], delta, scale)
+		var entry: Dictionary = _pool[_active[id]["slot"]]
+		_place_mouth(entry["a_root"], _active[id]["a_canonical"], scale)
+		_place_mouth(entry["b_root"], _active[id]["b_canonical"], scale)
 
-func _place_mouth(root: Node3D, canonical: Vector3, delta: float, scale: float) -> void:
+func _place_mouth(root: Node3D, canonical: Vector3, scale: float) -> void:
 	var near := _to_camera_nearest_copy(canonical)
 	root.global_position = Vector3(near.x, MOUTH_HEIGHT, near.z)
-	root.rotate_y(delta * SPIN_SPEED)
 	root.scale = Vector3(scale, scale, scale)
 
 ## Hide all rings and reclaim every slot. Called on match (re)start.

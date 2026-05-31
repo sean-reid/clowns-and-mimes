@@ -162,12 +162,14 @@ describe('matchmaker', () => {
   });
 
   it('joins by code', async () => {
-    const created = await call(env, 'POST', '/lobby', { topology: 'plane' });
+    const created = await call(env, 'POST', '/lobby', { topology: 'klein' });
     const { code, roomId } = (await created.json()) as { code: string; roomId: string };
     const res = await call(env, 'POST', `/lobby/${code}/join`);
     expect(res.status).toBe(200);
-    const body = (await res.json()) as { roomId: string };
+    const body = (await res.json()) as { roomId: string; topology: string };
     expect(body.roomId).toBe(roomId);
+    // The joiner is told the host's topology so the lobby can disclose it.
+    expect(body.topology).toBe('klein');
   });
 
   it('returns 404 for unknown code', async () => {

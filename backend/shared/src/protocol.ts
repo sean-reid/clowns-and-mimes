@@ -313,6 +313,9 @@ export interface MatchmakeCreateResponse {
 export interface MatchmakeJoinResponse {
   roomId: string;
   wsUrl: string;
+  // The host's chosen topology, surfaced so the joiner can be told which room
+  // they're entering before connecting (the picker is host-only).
+  topology: Topology;
 }
 
 // Parties let friends queue into open matchmaking together: all members land

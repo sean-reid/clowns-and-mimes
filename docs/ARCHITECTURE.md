@@ -24,8 +24,6 @@ This document is the single source of truth for how the project is built. Other 
 - [Build and release pipeline](#build-and-release-pipeline)
 - [Environments](#environments)
 - [Observability](#observability)
-- [Budget](#budget)
-- [Open questions](#open-questions)
 
 ## Goals and constraints
 
@@ -293,12 +291,15 @@ sequenceDiagram
   C->>DO: WS join {v, name, hostToken?, sessionToken?}
   DO-->>C: snapshot {snapshot, youAre, sessionToken}
   loop 60 Hz server tick
-    C->>DO: input {seq, dt, move, lookYaw, sprint}
+    C->>DO: input {seq, dt, move, lookYaw, sprint, jump}
     DO-->>C: delta {players, phase, turnEndsAt, ackSeq}
   end
   C->>DO: tag_attempt {targetId, clientTime}
   DO-->>C: tag_result {ok, targetId?, reason?}
-  C->>DO: start_match  (host only, transitions out of `filling`)
+  C->>DO: shoot {aim}
+  DO-->>C: shoot_result {ok, reason?}
+  C->>DO: use_item
+  C->>DO: start_match / restart_room  (host only, (re)enters `filling` → free roam)
 ```
 
 Wire protocol is JSON over WebSocket with a `t` discriminator on every message and `PROTOCOL_VERSION = 3` (defined in `@cm/shared/protocol`). The room rejects mismatched versions with a `version_mismatch` error and closes the socket with close code 4001. The protocol carries `position: Vec3` (Y is meaningful for the jump arc) and `jumpStartedAt: number | null` on `PlayerState`, a `jump: boolean` rising-edge field on `PlayerInput`, and (version 3) the power-up + projectile surface: `activeItem` and the per-type armed/expiry fields on `PlayerState`, plus live `items`, `portals`, and `projectiles` arrays on the snapshot/delta.
@@ -343,7 +344,8 @@ flowchart LR
   Game[Game client] --> MM[Matchmaker Worker]
   MM -->|create or fetch| Room[Room Durable Object]
   Game -->|WebSocket| Room
-  Room --> KV[(KV: lobby codes)]
+  MM --> KV[(KV: lobby codes)]
+  Room -->|room-state / room-detach| MM
   Room --> Logs[(Workers Logs)]
 ```
 
@@ -362,22 +364,24 @@ flowchart LR
 
 ```mermaid
 flowchart TD
-  Start([Player picks mode]) --> Mode{Mode}
-  Mode -->|Host| Create[Create private room\nHost picks topology]
+  Start([Carnival menu]) --> Mode{Mode}
+  Mode -->|Private: Host| Create[POST /lobby\nHost picks topology]
   Create --> ShareCode[Display code]
-  ShareCode --> Wait[Wait for friends]
-  Mode -->|Code| EnterCode[Enter code]
-  EnterCode --> Lookup[Look up room]
+  ShareCode --> Wait[Lobby: wait for friends]
+  Mode -->|Private: Join| EnterCode[Enter code]
+  EnterCode --> Lookup[POST /lobby/:code/join]
   Lookup -->|exists| Wait
   Lookup -->|missing| Error[Show error]
-  Mode -->|Strangers| OpenJoin[Open join]
-  OpenJoin --> Find{Open room\nwith capacity?}
-  Find -->|yes| JoinExisting[Join]
+  Mode -->|Open: Solo| OpenJoin[POST /open/join]
+  Mode -->|Open: Party| PartyFlow[Create/join party\nthen POST /open/join with partyId]
+  PartyFlow --> OpenJoin
+  OpenJoin --> Find{Open room\nunder soft cap?}
+  Find -->|yes| JoinExisting[Join most-populated]
   Find -->|no| CreateOpen[Create open room\nRandom topology]
   JoinExisting --> Wait
   CreateOpen --> Wait
   Wait --> Ready{Ready?}
-  Ready -->|host clicks Start / open auto-fills| Free[30s free roam]
+  Ready -->|host start_match private / bot-fill timer open| Free[30s free roam]
 ```
 
 Open rooms target a soft capacity of 12 humans before opening a fresh room. Once a human joins, the room schedules a 3 second bot-fill timer (`BOT_FILL_DELAY_MS`); when it fires the room fills empty seats up to `TEAM_TARGET = 4` bots per team and transitions straight into free roam, so a solo player never sits in an empty lobby. Private (hosted) rooms skip the auto-fill timer: the room stays in `filling` until the host's `start_match` message arrives, then bots fill the remaining slots and the match begins. At match start, `balanceTeamAssignments` rebalances the human roster across teams (sort by id, alternate) so all five humans never land on the same side.
@@ -474,21 +478,6 @@ Each environment has its own KV namespace and Durable Object class binding to ke
 - `tests/smoke` is a single-file TS script that hits a deployed matchmaker end-to-end (healthz, create lobby, join by code, websocket snapshot). Run via `pnpm --filter @cm/smoke dev` against the dev backend or `pnpm --filter @cm/smoke production` against prod. Useful as a manual deploy verification.
 - `scripts/playtest-dev.sh` launches the Godot editor with `CLOWNS_MM_URL` pointed at the dev workers so a maintainer can play the editor build against the live dev backend instead of offline bots.
 
+Opt-in client telemetry is a separate, consent-gated pipeline. The `Telemetry` autoload (`telemetry.gd`) is a no-op until the player accepts the first-launch dialog (`Settings.telemetry_consent == "yes"`). Once enabled it buffers events locally and flushes them every 30 s (and on shutdown) to the `cm-telemetry` Worker (`backend/telemetry`), keyed by a random per-install UUID with no PII. The event schema is shared in `backend/shared/src/telemetry.ts`. Consent is off by default and the identifier carries no account or device information.
+
 No third-party error tracker is wired up. Adding one is a future consideration; current scale does not require it.
-
-## Budget
-
-| Item                                                         | Annual cost               |
-| ------------------------------------------------------------ | ------------------------- |
-| Cloudflare Workers Paid plan                                 | USD 60                    |
-| Apple Developer Program (for macOS signing and notarization) | USD 99                    |
-| Domain registration (optional, deferrable)                   | USD 15                    |
-| GitHub (public repo, free)                                   | USD 0                     |
-| **Total**                                                    | **USD 174** with headroom |
-
-Initial release can ship without code signing on macOS by accepting Gatekeeper warnings. Notarization is a fast-follow.
-
-## Open questions
-
-- Final username generator dictionary needs curation. The first cut is a small adjective-and-noun list expanded in a follow-up.
-- Whether to support cosmetic skins beyond clown and mime in v1. Default answer: no, scope creep.

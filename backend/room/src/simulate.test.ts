@@ -293,6 +293,23 @@ describe('Room.simulate', () => {
     expect(after.position.z).toBe(startPos.z);
   });
 
+  it('spawns a clone on the owner team and despawns it once its lifetime elapses', () => {
+    const room = makeRoom();
+    setPhase(room, 'free_roam');
+    const owner = placeHuman(room, 'h1', 'mime', 0, 0);
+    const bots = (room as unknown as { bots: { spawnClone: (o: PlayerState) => void } }).bots;
+    bots.spawnClone(owner);
+    const players = (room as unknown as { players: Map<string, PlayerState> }).players;
+    const clone = [...players.values()].find((p) => p.cloneExpiresAt !== undefined);
+    expect(clone).toBeDefined();
+    expect(clone!.bot).toBe(true);
+    expect(clone!.team).toBe('mime');
+    // Past the despawn deadline, the bot tick sweeps it out of the roster.
+    vi.advanceTimersByTime(31_000);
+    (room as unknown as { bots: { simulate: (dt: number) => void } }).bots.simulate(1 / 60);
+    expect(players.has(clone!.id)).toBe(false);
+  });
+
   it('still advances lastAppliedSeq for a frozen player so the client can prune', () => {
     // Regression for the 2026-05-29 freeze: a frozen player's inputs were
     // drained without updating lastAppliedSeq, so every delta's ackSeq

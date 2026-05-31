@@ -208,6 +208,7 @@ export class Room implements DurableObject {
       getSeed: () => this.seed,
       getWalls: () => this.walls,
       broadcast: (msg) => this.broadcast(msg),
+      spawnClone: (owner) => this.bots.spawnClone(owner),
     };
     this.items = new ItemManager(itemsHost);
     // Restore in-memory state from a prior DO incarnation, if any.

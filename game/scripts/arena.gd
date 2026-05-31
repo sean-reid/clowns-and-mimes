@@ -152,6 +152,12 @@ var _held_item: String = ""
 # Wall-clock ms of the last shoot message sent. Mirrors the server's cooldown
 # so rapid clicking doesn't spend wire frames on shots the server will reject.
 var _last_shot_at_ms: int = -1000000
+# Overcharge armed for the local player: the next shot skips the cooldown gate.
+# Predicted client-side like leap - set on the use_item rising edge, cleared
+# when the shot fires. The server is authoritative (its overchargeArmed gates
+# the actual piercing shot); this flag only lets the client fire early without
+# waiting a round-trip, so it isn't read back from the snapshot.
+var _overcharge_armed: bool = false
 
 # Online-only. Pooled sphere renderer for server-authoritative projectiles.
 # Instantiated on the online path once World is ready; null in offline mode.
@@ -674,11 +680,15 @@ func _stream_input(delta: float) -> void:
 	# camera's forward (-Z of its basis), giving full 3D pitch+yaw aim.
 	if not frozen and _input_active() and Input.is_action_pressed("shoot"):
 		var shot_now_ms: int = int(Time.get_unix_time_from_system() * 1000.0)
-		var off_cooldown: bool = shot_now_ms - _last_shot_at_ms >= int(SharedConstants.SHOOT_COOLDOWN_MS)
+		var off_cooldown: bool = (
+			_overcharge_armed
+			or shot_now_ms - _last_shot_at_ms >= int(SharedConstants.SHOOT_COOLDOWN_MS)
+		)
 		if not _shoot_was_held and off_cooldown and local_player.camera != null:
 			var aim: Vector3 = -local_player.camera.global_transform.basis.z
 			room_client.send_shoot(aim)
 			_last_shot_at_ms = shot_now_ms
+			_overcharge_armed = false
 		_shoot_was_held = true
 	else:
 		_shoot_was_held = false
@@ -694,6 +704,8 @@ func _stream_input(delta: float) -> void:
 				predictor.arm_leap()
 			elif _held_item == "surge":
 				predictor.arm_surge()
+			elif _held_item == "overcharge":
+				_overcharge_armed = true
 		_use_item_was_held = true
 	else:
 		_use_item_was_held = false

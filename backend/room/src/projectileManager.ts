@@ -63,8 +63,9 @@ export class ProjectileManager {
       return;
     }
     const serverNow = Date.now();
+    const overcharged = attacker.overchargeArmed === true;
     const last = this.lastShotAt.get(attacker.id);
-    if (last !== undefined && serverNow - last < SHOOT_COOLDOWN_MS) {
+    if (!overcharged && last !== undefined && serverNow - last < SHOOT_COOLDOWN_MS) {
       this.host.send(ws, { t: 'shoot_result', ok: false, reason: 'cooldown' });
       return;
     }
@@ -77,6 +78,10 @@ export class ProjectileManager {
     if (proj === null) {
       this.host.send(ws, { t: 'shoot_result', ok: false, reason: 'bad_direction' });
       return;
+    }
+    if (overcharged) {
+      proj.piercing = true;
+      delete attacker.overchargeArmed;
     }
     this.lastShotAt.set(attacker.id, serverNow);
     this.projectiles.set(id, proj);

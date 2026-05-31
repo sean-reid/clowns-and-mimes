@@ -62,6 +62,11 @@ export interface Projectile {
   velocity: Vec3;
   spawnedAt: number;
   expiresAt: number;
+  // Set on an Overcharge shot: the projectile passes through walls (the
+  // server skips its wall-collision check) and was fired ignoring the
+  // cooldown. Absent on ordinary shots. The client renders it like any
+  // other projectile - it draws server positions and never tests walls.
+  piercing?: boolean;
 }
 
 // Power-up kinds. surge + radar are always in a match's rotation; the rest
@@ -136,6 +141,11 @@ export interface PlayerState {
   // state only; the visual consumer is the minimap HUD. Like surgeUntil it is
   // never cleared, just left in the past.
   radarUntil?: number;
+  // Set by using an Overcharge power-up: the player's next shot bypasses the
+  // cooldown and its projectile pierces walls. Consumed (cleared) by the
+  // server when that shot fires. Rides the snapshot so the client can show
+  // the armed state and reconcile its optimistic local arming.
+  overchargeArmed?: boolean;
   // Set on a Clone power-up's temporary ally bot: the wall-clock (Unix ms) at
   // which it despawns. Present only on clones (undefined on real players and
   // ordinary bots), so it doubles as the "is a clone" marker. Carried on the

@@ -159,6 +159,11 @@ export class ItemManager {
         // snapshot; the minimap HUD reads it.
         player.radarUntil = Date.now() + RADAR_DURATION_MS;
         break;
+      case 'overcharge':
+        // Arm the next shot to skip the cooldown and pierce walls. The
+        // ProjectileManager consumes the flag when that shot fires.
+        player.overchargeArmed = true;
+        break;
       default:
         break;
     }

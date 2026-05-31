@@ -94,6 +94,14 @@ describe('stepProjectiles', () => {
     expect(r.hits[0]!.victimId).toBeUndefined();
   });
 
+  it('a piercing projectile passes through a wall instead of dissipating', () => {
+    const wall: WallSegment = { ax: 0.1, az: -1, bx: 0.1, bz: 1 };
+    const r = stepProjectiles([proj({ piercing: true })], [target()], ctx({ walls: [wall] }));
+    expect(r.hits).toHaveLength(0);
+    expect(r.survivors).toHaveLength(1);
+    expect(r.survivors[0]!.piercing).toBe(true);
+  });
+
   it('freezes an enemy within the hit radius', () => {
     const candidateX = PROJECTILE_SPEED * (1 / 60);
     const r = stepProjectiles(

@@ -15,9 +15,17 @@ extends Node3D
 
 const TopologyScript := preload("res://scripts/topology/topology.gd")
 const GridMaze := preload("res://scripts/grid_maze.gd")
+const WALL_SHADER := preload("res://shaders/wall_uplight.gdshader")
 
 const WALL_HEIGHT := 6.0
 const WALL_THICKNESS := 0.4
+
+# Phase-tint crossfade duration. Soft enough that a turn flip washes the wall
+# glow over rather than popping.
+const TINT_FADE_S := 0.5
+const TINT_NEUTRAL := Color(1.0, 1.0, 1.0)
+const TINT_CLOWN := Color(1.0, 0.55, 0.35)  # warm reddish-orange
+const TINT_MIME := Color(0.78, 0.88, 1.0)  # cool pale-blue
 const SYMMETRY_ORDER := 12
 const RING_RADII: Array[float] = [6.0, 12.0, 18.0, 24.0, 30.0, 36.0]
 const CENTER_SQUARE_SIZE := 4.0
@@ -48,6 +56,12 @@ var _grid_rows: int = GRID_RES
 
 var walls_root: Node3D
 var floor_node: MeshInstance3D
+# One ShaderMaterial shared across every wall mesh (primary + wrap tiles). The
+# uplight band is a fraction of WALL_HEIGHT in object space, identical on every
+# wall regardless of length, so a single material with one tint uniform lets a
+# phase change tint the whole maze with one write. Built lazily in build().
+var _wall_material: ShaderMaterial
+var _tint_tween: Tween
 var _wall_segments: Array = []  # [{transform, length}, ...]
 # Raw wall endpoint pairs in world XZ coords, parallel to _wall_segments.
 # The local-player predictor reads this to mirror the server's pathCrossesWall
@@ -64,6 +78,7 @@ func build(rng_seed: int, top: TopologyScript) -> void:
 	_grid_cols = int(round(topology.extent_x() / CELL_SIZE))
 	_grid_rows = int(round(topology.extent_z() / CELL_SIZE))
 	_resolve_children()
+	_ensure_wall_material()
 	_ensure_floor()
 	_clear_walls()
 	_wall_segments.clear()
@@ -184,11 +199,49 @@ func _populate_wrap_tile(tile: Node3D) -> void:
 		box.size = Vector3(float(seg["length"]), WALL_HEIGHT, WALL_THICKNESS)
 		wall_mesh.mesh = box
 		wall_mesh.transform = seg["transform"]
-		var mat := StandardMaterial3D.new()
-		mat.albedo_color = Color(0.18, 0.18, 0.22)
-		mat.roughness = 0.85
-		wall_mesh.material_override = mat
+		wall_mesh.material_override = _wall_material
 		tile.add_child(wall_mesh)
+
+func _ensure_wall_material() -> void:
+	if _wall_material != null:
+		return
+	_wall_material = ShaderMaterial.new()
+	_wall_material.shader = WALL_SHADER
+	# half_height/falloff: box is centered on its origin so its bottom face is
+	# at -WALL_HEIGHT/2; the glow fades over the first ~3 m above the floor.
+	_wall_material.set_shader_parameter("half_height", WALL_HEIGHT * 0.5)
+	_wall_material.set_shader_parameter("falloff_height", 3.0)
+	_wall_material.set_shader_parameter("tint_color", TINT_NEUTRAL)
+
+# Pure phase-name -> tint Color mapping. Static so it can be unit-tested
+# without a scene tree. Unknown / lobby / filling / free_roam all read neutral.
+static func tint_for_phase(phase_name: String) -> Color:
+	match phase_name:
+		"turn_clown":
+			return TINT_CLOWN
+		"turn_mime":
+			return TINT_MIME
+		_:
+			return TINT_NEUTRAL
+
+## Crossfade the wall uplight tint to the color for `phase_name`. Both the
+## online (arena.gd) and offline (offline_mode.gd) phase handlers route here so
+## the mapping lives in one place. A Tween writes the shared material's uniform
+## once per frame during the fade - no node churn.
+func set_phase_tint(phase_name: String) -> void:
+	if _wall_material == null:
+		return
+	var target: Color = tint_for_phase(phase_name)
+	if _tint_tween != null and _tint_tween.is_valid():
+		_tint_tween.kill()
+	var from: Color = _wall_material.get_shader_parameter("tint_color")
+	_tint_tween = create_tween()
+	_tint_tween.tween_method(
+		func(c: Color): _wall_material.set_shader_parameter("tint_color", c),
+		from,
+		target,
+		TINT_FADE_S,
+	)
 
 func _resolve_children() -> void:
 	walls_root = get_node_or_null("Walls") as Node3D
@@ -281,10 +334,7 @@ func _make_wall(seg_length: float) -> StaticBody3D:
 	var mesh := BoxMesh.new()
 	mesh.size = Vector3(seg_length, WALL_HEIGHT, WALL_THICKNESS)
 	mesh_node.mesh = mesh
-	var mat := StandardMaterial3D.new()
-	mat.albedo_color = Color(0.18, 0.18, 0.22)
-	mat.roughness = 0.85
-	mesh_node.material_override = mat
+	mesh_node.material_override = _wall_material
 	body.add_child(mesh_node)
 	var collider := CollisionShape3D.new()
 	var shape := BoxShape3D.new()

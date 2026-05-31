@@ -531,6 +531,8 @@ func _handle_phase_event(phase: String, cry_index: int) -> void:
 		hud.flash_battle_cry(CLOWN_BATTLE_CRIES[idx % CLOWN_BATTLE_CRIES.size()], "clown")
 	elif phase == "free_roam":
 		hud.flash_disperse()
+	if labyrinth != null:
+		labyrinth.set_phase_tint(phase)
 
 const VersionCheck := preload("res://scripts/network/version_check.gd")
 

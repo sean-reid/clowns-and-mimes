@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { ItemType, Topology } from './protocol.ts';
 import {
+  ITEM_SPAWN_KEEP_DENOM,
   ITEM_TYPES_ALWAYS,
   ITEM_TYPES_ROTATING,
   itemSpawnLayout,
@@ -65,8 +66,19 @@ describe('itemSpawnLayout', () => {
     expect(ids.has('i-53')).toBe(false);
     expect(ids.has('i-55')).toBe(false);
     expect(ids.has('i-56')).toBe(false);
-    // 100 cells minus the 3 excluded.
-    expect(ids.size).toBe(97);
+  });
+
+  it('thins the field to roughly one item per KEEP_DENOM walkable cells', () => {
+    // 100 cells minus the 3 excluded = 97 walkable. The seeded keep gate leaves
+    // ~1/KEEP_DENOM of them, so the count sits well below one-per-cell.
+    const walkable = 97;
+    const expected = walkable / ITEM_SPAWN_KEEP_DENOM;
+    for (const seed of [1, 42, 123, 777, 9001]) {
+      const count = itemSpawnLayout(seed, 'plane').length;
+      expect(count).toBeLessThan(walkable);
+      expect(count).toBeGreaterThan(expected * 0.5);
+      expect(count).toBeLessThan(expected * 1.6);
+    }
   });
 
   it('keeps every item inside the topology playfield', () => {

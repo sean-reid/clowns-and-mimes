@@ -1,8 +1,8 @@
 // Deterministic power-up spawn layout shared by client and server. The server
 // owns the live item state (see room/itemManager.ts); this module supplies the
-// fixed floor layout (one item per maze cell) and the per-match type rotation,
-// both derived purely from the room seed so every client agrees without a
-// round-trip. PR #5 is layout + state plumbing; per-type effects come later.
+// fixed floor layout (a seeded sparse subset of maze cells) and the per-match
+// type rotation, both derived purely from the room seed so every client agrees
+// without a round-trip.
 
 import type { ItemType, Topology, Vec3 } from './protocol.ts';
 import { WORLD_WIDTH } from './topology.ts';
@@ -17,6 +17,13 @@ export const ITEM_PICKUP_RADIUS = 1.6;
 export const RADAR_DURATION_MS = 5_000;
 // Cloak power-up: other players can't see your body for this long after use.
 export const CLOAK_DURATION_MS = 4_000;
+
+// One cell in this many carries an item; the rest stay empty. Keeps the floor
+// sparse so a pickup is worth crossing the map for, rather than one underfoot
+// in every cell. Deterministic in the seed (the keep gate draws from the same
+// stream all clients run), so the thinned layout still agrees without a
+// round-trip.
+export const ITEM_SPAWN_KEEP_DENOM = 3;
 
 // surge + radar are guaranteed every match; the rest are drawn from the seed.
 export const ITEM_TYPES_ALWAYS: ItemType[] = ['surge', 'radar'];
@@ -133,6 +140,8 @@ export function itemSpawnLayout(
     for (let c = 0; c < g.cols; c += 1) {
       const cell = c + r * g.cols;
       if (excluded.has(cell)) continue;
+      // Thin the field: only every ~KEEP_DENOM-th cell (seeded) keeps an item.
+      if (next() % ITEM_SPAWN_KEEP_DENOM !== 0) continue;
       const type = rotation[next() % rotation.length]!;
       out.push({ id: `i-${cell}`, type, position: cellCenter(c, r, g) });
     }

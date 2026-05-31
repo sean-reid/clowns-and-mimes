@@ -34,7 +34,6 @@ Hard constraints from the project brief:
 - Native cross-platform desktop binary. Equal visuals on Windows, macOS, and Linux.
 - Installer ships from a website link. No terminal, no scripts, no build from source for end users.
 - Backend hosted on Cloudflare. Static site on GitHub Pages.
-- Total infrastructure cost under USD 500 per year.
 - Open source, MIT license, monorepo on GitHub, conventional commits, atomic commits, PR workflow.
 
 Performance budget per platform:

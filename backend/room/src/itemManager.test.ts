@@ -135,4 +135,22 @@ describe('ItemManager.onUseItem', () => {
     h.im.onUseItem(ws);
     expect(h.broadcasts).toHaveLength(0);
   });
+
+  it('arms the next jump when a leap is used', () => {
+    const h = harness();
+    const ws = {} as WebSocket;
+    h.players.set('p', makePlayer('p', 'mime', { x: 0, y: 0, z: 0 }, { activeItem: 'leap' }));
+    h.connections.set(ws, { playerId: 'p' });
+    h.im.onUseItem(ws);
+    expect(h.players.get('p')!.leapArmed).toBe(true);
+  });
+
+  it('does not arm a leap when a different item is used', () => {
+    const h = harness();
+    const ws = {} as WebSocket;
+    h.players.set('p', makePlayer('p', 'mime', { x: 0, y: 0, z: 0 }, { activeItem: 'surge' }));
+    h.connections.set(ws, { playerId: 'p' });
+    h.im.onUseItem(ws);
+    expect(h.players.get('p')!.leapArmed).toBeUndefined();
+  });
 });

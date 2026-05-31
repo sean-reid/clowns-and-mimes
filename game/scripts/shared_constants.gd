@@ -11,6 +11,8 @@ extends RefCounted
 # Mirrored from backend/shared/src/physics.ts
 const HOVER_HEIGHT := 0.5
 const JUMP_AMP := 2.0
+const LEAP_JUMP_AMP := 7.0
+const WALL_HEIGHT := 6.0
 const JUMP_DURATION_S := 0.6
 const BODY_VERTICAL_EXTENT := 1.4
 const JUMP_COOLDOWN_S := 0.1

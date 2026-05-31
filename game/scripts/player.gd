@@ -141,6 +141,10 @@ var arena: Node = null
 # _apply_jump_squash(), and signals the same arc helper that owns Y
 # position so animation and Y stay in lockstep.
 var jump_started_at_ms: int = -1
+# True while the current jump arc is a Leap (boosted height that clears
+# walls). Set from the predictor for the local body and from the server
+# delta for remote bodies; selects LEAP_JUMP_AMP for the render-rate arc Y.
+var leaping: bool = false
 # Rising-edge tracker for the local player's spacebar in offline mode.
 # Online holds the same state in arena.gd::_jump_was_held because the
 # predictor builds the input frame from there; offline-local manages its
@@ -262,7 +266,8 @@ func _process(delta: float) -> void:
 	# first snapshot yet so we don't override the initial spawn.
 	if not frozen and (is_local or _remote_armed):
 		var now_ms: int = int(Time.get_unix_time_from_system() * 1000.0)
-		global_position.y = PhysicsScript.jump_arc_y(jump_started_at_ms, now_ms)
+		var amp: float = PhysicsScript.LEAP_JUMP_AMP if leaping else PhysicsScript.JUMP_AMP
+		global_position.y = PhysicsScript.jump_arc_y(jump_started_at_ms, now_ms, amp)
 
 func _physics_process(delta: float) -> void:
 	if frozen:

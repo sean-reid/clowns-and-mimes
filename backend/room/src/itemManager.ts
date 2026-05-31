@@ -77,8 +77,8 @@ export class ItemManager {
   }
 
   /**
-   * Activate the held power-up. Clears the slot and broadcasts item_used;
-   * the per-type effect is dispatched in later PRs. No-op when empty.
+   * Activate the held power-up. Clears the slot, applies the per-type
+   * effect, and broadcasts item_used. No-op when empty.
    */
   onUseItem(ws: WebSocket): void {
     const conn = this.host.connections.get(ws);
@@ -87,7 +87,21 @@ export class ItemManager {
     if (!player || player.activeItem === undefined) return;
     const itemType = player.activeItem;
     delete player.activeItem;
+    this.applyEffect(player, itemType);
     this.host.broadcast({ t: 'event', kind: { kind: 'item_used', playerId: player.id, itemType } });
+  }
+
+  /** Per-type effect dispatch. Types not yet implemented are no-ops. */
+  private applyEffect(player: PlayerState, type: ItemType): void {
+    switch (type) {
+      case 'leap':
+        // Arm the next jump to use the boosted arc. The simulation consumes
+        // this flag when the player's next jump triggers.
+        player.leapArmed = true;
+        break;
+      default:
+        break;
+    }
   }
 
   /** Items currently on the floor, for the snapshot. */

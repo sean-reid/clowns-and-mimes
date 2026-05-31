@@ -144,6 +144,10 @@ var _shoot_was_held: bool = false
 # Rising-edge tracker for the use-item key so holding E activates exactly once
 # per press. The server no-ops a use_item with an empty slot anyway.
 var _use_item_was_held: bool = false
+# Last server-reported activeItem for the local player. Read on the use_item
+# rising edge so a leap activation can arm the predictor's local leap
+# prediction at the same moment the server sets leapArmed.
+var _held_item: String = ""
 # Wall-clock ms of the last shoot message sent. Mirrors the server's cooldown
 # so rapid clicking doesn't spend wire frames on shots the server will reject.
 var _last_shot_at_ms: int = -1000000
@@ -659,6 +663,11 @@ func _stream_input(delta: float) -> void:
 	if not frozen and _input_active() and Input.is_action_pressed("use_item"):
 		if not _use_item_was_held:
 			room_client.send_use_item()
+			# Arm the local leap prediction in the same frame the server arms
+			# leapArmed, so the next predicted jump uses the boosted arc
+			# without waiting a round-trip for the authoritative leaping flag.
+			if _held_item == "leap":
+				predictor.arm_leap()
 		_use_item_was_held = true
 	else:
 		_use_item_was_held = false
@@ -747,8 +756,11 @@ func _apply_player_state(entry: Dictionary) -> void:
 		node.frozen = is_frozen
 		node.sprint_energy = sprint
 		# Held power-up slot is server-authoritative: a pickup sets activeItem,
-		# a use_item clears it. Empty/absent string hides the slot.
-		hud.set_held_item(String(entry.get("activeItem", "")))
+		# a use_item clears it. Empty/absent string hides the slot. Cache the
+		# type so the use_item key can arm a type-specific local prediction
+		# (leap) in the same frame it sends the message.
+		_held_item = String(entry.get("activeItem", ""))
+		hud.set_held_item(_held_item)
 		# Local body's jumpStartedAt comes from the predictor, not the
 		# server snapshot - the predictor is one tick ahead and stays
 		# in sync via the reconcile replay. Setting it here would lag
@@ -756,6 +768,9 @@ func _apply_player_state(entry: Dictionary) -> void:
 	else:
 		node.apply_remote_state(pos_vec, yaw, is_frozen, sprint)
 		node.jump_started_at_ms = jump_started_at_ms
+		# Server-authoritative leap flag so the remote body's render-rate
+		# arc Y uses the boosted amplitude that clears walls.
+		node.leaping = bool(entry.get("leaping", false))
 
 func _handle_tagged(event: Dictionary) -> void:
 	var victim_id: String = event.get("victimId", "")

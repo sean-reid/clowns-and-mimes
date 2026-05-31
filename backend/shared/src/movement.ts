@@ -11,8 +11,11 @@ import {
   BOUNCE_E_GROUNDED,
   BOUNCE_E_WALL,
   HOVER_HEIGHT,
+  JUMP_AMP,
   JUMP_COOLDOWN_S,
   JUMP_DURATION_S,
+  LEAP_JUMP_AMP,
+  WALL_HEIGHT,
   isJumping,
   jumpArcY,
   verticallyOverlapping,
@@ -100,11 +103,17 @@ export function stepMovement(
   // Project to XZ for the planar collision pipeline; Y is preserved on
   // the return value below regardless of which candidate wins.
   const startXZ: Vec2 = { x: state.position.x, z: state.position.z };
+  // Y-aware wall skip (Leap power-up): once the body's center clears wall
+  // height its XZ is no longer blocked by walls - it is physically above
+  // them. Only this player's own collision is skipped; other bodies still
+  // collide with walls normally because each runs its own stepMovement.
+  const aboveWalls = state.position.y > WALL_HEIGHT;
+  const wallsBlock = walls.length > 0 && !aboveWalls;
   let nextXZ: Vec2 = startXZ;
   for (const candidate of candidates) {
     if (candidate.x === state.position.x && candidate.z === state.position.z) continue;
     if (
-      walls.length > 0 &&
+      wallsBlock &&
       pathCrossesWall(walls, state.position.x, state.position.z, candidate.x, candidate.z)
     ) {
       continue;
@@ -142,7 +151,7 @@ export function stepMovement(
     const reboundZ = -lossDz * BOUNCE_E_WALL;
     const candidateXZ: Vec2 = { x: nextXZ.x + reboundX, z: nextXZ.z + reboundZ };
     const reboundBlocked =
-      walls.length > 0 && pathCrossesWall(walls, nextXZ.x, nextXZ.z, candidateXZ.x, candidateXZ.z);
+      wallsBlock && pathCrossesWall(walls, nextXZ.x, nextXZ.z, candidateXZ.x, candidateXZ.z);
     if (!reboundBlocked) nextXZ = candidateXZ;
   }
   const nextPos: Vec3 = { x: nextXZ.x, y: state.position.y, z: nextXZ.z };
@@ -231,8 +240,11 @@ export function stepJump(state: JumpStepState, input: JumpStepInput): JumpStepRe
  * jumpArcY so callers can stay in this module for the full jump
  * surface.
  */
-export function bodyYForState(state: { jumpStartedAt: number | null }, nowMs: number): number {
-  return jumpArcY(state.jumpStartedAt, nowMs);
+export function bodyYForState(
+  state: { jumpStartedAt: number | null; leaping?: boolean },
+  nowMs: number,
+): number {
+  return jumpArcY(state.jumpStartedAt, nowMs, state.leaping ? LEAP_JUMP_AMP : JUMP_AMP);
 }
 
 // Re-export HOVER_HEIGHT so server callers that previously imported

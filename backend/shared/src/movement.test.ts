@@ -14,7 +14,7 @@ import {
   stepMovement,
   type MoveStepState,
 } from './movement.ts';
-import { HOVER_HEIGHT } from './physics.ts';
+import { HOVER_HEIGHT, WALL_HEIGHT } from './physics.ts';
 import type { WallSegment } from './labyrinth.ts';
 import type { Vec3 } from './protocol.ts';
 
@@ -98,6 +98,37 @@ describe('stepMovement determinism', () => {
     expect(result.position.x).toBeGreaterThanOrEqual(-0.5);
     // Sprint energy regenerates as expected during the stall.
     expect(result.sprintEnergy).toBeGreaterThanOrEqual(MAX_SPRINT);
+  });
+
+  it('passes through a wall while above wall height (Leap)', () => {
+    // Same wall + motion as the rebound test, but the body center is above
+    // WALL_HEIGHT, so the Y-aware skip lets its XZ cross the wall instead of
+    // bouncing off it.
+    const wall: WallSegment = { ax: 0.5, az: -2, bx: 0.5, bz: 2 };
+    const high: MoveStepState = {
+      position: { x: 0, y: WALL_HEIGHT + 1, z: 0 },
+      sprintEnergy: MAX_SPRINT,
+      sprinting: false,
+    };
+    const result = run(high, 30, { x: 1, z: 0, sprint: false }, [wall], 'plane');
+    // Crossed the wall plane and kept advancing in +x.
+    expect(result.position.x).toBeGreaterThan(0.5);
+    // Y is preserved through the planar step.
+    expect(result.position.y).toBe(WALL_HEIGHT + 1);
+  });
+
+  it('still collides with the wall at exactly wall height (not strictly above)', () => {
+    // The skip is `y > WALL_HEIGHT`, so a body sitting at the wall top is
+    // still blocked - guards the boundary so a grounded body never leaks
+    // through a wall whose top it merely touches.
+    const wall: WallSegment = { ax: 0.5, az: -2, bx: 0.5, bz: 2 };
+    const atTop: MoveStepState = {
+      position: { x: 0, y: WALL_HEIGHT, z: 0 },
+      sprintEnergy: MAX_SPRINT,
+      sprinting: false,
+    };
+    const result = run(atTop, 30, { x: 1, z: 0, sprint: false }, [wall], 'plane');
+    expect(result.position.x).toBeLessThan(0.5);
   });
 
   it('wraps cleanly past the torus +x seam', () => {

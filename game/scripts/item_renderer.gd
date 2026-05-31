@@ -38,6 +38,8 @@ var _arena: Object
 var _pool: Array = []
 # category name -> StandardMaterial3D
 var _materials: Dictionary = {}
+# shape name (item_visuals._SHAPE) -> Mesh, shared across slots of that shape.
+var _meshes: Dictionary = {}
 # id -> {slot:int, canonical:Vector3}
 var _active: Dictionary = {}
 # Slot indices not currently bound to an item id.
@@ -48,8 +50,8 @@ func _init(arena: Object) -> void:
 	_arena = arena
 	for cat in ["movement", "combat", "info", "defense"]:
 		_materials[cat] = _make_material(ItemVisuals._COLOR[cat])
-	var icon_mesh := BoxMesh.new()
-	icon_mesh.size = Vector3(ICON_SIZE, ICON_SIZE, ICON_SIZE)
+	for shape in ["cube", "sphere", "octahedron", "cylinder", "prism", "capsule", "torus"]:
+		_meshes[shape] = _build_mesh(shape)
 	var ring_mesh := TorusMesh.new()
 	ring_mesh.inner_radius = RING_INNER
 	ring_mesh.outer_radius = RING_OUTER
@@ -58,7 +60,7 @@ func _init(arena: Object) -> void:
 		var root := Node3D.new()
 		root.visible = false
 		var icon := MeshInstance3D.new()
-		icon.mesh = icon_mesh
+		icon.mesh = _meshes["cube"]
 		icon.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 		icon.position = Vector3(0.0, REST_HEIGHT, 0.0)
 		var ring := MeshInstance3D.new()
@@ -69,6 +71,49 @@ func _init(arena: Object) -> void:
 		world.add_child(root)
 		_pool.append({"root": root, "icon": icon, "ring": ring})
 		_free_slots.append(i)
+
+# Build one built-in primitive per shape key, all sized to ~ICON_SIZE so they
+# read at the same scale. "octahedron" is a low-segment sphere, which Godot
+# tessellates into a faceted diamond - distinct from the smooth "sphere".
+func _build_mesh(shape: String) -> Mesh:
+	var half := ICON_SIZE * 0.5
+	match shape:
+		"sphere":
+			var m := SphereMesh.new()
+			m.radius = half
+			m.height = ICON_SIZE
+			return m
+		"octahedron":
+			var m := SphereMesh.new()
+			m.radius = half
+			m.height = ICON_SIZE
+			m.radial_segments = 4
+			m.rings = 2
+			return m
+		"cylinder":
+			var m := CylinderMesh.new()
+			m.top_radius = half
+			m.bottom_radius = half
+			m.height = ICON_SIZE
+			return m
+		"prism":
+			var m := PrismMesh.new()
+			m.size = Vector3(ICON_SIZE, ICON_SIZE, ICON_SIZE)
+			return m
+		"capsule":
+			var m := CapsuleMesh.new()
+			m.radius = half * 0.7
+			m.height = ICON_SIZE
+			return m
+		"torus":
+			var m := TorusMesh.new()
+			m.inner_radius = half * 0.5
+			m.outer_radius = half
+			return m
+		_:
+			var m := BoxMesh.new()
+			m.size = Vector3(ICON_SIZE, ICON_SIZE, ICON_SIZE)
+			return m
 
 func _make_material(color: Color) -> StandardMaterial3D:
 	var mat := StandardMaterial3D.new()
@@ -139,7 +184,9 @@ func _upsert(entry: Dictionary) -> void:
 		return
 	_active[id] = {"slot": slot, "canonical": canonical}
 	var pool_entry: Dictionary = _pool[slot]
-	var mat: StandardMaterial3D = _materials[ItemVisuals.category(entry.get("type", ""))]
+	var item_type: String = entry.get("type", "")
+	var mat: StandardMaterial3D = _materials[ItemVisuals.category(item_type)]
+	pool_entry["icon"].mesh = _meshes[ItemVisuals.shape(item_type)]
 	pool_entry["icon"].material_override = mat
 	pool_entry["ring"].material_override = mat
 	pool_entry["root"].global_position = _to_camera_nearest_copy(canonical)

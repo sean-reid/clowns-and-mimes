@@ -28,6 +28,20 @@ const _COLOR := {
 	"defense": COLOR_DEFENSE,
 }
 
+# World-icon shape per type. Category color already groups the four families;
+# the shape disambiguates the two types inside each (leap vs portal, surge vs
+# overcharge, cloak vs clone). item_renderer.gd turns each key into a built-in
+# primitive mesh; the names live here so the two never drift.
+const _SHAPE := {
+	"leap": "prism",
+	"portal": "torus",
+	"surge": "cylinder",
+	"overcharge": "octahedron",
+	"radar": "sphere",
+	"cloak": "cube",
+	"clone": "capsule",
+}
+
 # Short slot labels - the HUD slot is small, so abbreviate. The full power-up
 # name lives in the (later) tutorial / tooltip surface.
 const _LABEL := {
@@ -48,3 +62,6 @@ static func color(item_type: String) -> Color:
 
 static func label(item_type: String) -> String:
 	return _LABEL.get(item_type, item_type.to_upper())
+
+static func shape(item_type: String) -> String:
+	return _SHAPE.get(item_type, "cube")

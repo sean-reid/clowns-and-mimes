@@ -84,3 +84,21 @@ func test_category_color_mapping() -> void:
 	assert_eq(ItemVisuals.category("surge"), "combat", "surge is combat")
 	assert_eq(ItemVisuals.category("radar"), "info", "radar is info")
 	assert_eq(ItemVisuals.category("cloak"), "defense", "cloak is defense")
+
+func test_shape_distinguishes_same_category_types() -> void:
+	# Category color can't tell apart the two types in each family; the shape
+	# must. Guard that same-category pairs get different shapes.
+	assert_true(ItemVisuals.shape("leap") != ItemVisuals.shape("portal"), "movement pair differs")
+	assert_true(ItemVisuals.shape("surge") != ItemVisuals.shape("overcharge"), "combat pair differs")
+	assert_true(ItemVisuals.shape("cloak") != ItemVisuals.shape("clone"), "defense pair differs")
+
+func test_upsert_assigns_per_type_mesh() -> void:
+	var a := _make_arena()
+	var r := ItemRenderer.new(a)
+	r.render_from_snapshot([_item("i-p", "portal", Vector3.ZERO)])
+	var portal_slot: int = r._active["i-p"]["slot"]
+	assert_true(r._pool[portal_slot]["icon"].mesh is TorusMesh, "portal renders as a torus")
+	r.render_from_snapshot([_item("i-l", "leap", Vector3(2, 0, 0))])
+	var leap_slot: int = r._active["i-l"]["slot"]
+	assert_true(r._pool[leap_slot]["icon"].mesh is PrismMesh, "leap renders as a prism")
+	_free_arena(a)

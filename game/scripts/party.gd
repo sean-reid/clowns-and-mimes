@@ -50,6 +50,21 @@ func _ready() -> void:
 	_poll_timer.timeout.connect(_poll)
 	add_child(_poll_timer)
 	_show_entry()
+	_apply_intent()
+
+# The menu decides create-vs-join, so honor that choice immediately instead of
+# making the player pick again here. A failed auto-join falls back to the entry
+# view (still visible) so they can retype the code.
+func _apply_intent() -> void:
+	var intent := GameState.party_intent
+	var code := GameState.party_join_code
+	GameState.party_intent = ""
+	GameState.party_join_code = ""
+	if intent == "create":
+		_on_create_pressed()
+	elif intent == "join" and not code.is_empty():
+		code_entry.text = code
+		_on_join_pressed()
 
 func _show_entry() -> void:
 	entry.visible = true

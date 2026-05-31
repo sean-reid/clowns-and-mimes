@@ -1,0 +1,295 @@
+[gd_scene load_steps=4 format=3]
+
+[ext_resource type="Script" path="res://scripts/menu_v2.gd" id="1_menu2"]
+[ext_resource type="Theme" uid="uid://b1cawvm5n8q7c" path="res://assets/themes/carnival_theme.tres" id="2_theme"]
+[ext_resource type="PackedScene" uid="uid://dn8q2vc7yk4ab" path="res://scenes/carnival_backdrop.tscn" id="3_backdrop"]
+
+[node name="MenuV2" type="Control"]
+anchor_right = 1.0
+anchor_bottom = 1.0
+theme = ExtResource("2_theme")
+script = ExtResource("1_menu2")
+
+[node name="Backdrop" parent="." instance=ExtResource("3_backdrop")]
+
+[node name="MenuTitle" type="Label" parent="."]
+anchor_left = 0.5
+anchor_right = 0.5
+offset_left = -320.0
+offset_top = 36.0
+offset_right = 320.0
+offset_bottom = 96.0
+horizontal_alignment = 1
+text = "CLOWNS & MIMES"
+theme_override_font_sizes/font_size = 44
+theme_override_colors/font_color = Color(0.96, 0.84, 0.3, 1)
+
+[node name="TopBar" type="VBoxContainer" parent="."]
+anchor_left = 0.5
+anchor_right = 0.5
+offset_left = -220.0
+offset_top = 112.0
+offset_right = 220.0
+offset_bottom = 180.0
+alignment = 1
+theme_override_constants/separation = 8
+
+[node name="UserRow" type="HBoxContainer" parent="TopBar"]
+alignment = 1
+theme_override_constants/separation = 12
+
+[node name="UserLabel" type="Label" parent="TopBar/UserRow"]
+text = "Playing as ..."
+theme_override_font_sizes/font_size = 18
+
+[node name="EditLink" type="Button" parent="TopBar/UserRow"]
+flat = true
+text = "Edit"
+theme_override_font_sizes/font_size = 16
+
+[node name="EditRow" type="HBoxContainer" parent="TopBar"]
+alignment = 1
+theme_override_constants/separation = 8
+
+[node name="Username" type="LineEdit" parent="TopBar/EditRow"]
+custom_minimum_size = Vector2(220, 0)
+placeholder_text = "Your name"
+theme_override_font_sizes/font_size = 16
+
+[node name="Random" type="Button" parent="TopBar/EditRow"]
+text = "Random"
+theme_override_font_sizes/font_size = 16
+
+[node name="Save" type="Button" parent="TopBar/EditRow"]
+text = "Save"
+theme_override_font_sizes/font_size = 16
+
+[node name="Panels" type="Control" parent="."]
+anchor_right = 1.0
+anchor_bottom = 1.0
+mouse_filter = 2
+
+[node name="RootPanel" type="VBoxContainer" parent="Panels"]
+anchor_left = 0.5
+anchor_top = 0.5
+anchor_right = 0.5
+anchor_bottom = 0.5
+offset_left = -200.0
+offset_top = -100.0
+offset_right = 200.0
+offset_bottom = 160.0
+theme_override_constants/separation = 16
+
+[node name="OpenButton" type="Button" parent="Panels/RootPanel"]
+custom_minimum_size = Vector2(380, 64)
+text = "Open Match"
+theme_override_font_sizes/font_size = 28
+
+[node name="PrivateButton" type="Button" parent="Panels/RootPanel"]
+custom_minimum_size = Vector2(380, 64)
+text = "Private Match"
+theme_override_font_sizes/font_size = 28
+
+[node name="OpenPanel" type="VBoxContainer" parent="Panels"]
+anchor_left = 0.5
+anchor_top = 0.5
+anchor_right = 0.5
+anchor_bottom = 0.5
+offset_left = -200.0
+offset_top = -100.0
+offset_right = 200.0
+offset_bottom = 160.0
+theme_override_constants/separation = 16
+
+[node name="PartyButton" type="Button" parent="Panels/OpenPanel"]
+custom_minimum_size = Vector2(380, 64)
+text = "Party up with friends"
+theme_override_font_sizes/font_size = 24
+
+[node name="SoloButton" type="Button" parent="Panels/OpenPanel"]
+custom_minimum_size = Vector2(380, 64)
+text = "Play solo"
+theme_override_font_sizes/font_size = 28
+
+[node name="Back" type="Button" parent="Panels/OpenPanel"]
+flat = true
+text = "Back"
+theme_override_font_sizes/font_size = 18
+
+[node name="PrivatePanel" type="VBoxContainer" parent="Panels"]
+anchor_left = 0.5
+anchor_top = 0.5
+anchor_right = 0.5
+anchor_bottom = 0.5
+offset_left = -200.0
+offset_top = -100.0
+offset_right = 200.0
+offset_bottom = 160.0
+theme_override_constants/separation = 16
+
+[node name="HostButton" type="Button" parent="Panels/PrivatePanel"]
+custom_minimum_size = Vector2(380, 64)
+text = "Host match"
+theme_override_font_sizes/font_size = 28
+
+[node name="JoinButton" type="Button" parent="Panels/PrivatePanel"]
+custom_minimum_size = Vector2(380, 64)
+text = "Join match"
+theme_override_font_sizes/font_size = 28
+
+[node name="Back" type="Button" parent="Panels/PrivatePanel"]
+flat = true
+text = "Back"
+theme_override_font_sizes/font_size = 18
+
+[node name="PartyPanel" type="VBoxContainer" parent="Panels"]
+anchor_left = 0.5
+anchor_top = 0.5
+anchor_right = 0.5
+anchor_bottom = 0.5
+offset_left = -200.0
+offset_top = -100.0
+offset_right = 200.0
+offset_bottom = 160.0
+theme_override_constants/separation = 16
+
+[node name="CreateButton" type="Button" parent="Panels/PartyPanel"]
+custom_minimum_size = Vector2(380, 64)
+text = "Create party"
+theme_override_font_sizes/font_size = 28
+
+[node name="JoinButton" type="Button" parent="Panels/PartyPanel"]
+custom_minimum_size = Vector2(380, 64)
+text = "Join party"
+theme_override_font_sizes/font_size = 28
+
+[node name="Back" type="Button" parent="Panels/PartyPanel"]
+flat = true
+text = "Back"
+theme_override_font_sizes/font_size = 18
+
+[node name="HostPanel" type="VBoxContainer" parent="Panels"]
+anchor_left = 0.5
+anchor_top = 0.5
+anchor_right = 0.5
+anchor_bottom = 0.5
+offset_left = -210.0
+offset_top = -100.0
+offset_right = 210.0
+offset_bottom = 160.0
+theme_override_constants/separation = 16
+
+[node name="TopologyRow" type="HBoxContainer" parent="Panels/HostPanel"]
+theme_override_constants/separation = 12
+
+[node name="Label" type="Label" parent="Panels/HostPanel/TopologyRow"]
+text = "Topology"
+size_flags_horizontal = 3
+theme_override_font_sizes/font_size = 18
+
+[node name="Topology" type="OptionButton" parent="Panels/HostPanel/TopologyRow"]
+custom_minimum_size = Vector2(220, 0)
+theme_override_font_sizes/font_size = 16
+
+[node name="StartButton" type="Button" parent="Panels/HostPanel"]
+custom_minimum_size = Vector2(420, 64)
+text = "Host match"
+theme_override_font_sizes/font_size = 28
+
+[node name="Back" type="Button" parent="Panels/HostPanel"]
+flat = true
+text = "Back"
+theme_override_font_sizes/font_size = 18
+
+[node name="JoinMatchPanel" type="VBoxContainer" parent="Panels"]
+anchor_left = 0.5
+anchor_top = 0.5
+anchor_right = 0.5
+anchor_bottom = 0.5
+offset_left = -200.0
+offset_top = -110.0
+offset_right = 200.0
+offset_bottom = 110.0
+alignment = 1
+theme_override_constants/separation = 14
+
+[node name="Prompt" type="Label" parent="Panels/JoinMatchPanel"]
+horizontal_alignment = 1
+text = "Enter match code"
+theme_override_font_sizes/font_size = 18
+
+[node name="CodeEntry" type="LineEdit" parent="Panels/JoinMatchPanel"]
+custom_minimum_size = Vector2(300, 0)
+alignment = 1
+placeholder_text = "ABCDEF"
+theme_override_font_sizes/font_size = 22
+
+[node name="JoinButton" type="Button" parent="Panels/JoinMatchPanel"]
+custom_minimum_size = Vector2(300, 60)
+text = "Join"
+theme_override_font_sizes/font_size = 26
+
+[node name="Back" type="Button" parent="Panels/JoinMatchPanel"]
+flat = true
+text = "Back"
+theme_override_font_sizes/font_size = 18
+
+[node name="JoinPartyPanel" type="VBoxContainer" parent="Panels"]
+anchor_left = 0.5
+anchor_top = 0.5
+anchor_right = 0.5
+anchor_bottom = 0.5
+offset_left = -200.0
+offset_top = -110.0
+offset_right = 200.0
+offset_bottom = 110.0
+alignment = 1
+theme_override_constants/separation = 14
+
+[node name="Prompt" type="Label" parent="Panels/JoinPartyPanel"]
+horizontal_alignment = 1
+text = "Enter party code"
+theme_override_font_sizes/font_size = 18
+
+[node name="CodeEntry" type="LineEdit" parent="Panels/JoinPartyPanel"]
+custom_minimum_size = Vector2(300, 0)
+alignment = 1
+placeholder_text = "ABCDEF"
+theme_override_font_sizes/font_size = 22
+
+[node name="JoinButton" type="Button" parent="Panels/JoinPartyPanel"]
+custom_minimum_size = Vector2(300, 60)
+text = "Join"
+theme_override_font_sizes/font_size = 26
+
+[node name="Back" type="Button" parent="Panels/JoinPartyPanel"]
+flat = true
+text = "Back"
+theme_override_font_sizes/font_size = 18
+
+[node name="SettingsButton" type="Button" parent="."]
+anchor_left = 1.0
+anchor_right = 1.0
+offset_left = -64.0
+offset_top = 12.0
+offset_right = -12.0
+offset_bottom = 56.0
+tooltip_text = "Settings"
+text = "⚙"
+theme_override_font_sizes/font_size = 26
+
+[node name="Confetti" type="CPUParticles2D" parent="."]
+position = Vector2(800, 200)
+emitting = false
+amount = 80
+lifetime = 2.5
+one_shot = true
+explosiveness = 0.85
+direction = Vector2(0, -1)
+spread = 70.0
+gravity = Vector2(0, 600)
+initial_velocity_min = 300.0
+initial_velocity_max = 600.0
+scale_amount_min = 3.0
+scale_amount_max = 7.0
+color = Color(0.96, 0.84, 0.3, 1)

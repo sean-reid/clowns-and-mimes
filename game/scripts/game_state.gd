@@ -32,6 +32,15 @@ var party_member_id: String = ""
 # Team the matchmaker assigned the party; passed as the WS join `preferTeam`
 # so the whole party lands on one team. Empty for solo / host / join-by-code.
 var prefer_team: String = ""
+# Host picked "Random" topology. The concrete shape is rolled client-side at
+# lobby create (the server only ever sees real topologies); the flag persists
+# so the replay path can re-roll a fresh shape on each new game in the room.
+var host_random_topology: bool = false
+# How the party screen should open: "create" auto-creates a party, "join"
+# auto-joins party_join_code, "" shows the manual entry view. Set by the menu
+# so the create/join choice lives in the navigation tree, not the party screen.
+var party_intent: String = ""
+var party_join_code: String = ""
 
 func _ready() -> void:
 	randomize()
@@ -46,6 +55,11 @@ func set_topology(new_topology: Topology) -> void:
 
 func topology_as_string() -> String:
 	return TOPOLOGY_NAMES[topology]
+
+# Rolls one of the four concrete topologies and applies it. Called when the
+# host chose "Random" so the matchmaker request carries a real shape.
+func roll_random_topology() -> void:
+	set_topology(Topology.values()[randi() % Topology.size()] as Topology)
 
 func ensure_username() -> String:
 	if username.is_empty():

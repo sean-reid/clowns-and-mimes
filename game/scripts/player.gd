@@ -145,6 +145,11 @@ var jump_started_at_ms: int = -1
 # walls). Set from the predictor for the local body and from the server
 # delta for remote bodies; selects LEAP_JUMP_AMP for the render-rate arc Y.
 var leaping: bool = false
+# Cloak deadline (Unix ms) pulled from the server delta for remote bodies.
+# While it is in the future this client hides the body's head mesh. Visual
+# only: collision and server-side tag logic are unaffected, and the local
+# body never self-hides ("other players don't see you"). 0 means uncloaked.
+var cloak_until_ms: int = 0
 # Rising-edge tracker for the local player's spacebar in offline mode.
 # Online holds the same state in arena.gd::_jump_was_held because the
 # predictor builds the input frame from there; offline-local manages its
@@ -231,6 +236,11 @@ func _process(delta: float) -> void:
 	# why local motion is smooth and remote bodies stuttered.
 	if _remote_armed and not is_local:
 		_drive_remote_interp()
+	# Cloak: hide a remote body's head while its deadline is in the future.
+	# Visual only; collision and server tag logic are unchanged. The local
+	# body never self-hides.
+	if not is_local and head != null:
+		head.visible = cloak_until_ms <= int(Time.get_unix_time_from_system() * 1000.0)
 	# Frozen-mid-jump descent. Applied to any body whose Y is above hover
 	# and whose Y isn't owned by the online predictor. That covers offline
 	# local + offline bots + online remote bodies on this client. Online

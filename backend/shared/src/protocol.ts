@@ -151,6 +151,11 @@ export interface PlayerState {
   // ordinary bots), so it doubles as the "is a clone" marker. Carried on the
   // player so it survives RoomPersistence across a deploy.
   cloneExpiresAt?: number;
+  // Wall-clock (Unix ms) the player's Cloak power-up stays active until. While
+  // cloakUntil > now other clients hide this body. Visual only — the player
+  // stays taggable and shootable server-side. Like surgeUntil it is never
+  // cleared, just left in the past.
+  cloakUntil?: number;
 }
 
 export type RoomPhase = 'filling' | 'locked' | 'free_roam' | 'turn_mime' | 'turn_clown' | 'ended';

@@ -15,6 +15,8 @@ export const ITEM_RESPAWN_MS = 30_000;
 export const ITEM_PICKUP_RADIUS = 1.6;
 // Radar power-up: the minimap reveals the enemy team for this long after use.
 export const RADAR_DURATION_MS = 5_000;
+// Cloak power-up: other players can't see your body for this long after use.
+export const CLOAK_DURATION_MS = 4_000;
 
 // surge + radar are guaranteed every match; the rest are drawn from the seed.
 export const ITEM_TYPES_ALWAYS: ItemType[] = ['surge', 'radar'];

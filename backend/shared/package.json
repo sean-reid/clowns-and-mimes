@@ -17,7 +17,8 @@
     "./tagRules": "./src/tagRules.ts",
     "./projectiles": "./src/projectiles.ts",
     "./items": "./src/items.ts",
-    "./portals": "./src/portals.ts"
+    "./portals": "./src/portals.ts",
+    "./names": "./src/names.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit",

@@ -147,6 +147,7 @@ async function joinByCode(code: string, env: Env): Promise<Response> {
   const res: MatchmakeJoinResponse = {
     roomId: parsed.roomId,
     wsUrl: wsUrlFor(env, parsed.roomId, parsed.topology),
+    topology: parsed.topology,
   };
   return json(res);
 }

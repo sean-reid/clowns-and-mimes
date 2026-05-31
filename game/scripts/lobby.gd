@@ -177,7 +177,7 @@ func _on_lobby_created(code: String, _room_id: String, ws_url: String, host_toke
 	start_button.grab_focus()
 	_open_ws(GameState.username, host_token)
 
-func _on_lobby_joined(_room_id: String, ws_url: String, team: String) -> void:
+func _on_lobby_joined(_room_id: String, ws_url: String, team: String, topology: String) -> void:
 	network_resolved = true
 	GameState.server_url = ws_url
 	# Carries the party team (empty for solo) into the WS join so NetClient
@@ -191,8 +191,21 @@ func _on_lobby_joined(_room_id: String, ws_url: String, team: String) -> void:
 	if GameState.mode == GameState.Mode.OPEN:
 		status_label.text = "Finding more players..."
 	else:
-		status_label.text = "Connected. Waiting for the host to start."
+		# Disclose the room's topology: a code-joiner never picked one (the
+		# picker is host-only), so without this they have no idea what shape
+		# they're dropping into until the arena loads.
+		status_label.text = "Joining a %s room. Waiting for the host to start." % _topology_label(topology)
 	_open_ws(GameState.username, "")
+
+# Friendly display name for a raw topology string from the matchmaker. Falls
+# back to a generic word so an unknown future topology never reads as blank.
+func _topology_label(topology: String) -> String:
+	match topology:
+		"plane": return "Plane"
+		"torus": return "Torus"
+		"mobius": return "Möbius"
+		"klein": return "Klein bottle"
+		_: return "mystery"
 
 func _on_request_failed(reason: String) -> void:
 	_go_offline(reason)

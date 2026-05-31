@@ -8,8 +8,10 @@ const ServerConfig := preload("res://scripts/network/server_config.gd")
 
 signal lobby_created(code: String, room_id: String, ws_url: String, host_token: String)
 ## `team` is the matchmaker-assigned team for an open-as-party join (so every
-## member lands together); empty string for host / join-by-code / solo-open.
-signal lobby_joined(room_id: String, ws_url: String, team: String)
+## member lands together), empty for host / join-by-code / solo-open. `topology`
+## is the room's topology when the matchmaker knows it up front (join-by-code,
+## open), so the lobby can disclose it before connecting; empty otherwise.
+signal lobby_joined(room_id: String, ws_url: String, team: String, topology: String)
 ## Emitted when the matchmaker returns 404 on a join-by-code request. The
 ## room never existed (or has expired); the lobby treats this as a hard
 ## error, not a "fall back to offline" trigger.
@@ -164,8 +166,9 @@ func _on_join_response(parsed: Dictionary) -> void:
 	if room_id.is_empty() or ws_url.is_empty():
 		request_failed.emit("Lobby server returned an incomplete response.")
 		return
-	# `team` is present only on an open-as-party join; absent otherwise.
-	lobby_joined.emit(room_id, ws_url, String(parsed.get("team", "")))
+	# `team` is present only on an open-as-party join; `topology` on join-by-code
+	# and open. Both absent on a plain host create (which uses lobby_created).
+	lobby_joined.emit(room_id, ws_url, String(parsed.get("team", "")), String(parsed.get("topology", "")))
 
 func _on_party_response(parsed: Dictionary) -> void:
 	var party_id: String = parsed.get("partyId", "")

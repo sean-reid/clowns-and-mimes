@@ -6,6 +6,7 @@
 import type {
   Item,
   PlayerState,
+  Portal,
   Projectile,
   RoomPhase,
   RoomSnapshot,
@@ -30,6 +31,7 @@ export interface SnapshotBroadcasterHost {
   getRoomId(): string;
   getProjectiles(): Projectile[];
   getItems(): Item[];
+  getPortals(): Portal[];
 }
 
 export class SnapshotBroadcaster {
@@ -61,8 +63,10 @@ export class SnapshotBroadcaster {
 
   snapshot(): RoomSnapshot {
     // Items are static between pickups, so they ride the snapshot rather
-    // than the per-tick delta. Omitted when none are on the floor.
+    // than the per-tick delta. Omitted when none are on the floor. Live portal
+    // pairs ride it too so a late joiner / reconnect sees an in-progress pair.
     const items = this.host.getItems();
+    const portals = this.host.getPortals();
     return {
       v: PROTOCOL_VERSION,
       roomId: this.host.getRoomId(),
@@ -72,6 +76,7 @@ export class SnapshotBroadcaster {
       turnEndsAt: this.host.getTurnEndsAt(),
       players: [...this.host.players.values()],
       ...(items.length > 0 ? { items } : {}),
+      ...(portals.length > 0 ? { portals } : {}),
     };
   }
 

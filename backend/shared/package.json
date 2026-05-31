@@ -16,7 +16,8 @@
     "./physics": "./src/physics.ts",
     "./tagRules": "./src/tagRules.ts",
     "./projectiles": "./src/projectiles.ts",
-    "./items": "./src/items.ts"
+    "./items": "./src/items.ts",
+    "./portals": "./src/portals.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit",

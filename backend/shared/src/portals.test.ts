@@ -1,0 +1,68 @@
+import { describe, expect, it } from 'vitest';
+import {
+  PORTAL_ENTER_RADIUS,
+  PORTAL_EXIT_OFFSET,
+  buildPortalPair,
+  forwardFromYaw,
+} from './portals.ts';
+import type { WallSegment } from './labyrinth.ts';
+import type { Vec3 } from './protocol.ts';
+
+// One wall a player at the origin faces (yaw 0 -> -z) and one elsewhere, so the
+// exit lands on a different wall than the entry.
+const WALLS: WallSegment[] = [
+  { ax: -2, az: -3, bx: 2, bz: -3 },
+  { ax: -2, az: 10, bx: 2, bz: 10 },
+];
+
+function planarDist(a: Vec3, b: Vec3): number {
+  return Math.hypot(a.x - b.x, a.z - b.z);
+}
+
+describe('forwardFromYaw', () => {
+  it('faces -z at yaw 0 (matches player.gd atan2(-x, -z))', () => {
+    const f = forwardFromYaw(0);
+    expect(f.x).toBeCloseTo(0, 10);
+    expect(f.z).toBeCloseTo(-1, 10);
+  });
+
+  it('faces -x at yaw PI/2', () => {
+    const f = forwardFromYaw(Math.PI / 2);
+    expect(f.x).toBeCloseTo(-1, 10);
+    expect(f.z).toBeCloseTo(0, 10);
+  });
+});
+
+describe('buildPortalPair', () => {
+  it('returns null when there are no walls', () => {
+    expect(buildPortalPair({ x: 0, z: 0 }, 0, [], 'plane', 80)).toBeNull();
+  });
+
+  it('anchors the entry on the faced wall and the exit on another wall', () => {
+    const g = buildPortalPair({ x: 0, z: 0 }, 0, WALLS, 'plane', 80)!;
+    expect(g.a.x).toBeCloseTo(0, 6);
+    expect(g.a.z).toBeCloseTo(-3, 6);
+    expect(g.b.z).toBeCloseTo(10, 6);
+  });
+
+  it('emerges off the wall farther than the enter radius so you do not bounce back', () => {
+    const g = buildPortalPair({ x: 0, z: 0 }, 0, WALLS, 'plane', 80)!;
+    expect(planarDist(g.aExit, g.a)).toBeCloseTo(PORTAL_EXIT_OFFSET, 6);
+    expect(planarDist(g.aExit, g.a)).toBeGreaterThan(PORTAL_ENTER_RADIUS);
+    expect(planarDist(g.bExit, g.b)).toBeGreaterThan(PORTAL_ENTER_RADIUS);
+  });
+
+  it('drops the entry emergence on the activating player side of the wall', () => {
+    // Player at z=0 faces the z=-3 wall; emergence must stay on the +z side.
+    const g = buildPortalPair({ x: 0, z: 0 }, 0, WALLS, 'plane', 80)!;
+    expect(g.aExit.z).toBeGreaterThan(g.a.z);
+  });
+
+  it('falls back to the nearest wall when the look ray finds none', () => {
+    // From (0,3) facing -x (yaw PI/2) no wall lies along the ray, so the
+    // nearest wall anchors the entry instead of returning null.
+    const g = buildPortalPair({ x: 0, z: 3 }, Math.PI / 2, WALLS, 'plane', 80);
+    expect(g).not.toBeNull();
+    expect(g!.a.z).toBeCloseTo(-3, 6);
+  });
+});

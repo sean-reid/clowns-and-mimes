@@ -1,6 +1,8 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { PlayerState, ServerToClient, Team, Topology, Vec3 } from '@cm/shared';
+import type { WallSegment } from '@cm/shared/labyrinth';
 import { ITEM_RESPAWN_MS } from '@cm/shared/items';
+import { PORTAL_DURATION_MS } from '@cm/shared/portals';
 import { ItemManager, type ItemManagerHost } from './itemManager.ts';
 
 function makePlayer(
@@ -31,7 +33,7 @@ interface Harness {
   broadcasts: ServerToClient[];
 }
 
-function harness(seed = 1, topology: Topology = 'plane'): Harness {
+function harness(seed = 1, topology: Topology = 'plane', walls: WallSegment[] = []): Harness {
   const players = new Map<string, PlayerState>();
   const connections = new Map<WebSocket, { playerId: string }>();
   const broadcasts: ServerToClient[] = [];
@@ -41,6 +43,7 @@ function harness(seed = 1, topology: Topology = 'plane'): Harness {
     worldWidth: 80,
     getTopology: () => topology,
     getSeed: () => seed,
+    getWalls: () => walls,
     broadcast: (msg) => broadcasts.push(msg),
   };
   return { im: new ItemManager(host), players, connections, broadcasts };
@@ -152,5 +155,71 @@ describe('ItemManager.onUseItem', () => {
     h.connections.set(ws, { playerId: 'p' });
     h.im.onUseItem(ws);
     expect(h.players.get('p')!.leapArmed).toBeUndefined();
+  });
+});
+
+describe('ItemManager portal', () => {
+  // One wall the player at the origin (yaw 0 -> facing -z) hits, plus a second
+  // elsewhere so the exit lands on a different wall.
+  const PORTAL_WALLS = [
+    { ax: -2, az: -3, bx: 2, bz: -3 },
+    { ax: -2, az: 10, bx: 2, bz: 10 },
+  ];
+
+  function openPortalFor(z: number): Harness {
+    const h = harness(1, 'plane', PORTAL_WALLS);
+    const ws = {} as WebSocket;
+    h.players.set('p', makePlayer('p', 'mime', { x: 0, y: 0, z }, { activeItem: 'portal' }));
+    h.connections.set(ws, { playerId: 'p' });
+    h.im.onUseItem(ws);
+    return h;
+  }
+
+  it('opens a wall-anchored pair on use and broadcasts portal_open', () => {
+    const h = openPortalFor(-2);
+    expect(kinds(h.broadcasts)).toContain('portal_open');
+    expect(h.im.activePortals()).toHaveLength(1);
+    const portal = h.im.activePortals()[0]!;
+    // Entry mouth lands on the faced wall (z=-3); exit on the other wall (z=10).
+    expect(portal.a.z).toBeCloseTo(-3, 6);
+    expect(portal.b.z).toBeCloseTo(10, 6);
+  });
+
+  it('is a no-op pair when there are no walls but still clears the slot', () => {
+    const h = harness(1, 'plane', []);
+    const ws = {} as WebSocket;
+    h.players.set('p', makePlayer('p', 'mime', { x: 0, y: 0, z: 0 }, { activeItem: 'portal' }));
+    h.connections.set(ws, { playerId: 'p' });
+    h.im.onUseItem(ws);
+    expect(h.players.get('p')!.activeItem).toBeUndefined();
+    expect(kinds(h.broadcasts)).toContain('item_used');
+    expect(kinds(h.broadcasts)).not.toContain('portal_open');
+    expect(h.im.activePortals()).toHaveLength(0);
+  });
+
+  it('teleports a player who walks into a mouth to the opposite side', () => {
+    const h = openPortalFor(-2);
+    // A second player stands on the exit mouth (z=10) and steps through.
+    h.players.set('q', makePlayer('q', 'clown', { x: 0, y: 0, z: 10 }));
+    h.im.step(1 / 60);
+    // Emerges off the entry wall into the open cell, well away from z=10.
+    expect(h.players.get('q')!.position.z).toBeLessThan(0);
+  });
+
+  it('does not teleport the opener while they stand on the entry mouth', () => {
+    const h = openPortalFor(-2);
+    h.im.step(1 / 60);
+    expect(h.players.get('p')!.position).toEqual({ x: 0, y: 0, z: -2 });
+  });
+
+  it('closes the pair after PORTAL_DURATION_MS and broadcasts portal_close', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(0);
+    const h = openPortalFor(-2);
+    expect(h.im.activePortals()).toHaveLength(1);
+    vi.setSystemTime(PORTAL_DURATION_MS + 1);
+    h.im.step(1 / 60);
+    expect(kinds(h.broadcasts)).toContain('portal_close');
+    expect(h.im.activePortals()).toHaveLength(0);
   });
 });

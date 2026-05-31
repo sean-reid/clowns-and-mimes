@@ -9,8 +9,18 @@
 // Items are static between pickups, so they ride the snapshot rather than the
 // per-tick delta; pickups and respawns are surfaced as events.
 
-import type { Item, ItemType, PlayerState, ServerToClient, Topology, Vec3 } from '@cm/shared';
+import type {
+  Item,
+  ItemType,
+  PlayerState,
+  Portal,
+  ServerToClient,
+  Topology,
+  Vec3,
+} from '@cm/shared';
+import type { WallSegment } from '@cm/shared/labyrinth';
 import { ITEM_PICKUP_RADIUS, ITEM_RESPAWN_MS, itemSpawnLayout } from '@cm/shared/items';
+import { buildPortalPair, PORTAL_DURATION_MS, PORTAL_ENTER_RADIUS } from '@cm/shared/portals';
 import { topologyDistance } from '@cm/shared/topology';
 
 // respawnAt is 0 when the item is on the floor; once picked up it holds the
@@ -22,23 +32,46 @@ export interface ItemState {
   respawnAt: number;
 }
 
+// A live portal pair. Wire form (Portal) carries only the two wall-anchored
+// mouth points; the off-wall emergence points stay server-side.
+interface PortalRecord {
+  id: string;
+  a: Vec3;
+  b: Vec3;
+  aExit: Vec3;
+  bExit: Vec3;
+  expiresAt: number;
+}
+
 export interface ItemManagerHost {
   readonly players: Map<string, PlayerState>;
   readonly connections: Map<WebSocket, { playerId: string }>;
   readonly worldWidth: number;
   getTopology(): Topology;
   getSeed(): number;
+  getWalls(): readonly WallSegment[];
   broadcast(msg: ServerToClient): void;
 }
 
 export class ItemManager {
   private readonly items = new Map<string, ItemState>();
+  // Live portal pairs, keyed by id. Ephemeral (PORTAL_DURATION_MS), so not
+  // persisted - a deploy mid-pair drops it, which is shorter than the DO
+  // eviction window anyway.
+  private readonly portals = new Map<string, PortalRecord>();
+  // Players currently occupying a mouth they should not (re)trigger from: the
+  // opener at creation, and anyone who just emerged. Cleared the tick they step
+  // clear of every mouth, so re-entering teleports again (pairs are two-way).
+  private readonly portalBlocked = new Set<string>();
+  private portalSeq = 0;
 
   constructor(private readonly host: ItemManagerHost) {}
 
   /** Build the deterministic layout from the seed. Called on match start. */
   spawn(): void {
     this.items.clear();
+    this.portals.clear();
+    this.portalBlocked.clear();
     for (const entry of itemSpawnLayout(this.host.getSeed(), this.host.getTopology())) {
       this.items.set(entry.id, { ...entry, respawnAt: 0 });
     }
@@ -50,8 +83,9 @@ export class ItemManager {
    * cannot pick up (no stacking); pickups stop at one per player per tick.
    */
   step(_dt: number): void {
-    if (this.items.size === 0) return;
     const now = Date.now();
+    this.stepPortals(now);
+    if (this.items.size === 0) return;
     for (const item of this.items.values()) {
       if (item.respawnAt > 0 && item.respawnAt <= now) {
         item.respawnAt = 0;
@@ -99,9 +133,88 @@ export class ItemManager {
         // this flag when the player's next jump triggers.
         player.leapArmed = true;
         break;
+      case 'portal':
+        this.openPortal(player);
+        break;
       default:
         break;
     }
+  }
+
+  /**
+   * Open a portal pair: entry mouth on the wall the player faces, exit on a
+   * random other wall. Broadcasts portal_open; the pair rides the snapshot too.
+   * The opener is blocked from this pair until they step clear, so activating
+   * doesn't instantly teleport them off the entry mouth they're standing on.
+   */
+  private openPortal(player: PlayerState): void {
+    const geom = buildPortalPair(
+      { x: player.position.x, z: player.position.z },
+      player.yaw,
+      this.host.getWalls(),
+      this.host.getTopology(),
+      this.host.worldWidth,
+    );
+    if (geom === null) return;
+    const id = `p-${this.portalSeq}`;
+    this.portalSeq += 1;
+    const portal: PortalRecord = { id, ...geom, expiresAt: Date.now() + PORTAL_DURATION_MS };
+    this.portals.set(id, portal);
+    this.portalBlocked.add(player.id);
+    this.host.broadcast({
+      t: 'event',
+      kind: { kind: 'portal_open', portal: toWirePortal(portal) },
+    });
+  }
+
+  /**
+   * Expire elapsed pairs (broadcasting portal_close), then teleport any player
+   * standing within PORTAL_ENTER_RADIUS of a mouth to the opposite mouth's
+   * emergence point. The blocked set stops the just-emerged (and the opener)
+   * from bouncing back until they step clear.
+   */
+  private stepPortals(now: number): void {
+    if (this.portals.size === 0) {
+      if (this.portalBlocked.size > 0) this.portalBlocked.clear();
+      return;
+    }
+    for (const portal of this.portals.values()) {
+      if (portal.expiresAt <= now) {
+        this.portals.delete(portal.id);
+        this.host.broadcast({ t: 'event', kind: { kind: 'portal_close', id: portal.id } });
+      }
+    }
+    if (this.portals.size === 0) {
+      this.portalBlocked.clear();
+      return;
+    }
+    const topology = this.host.getTopology();
+    const width = this.host.worldWidth;
+    for (const player of this.host.players.values()) {
+      let dest: Vec3 | null = null;
+      for (const portal of this.portals.values()) {
+        if (topologyDistance(player.position, portal.a, topology, width) <= PORTAL_ENTER_RADIUS) {
+          dest = portal.bExit;
+          break;
+        }
+        if (topologyDistance(player.position, portal.b, topology, width) <= PORTAL_ENTER_RADIUS) {
+          dest = portal.aExit;
+          break;
+        }
+      }
+      if (dest === null) {
+        this.portalBlocked.delete(player.id);
+        continue;
+      }
+      if (this.portalBlocked.has(player.id)) continue;
+      player.position = { x: dest.x, y: player.position.y, z: dest.z };
+      this.portalBlocked.add(player.id);
+    }
+  }
+
+  /** Live portal pairs, for the snapshot. */
+  activePortals(): Portal[] {
+    return [...this.portals.values()].map(toWirePortal);
   }
 
   /** Items currently on the floor, for the snapshot. */
@@ -126,9 +239,15 @@ export class ItemManager {
 
   clear(): void {
     this.items.clear();
+    this.portals.clear();
+    this.portalBlocked.clear();
   }
 }
 
 function toWire(item: ItemState): Item {
   return { id: item.id, type: item.type, position: item.position };
+}
+
+function toWirePortal(p: PortalRecord): Portal {
+  return { id: p.id, a: p.a, b: p.b, expiresAt: p.expiresAt };
 }

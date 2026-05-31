@@ -206,6 +206,7 @@ export class Room implements DurableObject {
       worldWidth: WORLD_WIDTH,
       getTopology: () => this.topology,
       getSeed: () => this.seed,
+      getWalls: () => this.walls,
       broadcast: (msg) => this.broadcast(msg),
     };
     this.items = new ItemManager(itemsHost);
@@ -251,6 +252,7 @@ export class Room implements DurableObject {
       getRoomId: () => this.state.id.toString(),
       getProjectiles: () => this.projectiles.getProjectiles(),
       getItems: () => this.items.available(),
+      getPortals: () => this.items.activePortals(),
     };
     this.broadcaster = new SnapshotBroadcaster(broadcasterHost);
     const host: TagManagerHost = {

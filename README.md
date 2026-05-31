@@ -16,12 +16,12 @@ No build steps are required. Download, install, launch.
 
 1. Launch the game.
 2. From the main menu pick one of:
-   - **Host a game** to create a private arena and share a code with friends. As host you choose the topology.
-   - **Enter a code** to join a friend's private arena.
-   - **Play against internet strangers** to be matched into an open lobby with a random topology.
-3. All players start in the center of the labyrinth. You get one minute to move around without tagging anyone.
-4. Turns rotate between the mime team and the clown team. Whoever has the active turn can freeze opponents by tagging them. Frozen players stay frozen until a teammate unfreezes them.
-5. Win by freezing every opponent on the other team.
+   - **Open match** to play against internet strangers on a random topology. Go solo, or **party up** to create a party (share the code) and drop into the same match as your friends.
+   - **Private match** to **host** your own arena (you pick the topology) and share a code, or **join** a friend's arena by code.
+3. All players start in the center of the labyrinth. You get thirty seconds of free roam to move around before tagging counts.
+4. Turns rotate between the mime team and the clown team. Whoever has the active turn can freeze opponents by tagging them or hitting them with a freeze shot. Frozen players stay frozen until a teammate unfreezes them.
+5. Grab power-ups scattered through the maze for a one-shot edge: a boosted leap, a wall portal, a sprint surge, a decoy clone, an enemy-revealing radar ping, a wall-piercing overcharged shot, or a brief cloak.
+6. Win by freezing every opponent on the other team.
 
 ## Controls
 
@@ -31,6 +31,8 @@ No build steps are required. Download, install, launch.
 | Look           | Mouse                                          |
 | Sprint         | Hold Shift                                     |
 | Jump           | Space                                          |
+| Shoot freeze   | Left click (aim with the crosshair)            |
+| Use power-up   | E                                              |
 | Tag / unfreeze | Run into the other player (no button required) |
 | Menu           | Esc (world keeps running)                      |
 

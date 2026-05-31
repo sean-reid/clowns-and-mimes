@@ -1,0 +1,72 @@
+[gd_scene load_steps=4 format=3]
+
+[ext_resource type="Script" path="res://scripts/party.gd" id="1_party"]
+[ext_resource type="Theme" uid="uid://b1cawvm5n8q7c" path="res://assets/themes/carnival_theme.tres" id="2_theme"]
+[ext_resource type="PackedScene" uid="uid://dn8q2vc7yk4ab" path="res://scenes/carnival_backdrop.tscn" id="3_backdrop"]
+
+[node name="Party" type="Control"]
+anchor_right = 1.0
+anchor_bottom = 1.0
+theme = ExtResource("2_theme")
+script = ExtResource("1_party")
+
+[node name="Backdrop" parent="." instance=ExtResource("3_backdrop")]
+
+[node name="Center" type="VBoxContainer" parent="."]
+anchor_left = 0.3
+anchor_right = 0.7
+anchor_top = 0.15
+anchor_bottom = 0.85
+custom_minimum_size = Vector2(420, 0)
+
+[node name="Title" type="Label" parent="Center"]
+horizontal_alignment = 1
+text = "Party"
+theme_override_font_sizes/font_size = 28
+
+[node name="Status" type="Label" parent="Center"]
+horizontal_alignment = 1
+text = ""
+
+[node name="Entry" type="VBoxContainer" parent="Center"]
+
+[node name="CreateButton" type="Button" parent="Center/Entry"]
+text = "Create a party"
+
+[node name="JoinRow" type="HBoxContainer" parent="Center/Entry"]
+
+[node name="CodeEntry" type="LineEdit" parent="Center/Entry/JoinRow"]
+size_flags_horizontal = 3
+placeholder_text = "ABCDEF"
+
+[node name="JoinButton" type="Button" parent="Center/Entry/JoinRow"]
+text = "Join party"
+
+[node name="Roster" type="VBoxContainer" parent="Center"]
+visible = false
+
+[node name="Code" type="Label" parent="Center/Roster"]
+horizontal_alignment = 1
+text = ""
+theme_override_font_sizes/font_size = 22
+
+[node name="CopyButton" type="Button" parent="Center/Roster"]
+text = "Copy code"
+
+[node name="Members" type="VBoxContainer" parent="Center/Roster"]
+
+[node name="Actions" type="HBoxContainer" parent="Center/Roster"]
+alignment = 1
+
+[node name="FindButton" type="Button" parent="Center/Roster/Actions"]
+text = "Find Match"
+
+[node name="LeaveButton" type="Button" parent="Center/Roster/Actions"]
+text = "Leave party"
+
+[node name="BackButton" type="Button" parent="."]
+anchor_left = 0.02
+anchor_top = 0.02
+offset_right = 80.0
+offset_bottom = 36.0
+text = "Back"

@@ -11,10 +11,13 @@ import { describe, expect, it } from 'vitest';
 import {
   MAX_SPRINT,
   SPRINT_ENGAGE_THRESHOLD,
+  SPRINT_SPEED,
+  SURGE_SPEED_MULT,
+  WALK_SPEED,
   stepMovement,
   type MoveStepState,
 } from './movement.ts';
-import { HOVER_HEIGHT } from './physics.ts';
+import { HOVER_HEIGHT, WALL_HEIGHT } from './physics.ts';
 import type { WallSegment } from './labyrinth.ts';
 import type { Vec3 } from './protocol.ts';
 
@@ -100,6 +103,37 @@ describe('stepMovement determinism', () => {
     expect(result.sprintEnergy).toBeGreaterThanOrEqual(MAX_SPRINT);
   });
 
+  it('passes through a wall while above wall height (Leap)', () => {
+    // Same wall + motion as the rebound test, but the body center is above
+    // WALL_HEIGHT, so the Y-aware skip lets its XZ cross the wall instead of
+    // bouncing off it.
+    const wall: WallSegment = { ax: 0.5, az: -2, bx: 0.5, bz: 2 };
+    const high: MoveStepState = {
+      position: { x: 0, y: WALL_HEIGHT + 1, z: 0 },
+      sprintEnergy: MAX_SPRINT,
+      sprinting: false,
+    };
+    const result = run(high, 30, { x: 1, z: 0, sprint: false }, [wall], 'plane');
+    // Crossed the wall plane and kept advancing in +x.
+    expect(result.position.x).toBeGreaterThan(0.5);
+    // Y is preserved through the planar step.
+    expect(result.position.y).toBe(WALL_HEIGHT + 1);
+  });
+
+  it('still collides with the wall at exactly wall height (not strictly above)', () => {
+    // The skip is `y > WALL_HEIGHT`, so a body sitting at the wall top is
+    // still blocked - guards the boundary so a grounded body never leaks
+    // through a wall whose top it merely touches.
+    const wall: WallSegment = { ax: 0.5, az: -2, bx: 0.5, bz: 2 };
+    const atTop: MoveStepState = {
+      position: { x: 0, y: WALL_HEIGHT, z: 0 },
+      sprintEnergy: MAX_SPRINT,
+      sprinting: false,
+    };
+    const result = run(atTop, 30, { x: 1, z: 0, sprint: false }, [wall], 'plane');
+    expect(result.position.x).toBeLessThan(0.5);
+  });
+
   it('wraps cleanly past the torus +x seam', () => {
     // Torus canonical domain is [-40, 40) on each axis. Start near the +x
     // edge and walk forward; after enough ticks the position must wrap to
@@ -127,5 +161,44 @@ describe('stepMovement determinism', () => {
     expect(result.position.z).toBe(5);
     // Sprint regens during idle: SPRINT_REGEN_PER_S=15 * 1s = +15.
     expect(result.sprintEnergy).toBeCloseTo(95, 10);
+  });
+});
+
+describe('stepMovement surge', () => {
+  it('moves at SPRINT_SPEED * SURGE_SPEED_MULT even without the sprint key', () => {
+    const state = stepMovement(
+      seed(0, 0),
+      { move: { x: 1, z: 0 }, sprint: false, dt: TICK, surge: true },
+      [],
+      'plane',
+      WORLD_WIDTH,
+      noBodyCollisions,
+    );
+    expect(state.position.x).toBeCloseTo(SPRINT_SPEED * SURGE_SPEED_MULT * TICK, 10);
+  });
+
+  it('does not drain sprint energy while surging with the sprint key held', () => {
+    const state = stepMovement(
+      seed(0, 0, MAX_SPRINT, true),
+      { move: { x: 1, z: 0 }, sprint: true, dt: TICK, surge: true },
+      [],
+      'plane',
+      WORLD_WIDTH,
+      noBodyCollisions,
+    );
+    // No drain: energy regens (capped at MAX_SPRINT) instead of depleting.
+    expect(state.sprintEnergy).toBe(MAX_SPRINT);
+  });
+
+  it('walks at WALK_SPEED once surge is no longer flagged', () => {
+    const state = stepMovement(
+      seed(0, 0),
+      { move: { x: 1, z: 0 }, sprint: false, dt: TICK, surge: false },
+      [],
+      'plane',
+      WORLD_WIDTH,
+      noBodyCollisions,
+    );
+    expect(state.position.x).toBeCloseTo(WALK_SPEED * TICK, 10);
   });
 });

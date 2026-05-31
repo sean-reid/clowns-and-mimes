@@ -3,9 +3,13 @@ extends CanvasLayer
 ## Heads-up display: sprint bar, countdown timer, team status, side event log,
 ## center frozen-overlay text.
 
+const ItemVisuals := preload("res://scripts/item_visuals.gd")
+
 @onready var sprint_bar: ProgressBar = $Margins/SprintBar
+@onready var item_slot: ColorRect = $Margins/ItemSlot
+@onready var item_label: Label = $Margins/ItemSlot/ItemLabel
 @onready var countdown_label: Label = $Margins/Countdown
-@onready var team_status: HBoxContainer = $Margins/TeamStatus
+@onready var minimap = $Margins/Minimap
 @onready var event_log: VBoxContainer = $Margins/EventLog
 @onready var team_badge: Label = $Margins/TeamBadge
 @onready var topology_badge: Label = $Margins/TopologyBadge
@@ -13,6 +17,11 @@ extends CanvasLayer
 @onready var battle_cry_label: Label = $BattleCry
 @onready var end_overlay: Control = $EndOverlay
 @onready var end_label: Label = $EndOverlay/EndLabel
+@onready var play_again_button: Button = $EndOverlay/PlayAgainButton
+
+# Emitted when the host clicks Play Again on the end screen. The arena
+# forwards it to the room as a restart_room message.
+signal play_again_requested
 
 # Team palette for HUD elements (team badge, sprint bar tint, battle cry
 # label, status icons). Used everywhere in this file that needs to draw
@@ -22,14 +31,6 @@ extends CanvasLayer
 const MIME_COLOR := Color(0.95, 0.95, 0.95)
 const CLOWN_COLOR := Color(0.95, 0.18, 0.22)
 const MAX_LOG_LINES := 5
-
-# Upper bound on the team-status icon pool. 3 bots/team * 2 teams +
-# 4 humans + headroom = 10; round up to 20 so adding a team mode
-# or temporarily oversized rosters never overflows.
-const MAX_TEAM_ICONS := 20
-const ICON_SIZE := Vector2(20, 20)
-const ICON_ALPHA_FROZEN := 0.35
-const ICON_ALPHA_ACTIVE := 1.0
 
 # Side event-log fade curve. Each older line steps down by FADE_BASE per
 # row from the newest; cap at FADE_MIN so the oldest still reads.
@@ -56,22 +57,45 @@ const COUNTDOWN_BLANK_EPSILON := 0.001
 # scene-tree mutations and redraw signal cascades that snowballed visibly.
 var _log_lines: Array[Label] = []
 
-# Pre-allocated team-status icons. render_team_status flips visibility and
-# rewrites color/alpha on the first N instead of queue_freeing the old set
-# and instantiating a new one each delta. Same lesson as the event log:
-# per-event node churn at 60Hz triggers signal cascades that visibly stall
-# the editor and clients.
-var _team_icons: Array[ColorRect] = []
+# Identifies the local viewer and selects the minimap projection. Stored from
+# the arena's spawn + topology calls and forwarded to the minimap on every
+# render_team_status delta.
+var _local_player_id: String = ""
+var _local_team: String = "mime"
+var _topology_name: String = ""
+
+# Center-screen aim crosshair for shooting. Created in code (one node, no
+# .tscn churn) and centered with a full-rect anchor; hidden until the arena
+# turns it on for the online shooting flow.
+var _crosshair: Label = null
 
 func _ready() -> void:
 	frozen_overlay.text = ""
 	end_overlay.visible = false
+	play_again_button.visible = false
+	play_again_button.pressed.connect(func() -> void: play_again_requested.emit())
 	team_badge.text = ""
 	topology_badge.text = ""
 	battle_cry_label.text = ""
 	battle_cry_label.modulate.a = 0.0
+	item_slot.visible = false
 	_setup_log_lines()
-	_setup_team_icons()
+	_setup_crosshair()
+	AudioBus.wire_button_sfx(self)
+
+func _setup_crosshair() -> void:
+	_crosshair = Label.new()
+	_crosshair.text = "+"
+	_crosshair.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_crosshair.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	_crosshair.set_anchors_preset(Control.PRESET_FULL_RECT)
+	_crosshair.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_crosshair.visible = false
+	add_child(_crosshair)
+
+func set_crosshair_visible(value: bool) -> void:
+	if _crosshair != null:
+		_crosshair.visible = value
 
 func _setup_log_lines() -> void:
 	# Remove any labels left over from the .tscn or from a previous run.
@@ -86,6 +110,7 @@ func _setup_log_lines() -> void:
 	_refresh_log_fade()
 
 func set_topology(name: String) -> void:
+	_topology_name = name
 	if name.is_empty():
 		topology_badge.text = ""
 		return
@@ -100,7 +125,11 @@ func set_topology(name: String) -> void:
 		pretty = name.substr(0, 1).to_upper() + name.substr(1)
 	topology_badge.text = "on the %s" % pretty
 
+func set_local_player_id(id: String) -> void:
+	_local_player_id = id
+
 func set_local_team(team: String) -> void:
+	_local_team = team
 	if team == "mime":
 		team_badge.text = "you are a MIME"
 		team_badge.modulate = MIME_COLOR
@@ -112,6 +141,18 @@ func set_local_team(team: String) -> void:
 
 func set_sprint(value: float) -> void:
 	sprint_bar.value = value
+
+## Held power-up slot. Empty string hides the slot; otherwise show the item's
+## short label tinted to its category color. Driven by the server-authoritative
+## activeItem field on each delta, so a pickup fills it and a use_item clears it.
+func set_held_item(item_type: String) -> void:
+	if item_type.is_empty():
+		item_slot.visible = false
+		return
+	item_slot.visible = true
+	var tint: Color = ItemVisuals.color(item_type)
+	item_label.text = ItemVisuals.label(item_type)
+	item_label.modulate = tint
 
 func set_countdown_seconds(seconds: float) -> void:
 	# Negative is the explicit "no countdown" sentinel. Zero (or sub-millisecond
@@ -130,31 +171,10 @@ func set_countdown_seconds(seconds: float) -> void:
 	else:
 		countdown_label.text = "%d" % int(ceil(seconds))
 
-func _setup_team_icons() -> void:
-	# Drop any icons left over from the .tscn or a previous run, then
-	# pre-allocate the pool once.
-	for child in team_status.get_children():
-		child.queue_free()
-	_team_icons.clear()
-	for i in MAX_TEAM_ICONS:
-		var icon := ColorRect.new()
-		icon.custom_minimum_size = ICON_SIZE
-		icon.visible = false
-		team_status.add_child(icon)
-		_team_icons.append(icon)
-
+## Entry point for each delta's full player list. Forwards to the minimap,
+## which plots teammate dots on the map and aggregates the both-team tally.
 func render_team_status(players: Array) -> void:
-	var n: int = mini(players.size(), _team_icons.size())
-	for i in n:
-		var player: Dictionary = players[i]
-		var clown_team: bool = player.get("team") == "clown"
-		var frozen: bool = bool(player.get("frozen"))
-		var icon: ColorRect = _team_icons[i]
-		icon.color = CLOWN_COLOR if clown_team else MIME_COLOR
-		icon.modulate.a = ICON_ALPHA_FROZEN if frozen else ICON_ALPHA_ACTIVE
-		icon.visible = true
-	for i in range(n, _team_icons.size()):
-		_team_icons[i].visible = false
+	minimap.update_state(players, _local_player_id, _local_team, _topology_name)
 
 func append_log(message: String) -> void:
 	# Shift each text up one slot and drop the new line into the bottom
@@ -209,6 +229,13 @@ func flash_disperse() -> void:
 	tw.tween_interval(DISPERSE_HOLD_S)
 	tw.tween_property(battle_cry_label, "modulate:a", 0.0, DISPERSE_FADE_OUT_S)
 
-func show_end(victory: bool) -> void:
+func show_end(victory: bool, allow_play_again: bool = false) -> void:
 	end_label.text = "Victory!" if victory else "Failure."
+	play_again_button.disabled = false
+	play_again_button.visible = allow_play_again
 	end_overlay.visible = true
+	if allow_play_again:
+		play_again_button.grab_focus()
+
+func set_play_again_enabled(enabled: bool) -> void:
+	play_again_button.disabled = not enabled

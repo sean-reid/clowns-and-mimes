@@ -4,12 +4,14 @@ import {
   JUMP_AMP,
   JUMP_COOLDOWN_S,
   JUMP_DURATION_S,
+  LEAP_JUMP_AMP,
+  WALL_HEIGHT,
   BODY_VERTICAL_EXTENT,
   jumpArcY,
   isJumping,
   verticallyOverlapping,
 } from './physics.ts';
-import { resolvePlayerCollisions, stepJump } from './movement.ts';
+import { bodyYForState, resolvePlayerCollisions, stepJump } from './movement.ts';
 import type { PlayerState } from './protocol.ts';
 
 const ARC_MS = JUMP_DURATION_S * 1000;
@@ -45,6 +47,37 @@ describe('jumpArcY', () => {
     for (const f of [0.01, 0.1, 0.3, 0.7, 0.9, 0.99]) {
       expect(jumpArcY(0, f * ARC_MS)).toBeGreaterThan(HOVER_HEIGHT);
     }
+  });
+
+  it('peaks at HOVER_HEIGHT + LEAP_JUMP_AMP with the leap amplitude', () => {
+    expect(jumpArcY(0, ARC_MS / 2, LEAP_JUMP_AMP)).toBeCloseTo(HOVER_HEIGHT + LEAP_JUMP_AMP, 6);
+  });
+
+  it('clears wall height for a meaningful slice of the leap arc', () => {
+    // The Leap power-up only works if the body actually spends time above
+    // the wall. Sample the arc and require a contiguous run above WALL_HEIGHT.
+    let aboveTicks = 0;
+    for (let f = 0; f <= 1; f += 1 / 36) {
+      if (jumpArcY(0, f * ARC_MS, LEAP_JUMP_AMP) > WALL_HEIGHT) aboveTicks += 1;
+    }
+    expect(aboveTicks).toBeGreaterThan(8);
+    // A normal jump never clears the wall.
+    for (let f = 0; f <= 1; f += 1 / 36) {
+      expect(jumpArcY(0, f * ARC_MS, JUMP_AMP)).toBeLessThan(WALL_HEIGHT);
+    }
+  });
+});
+
+describe('bodyYForState leap', () => {
+  it('uses the normal amplitude when not leaping', () => {
+    expect(bodyYForState({ jumpStartedAt: 0 }, ARC_MS / 2)).toBeCloseTo(HOVER_HEIGHT + JUMP_AMP, 6);
+  });
+
+  it('uses the leap amplitude when leaping', () => {
+    expect(bodyYForState({ jumpStartedAt: 0, leaping: true }, ARC_MS / 2)).toBeCloseTo(
+      HOVER_HEIGHT + LEAP_JUMP_AMP,
+      6,
+    );
   });
 });
 

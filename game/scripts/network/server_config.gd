@@ -23,4 +23,4 @@ static func protocol_version() -> int:
 	# Mirrors PROTOCOL_VERSION in backend/shared/src/protocol.ts. Bump
 	# both sides together; the room rejects a `join` whose v does not
 	# match with version_mismatch + close 4001.
-	return 2
+	return 3

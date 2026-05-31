@@ -117,3 +117,40 @@ func test_idle_sprint_regen() -> void:
 	if fixture.is_empty():
 		return
 	_assert_scenario_matches(fixture["scenarios"][4])
+
+func _walk_into_wall(above_walls: bool) -> Vector2:
+	# Wall at x=0.5 perpendicular to +x motion, mirroring the TS movement
+	# "passes through a wall while above wall height" test.
+	var topology = TopologyFactory.from_string("plane")
+	var walls: Array = [{"ax": 0.5, "az": -2.0, "bx": 0.5, "bz": 2.0}]
+	var state: Dictionary = {
+		"position": Vector2(0.0, 0.0),
+		"sprint_energy": Movement.MAX_SPRINT,
+		"sprinting": false,
+	}
+	var input: Dictionary = {"move": Vector2(1.0, 0.0), "sprint": false, "dt": 1.0 / 60.0}
+	for _i in range(30):
+		state = Movement.step(state, input, walls, topology, above_walls)
+	return state["position"]
+
+func test_wall_blocks_at_ground_level() -> void:
+	var pos: Vector2 = _walk_into_wall(false)
+	assert_true(pos.x < 0.5, "grounded body must not cross the wall, got x=%f" % pos.x)
+
+func test_wall_skipped_when_above_walls() -> void:
+	var pos: Vector2 = _walk_into_wall(true)
+	assert_true(pos.x > 0.5, "leaping body must cross the wall, got x=%f" % pos.x)
+
+func test_surge_moves_at_boosted_speed_without_drain() -> void:
+	var topology = TopologyFactory.from_string("plane")
+	var dt: float = 1.0 / 60.0
+	var state: Dictionary = {
+		"position": Vector2(0.0, 0.0),
+		"sprint_energy": Movement.MAX_SPRINT,
+		"sprinting": false,
+	}
+	var input: Dictionary = {"move": Vector2(1.0, 0.0), "sprint": false, "dt": dt, "surge": true}
+	state = Movement.step(state, input, [], topology)
+	var expected: float = Movement.SPRINT_SPEED * Movement.SURGE_SPEED_MULT * dt
+	assert_approx(state["position"].x, expected, 0.0001, "surge moves at boosted sprint pace")
+	assert_eq(state["sprint_energy"], Movement.MAX_SPRINT, "surge does not drain sprint energy")

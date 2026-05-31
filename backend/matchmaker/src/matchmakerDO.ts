@@ -1,4 +1,5 @@
-import type { Topology } from '@cm/shared';
+import type { PartyMember, PartyView, Team, Topology } from '@cm/shared';
+import { PARTY_CAP } from '@cm/shared';
 
 export const VALID_TOPOLOGIES: readonly Topology[] = ['plane', 'torus', 'mobius', 'klein'];
 
@@ -6,6 +7,13 @@ export const OPEN_ROOM_SOFT_CAPACITY = 12;
 export const OPEN_ROOM_FRESH_MS = 5 * 60 * 1000;
 export const OPEN_ROOM_PRUNE_MS = 10 * 60 * 1000;
 const STORAGE_KEY = 'openRooms';
+
+// Parties are dropped after this long without a create/join/leave/open-join
+// touch, so a party someone formed and abandoned can't pin storage forever.
+export const PARTY_PRUNE_MS = 30 * 60 * 1000;
+const PARTY_STORAGE_KEY = 'parties';
+const PARTY_CODE_LENGTH = 6;
+const PARTY_CODE_ALPHABET = 'BCDFGHJKLMNPQRSTVWXYZ23456789';
 
 export interface OpenRoomEntry {
   roomId: string;
@@ -16,10 +24,25 @@ export interface OpenRoomEntry {
   createdAt: number;
 }
 
+export interface PartyEntry {
+  id: string;
+  code: string;
+  // Team every member requests as their join preferTeam. Fixed at create so
+  // the whole party groups even if they open-join several seconds apart.
+  team: Team;
+  members: PartyMember[];
+  // Room the first member's open-join landed in; later members route here so
+  // they share a room. Null until the first member finds a match.
+  roomId: string | null;
+  createdAt: number;
+  lastSeenAt: number;
+}
+
 interface OpenJoinResult {
   roomId: string;
   topology: Topology;
   created: boolean;
+  team?: Team;
 }
 
 /**
@@ -66,6 +89,26 @@ export function randomTopology(): Topology {
   return VALID_TOPOLOGIES[Math.floor(Math.random() * VALID_TOPOLOGIES.length)]!;
 }
 
+export function randomTeam(): Team {
+  return Math.random() < 0.5 ? 'mime' : 'clown';
+}
+
+/** Drop parties untouched for longer than PARTY_PRUNE_MS. */
+export function pruneStaleParties(parties: Map<string, PartyEntry>, now: number): void {
+  const cutoff = now - PARTY_PRUNE_MS;
+  for (const [id, party] of parties) {
+    if (party.lastSeenAt <= cutoff) parties.delete(id);
+  }
+}
+
+function randomPartyCode(): string {
+  const buf = new Uint8Array(PARTY_CODE_LENGTH);
+  crypto.getRandomValues(buf);
+  let out = '';
+  for (const byte of buf) out += PARTY_CODE_ALPHABET[byte % PARTY_CODE_ALPHABET.length];
+  return out;
+}
+
 /**
  * Durable Object hosting the single source of truth for open-lobby room
  * counts. KV used to fill this role but is eventually consistent across
@@ -74,6 +117,7 @@ export function randomTopology(): Topology {
  */
 export class MatchmakerDO {
   private openRooms = new Map<string, OpenRoomEntry>();
+  private parties = new Map<string, PartyEntry>();
   private loaded = false;
 
   constructor(private readonly state: DurableObjectState) {}
@@ -86,6 +130,13 @@ export class MatchmakerDO {
         this.openRooms.set(id, entry);
       }
     }
+    const storedParties =
+      await this.state.storage.get<Record<string, PartyEntry>>(PARTY_STORAGE_KEY);
+    if (storedParties) {
+      for (const [id, party] of Object.entries(storedParties)) {
+        this.parties.set(id, party);
+      }
+    }
     this.loaded = true;
   }
 
@@ -95,13 +146,21 @@ export class MatchmakerDO {
     await this.state.storage.put(STORAGE_KEY, obj);
   }
 
+  private async persistParties(): Promise<void> {
+    const obj: Record<string, PartyEntry> = {};
+    for (const [id, party] of this.parties) obj[id] = party;
+    await this.state.storage.put(PARTY_STORAGE_KEY, obj);
+  }
+
   async fetch(req: Request): Promise<Response> {
     await this.load();
     const url = new URL(req.url);
-    pruneStale(this.openRooms, Date.now());
+    const now = Date.now();
+    pruneStale(this.openRooms, now);
+    pruneStaleParties(this.parties, now);
 
     if (req.method === 'POST' && url.pathname === '/openJoin') {
-      return this.openJoin();
+      return this.openJoin(req);
     }
     if (req.method === 'POST' && url.pathname === '/roomState') {
       return this.roomState(req);
@@ -109,14 +168,57 @@ export class MatchmakerDO {
     if (req.method === 'POST' && url.pathname === '/roomDetach') {
       return this.roomDetach(req);
     }
+    if (req.method === 'POST' && url.pathname === '/partyCreate') {
+      return this.partyCreate(req);
+    }
+    if (req.method === 'POST' && url.pathname === '/partyJoin') {
+      return this.partyJoin(req);
+    }
+    if (req.method === 'POST' && url.pathname === '/partyLeave') {
+      return this.partyLeave(req);
+    }
+    if (req.method === 'GET' && url.pathname === '/partyState') {
+      return this.partyStateView(url.searchParams.get('id'));
+    }
     return new Response(JSON.stringify({ error: 'not_found' }), {
       status: 404,
       headers: { 'content-type': 'application/json' },
     });
   }
 
-  private async openJoin(): Promise<Response> {
+  private async openJoin(req: Request): Promise<Response> {
     const now = Date.now();
+    let partyId: string | undefined;
+    try {
+      const body = (await req.json()) as { partyId?: unknown };
+      if (typeof body.partyId === 'string') partyId = body.partyId;
+    } catch {
+      // Body is optional; a non-party open-join sends '{}' or nothing.
+    }
+
+    const party = partyId ? this.parties.get(partyId) : undefined;
+    // A later party member reuses the room the first member already landed in,
+    // as long as it's still around, fresh, and under capacity. Otherwise (first
+    // member, or the shared room aged out / filled / detached) we route fresh
+    // and re-stamp the party so the rest follow.
+    if (party && party.roomId) {
+      const shared = this.openRooms.get(party.roomId);
+      if (shared && shared.humans + shared.bots < OPEN_ROOM_SOFT_CAPACITY) {
+        shared.humans += 1;
+        shared.lastSeenAt = now;
+        this.openRooms.set(shared.roomId, shared);
+        party.lastSeenAt = now;
+        await this.persist();
+        await this.persistParties();
+        return json({
+          roomId: shared.roomId,
+          topology: shared.topology,
+          created: false,
+          team: party.team,
+        } satisfies OpenJoinResult);
+      }
+    }
+
     const reusable = pickRoom(this.openRooms, now);
     let result: OpenJoinResult;
     if (reusable) {
@@ -138,8 +240,117 @@ export class MatchmakerDO {
       this.openRooms.set(roomId, entry);
       result = { roomId, topology, created: true };
     }
+    if (party) {
+      party.roomId = result.roomId;
+      party.lastSeenAt = now;
+      result.team = party.team;
+      await this.persistParties();
+    }
     await this.persist();
     return json(result);
+  }
+
+  private async partyCreate(req: Request): Promise<Response> {
+    let body: { name?: unknown };
+    try {
+      body = (await req.json()) as typeof body;
+    } catch {
+      return json({ error: 'invalid_json' }, 400);
+    }
+    const name = typeof body.name === 'string' ? body.name : '';
+    const now = Date.now();
+    const member: PartyMember = { memberId: crypto.randomUUID(), name };
+    const party: PartyEntry = {
+      id: crypto.randomUUID(),
+      code: this.freshPartyCode(),
+      team: randomTeam(),
+      members: [member],
+      roomId: null,
+      createdAt: now,
+      lastSeenAt: now,
+    };
+    this.parties.set(party.id, party);
+    await this.persistParties();
+    return json(this.partyResponse(party, member.memberId));
+  }
+
+  private async partyJoin(req: Request): Promise<Response> {
+    let body: { code?: unknown; name?: unknown };
+    try {
+      body = (await req.json()) as typeof body;
+    } catch {
+      return json({ error: 'invalid_json' }, 400);
+    }
+    if (typeof body.code !== 'string') return json({ error: 'invalid_body' }, 400);
+    const code = body.code.toUpperCase();
+    const party = [...this.parties.values()].find((p) => p.code === code);
+    if (!party) return json({ error: 'party_not_found' }, 404);
+    if (party.members.length >= PARTY_CAP) return json({ error: 'party_full' }, 409);
+    const name = typeof body.name === 'string' ? body.name : '';
+    const member: PartyMember = { memberId: crypto.randomUUID(), name };
+    party.members.push(member);
+    party.lastSeenAt = Date.now();
+    await this.persistParties();
+    return json(this.partyResponse(party, member.memberId));
+  }
+
+  private async partyLeave(req: Request): Promise<Response> {
+    let body: { partyId?: unknown; memberId?: unknown };
+    try {
+      body = (await req.json()) as typeof body;
+    } catch {
+      return json({ error: 'invalid_json' }, 400);
+    }
+    if (typeof body.partyId !== 'string' || typeof body.memberId !== 'string') {
+      return json({ error: 'invalid_body' }, 400);
+    }
+    const party = this.parties.get(body.partyId);
+    if (party) {
+      party.members = party.members.filter((m) => m.memberId !== body.memberId);
+      if (party.members.length === 0) {
+        this.parties.delete(party.id);
+      } else {
+        party.lastSeenAt = Date.now();
+      }
+      await this.persistParties();
+    }
+    return json({ ok: true });
+  }
+
+  // Read-only roster fetch backing the party screen's poll. Bumps lastSeenAt
+  // so a party someone is actively watching doesn't age into the prune window;
+  // the bump stays in memory (no persist) to keep the 2s poll off storage.
+  private partyStateView(id: string | null): Response {
+    const party = id ? this.parties.get(id) : undefined;
+    if (!party) return json({ error: 'party_not_found' }, 404);
+    party.lastSeenAt = Date.now();
+    return json({
+      partyId: party.id,
+      code: party.code,
+      team: party.team,
+      members: party.members,
+    } satisfies PartyView);
+  }
+
+  private partyResponse(party: PartyEntry, memberId: string) {
+    return {
+      partyId: party.id,
+      code: party.code,
+      team: party.team,
+      memberId,
+      members: party.members,
+    };
+  }
+
+  private freshPartyCode(): string {
+    const taken = new Set([...this.parties.values()].map((p) => p.code));
+    for (let attempt = 0; attempt < 8; attempt += 1) {
+      const code = randomPartyCode();
+      if (!taken.has(code)) return code;
+    }
+    // Astronomically unlikely with a 28^6 space and few live parties; fall back
+    // to a guaranteed-unique id slice rather than throwing.
+    return crypto.randomUUID().replace(/-/g, '').slice(0, PARTY_CODE_LENGTH).toUpperCase();
   }
 
   private async roomState(req: Request): Promise<Response> {

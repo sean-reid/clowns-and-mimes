@@ -19,6 +19,7 @@ func _ready() -> void:
 	resume_button.pressed.connect(_on_resume)
 	settings_entry.pressed.connect(_on_settings)
 	quit_button.pressed.connect(_on_quit)
+	AudioBus.wire_button_sfx(self)
 
 func open() -> void:
 	visible = true

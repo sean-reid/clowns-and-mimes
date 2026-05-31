@@ -11,8 +11,11 @@ import {
   BOUNCE_E_GROUNDED,
   BOUNCE_E_WALL,
   HOVER_HEIGHT,
+  JUMP_AMP,
   JUMP_COOLDOWN_S,
   JUMP_DURATION_S,
+  LEAP_JUMP_AMP,
+  WALL_HEIGHT,
   isJumping,
   jumpArcY,
   verticallyOverlapping,
@@ -20,10 +23,15 @@ import {
 
 export const WALK_SPEED = 3.2;
 export const SPRINT_SPEED = 5.6;
+// Surge power-up: while active the player moves at sprint pace times this
+// multiplier and spends no sprint energy.
+export const SURGE_SPEED_MULT = 1.5;
+export const SURGE_DURATION_MS = 10000;
 // Anti-cheat: a single tick cannot displace a player more than this many
-// units. SPRINT_SPEED * 1.5 leaves headroom for input bursts while rejecting
-// teleports.
-export const MAX_TICK_TRAVEL = SPRINT_SPEED * 1.5;
+// units. The fastest sustained pace is sprint under surge, so headroom is
+// measured off that (the extra 1.5 absorbs input bursts) while still
+// rejecting teleports.
+export const MAX_TICK_TRAVEL = SPRINT_SPEED * SURGE_SPEED_MULT * 1.5;
 export const MAX_SPRINT = 100;
 export const SPRINT_DRAIN_PER_S = 25;
 export const SPRINT_REGEN_PER_S = 15;
@@ -37,6 +45,9 @@ export interface MoveStepInput {
   move: Vec2;
   sprint: boolean;
   dt: number;
+  // Surge power-up active this tick. Independent of the sprint key: it forces
+  // sprint pace (scaled by SURGE_SPEED_MULT) and suppresses energy drain.
+  surge?: boolean;
 }
 
 export interface MoveStepState {
@@ -84,7 +95,10 @@ export function stepMovement(
   if (input.sprint && state.sprintEnergy > 0) {
     wantSprint = state.sprinting ? true : state.sprintEnergy >= SPRINT_ENGAGE_THRESHOLD;
   }
-  const speed = wantSprint ? SPRINT_SPEED : WALK_SPEED;
+  // Surge forces sprint pace regardless of the sprint key (so it reads as a
+  // burst even from a standstill) and scales it; drain is skipped below.
+  const surge = input.surge === true;
+  const speed = (surge || wantSprint ? SPRINT_SPEED : WALK_SPEED) * (surge ? SURGE_SPEED_MULT : 1);
   const moveLen = Math.hypot(input.move.x, input.move.z);
   const nx = moveLen > 0 ? input.move.x / moveLen : 0;
   const nz = moveLen > 0 ? input.move.z / moveLen : 0;
@@ -100,11 +114,17 @@ export function stepMovement(
   // Project to XZ for the planar collision pipeline; Y is preserved on
   // the return value below regardless of which candidate wins.
   const startXZ: Vec2 = { x: state.position.x, z: state.position.z };
+  // Y-aware wall skip (Leap power-up): once the body's center clears wall
+  // height its XZ is no longer blocked by walls - it is physically above
+  // them. Only this player's own collision is skipped; other bodies still
+  // collide with walls normally because each runs its own stepMovement.
+  const aboveWalls = state.position.y > WALL_HEIGHT;
+  const wallsBlock = walls.length > 0 && !aboveWalls;
   let nextXZ: Vec2 = startXZ;
   for (const candidate of candidates) {
     if (candidate.x === state.position.x && candidate.z === state.position.z) continue;
     if (
-      walls.length > 0 &&
+      wallsBlock &&
       pathCrossesWall(walls, state.position.x, state.position.z, candidate.x, candidate.z)
     ) {
       continue;
@@ -142,11 +162,11 @@ export function stepMovement(
     const reboundZ = -lossDz * BOUNCE_E_WALL;
     const candidateXZ: Vec2 = { x: nextXZ.x + reboundX, z: nextXZ.z + reboundZ };
     const reboundBlocked =
-      walls.length > 0 && pathCrossesWall(walls, nextXZ.x, nextXZ.z, candidateXZ.x, candidateXZ.z);
+      wallsBlock && pathCrossesWall(walls, nextXZ.x, nextXZ.z, candidateXZ.x, candidateXZ.z);
     if (!reboundBlocked) nextXZ = candidateXZ;
   }
   const nextPos: Vec3 = { x: nextXZ.x, y: state.position.y, z: nextXZ.z };
-  const drained = wantSprint && moveLen > 0;
+  const drained = !surge && wantSprint && moveLen > 0;
   const nextSprint = clamp(
     state.sprintEnergy + (drained ? -SPRINT_DRAIN_PER_S : SPRINT_REGEN_PER_S) * input.dt,
     0,
@@ -231,8 +251,11 @@ export function stepJump(state: JumpStepState, input: JumpStepInput): JumpStepRe
  * jumpArcY so callers can stay in this module for the full jump
  * surface.
  */
-export function bodyYForState(state: { jumpStartedAt: number | null }, nowMs: number): number {
-  return jumpArcY(state.jumpStartedAt, nowMs);
+export function bodyYForState(
+  state: { jumpStartedAt: number | null; leaping?: boolean },
+  nowMs: number,
+): number {
+  return jumpArcY(state.jumpStartedAt, nowMs, state.leaping ? LEAP_JUMP_AMP : JUMP_AMP);
 }
 
 // Re-export HOVER_HEIGHT so server callers that previously imported

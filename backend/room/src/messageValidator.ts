@@ -8,7 +8,7 @@
 // protocol is small and stable; pulling in zod for ~7 message kinds is
 // not worth the cold-start size on a Cloudflare Worker.
 
-import type { ClientToServer, PlayerInput, Team } from '@cm/shared';
+import type { ClientToServer, PlayerInput, Team, Topology } from '@cm/shared';
 
 function isFinite(v: unknown): v is number {
   return typeof v === 'number' && Number.isFinite(v);
@@ -32,6 +32,10 @@ function isBool(v: unknown): v is boolean {
 
 function isTeam(v: unknown): v is Team {
   return v === 'mime' || v === 'clown';
+}
+
+function isTopology(v: unknown): v is Topology {
+  return v === 'plane' || v === 'torus' || v === 'mobius' || v === 'klein';
 }
 
 function isObj(v: unknown): v is Record<string, unknown> {
@@ -110,8 +114,19 @@ export function parseClientMessage(raw: unknown): ClientToServer | null {
       if (!isFinite(raw.clientTime)) return null;
       return { t: 'ping', clientTime: raw.clientTime };
     }
+    case 'shoot': {
+      if (!isFinite(raw.dirX) || !isFinite(raw.dirY) || !isFinite(raw.dirZ)) return null;
+      if (!isSafeInt(raw.nowMs)) return null;
+      return { t: 'shoot', dirX: raw.dirX, dirY: raw.dirY, dirZ: raw.dirZ, nowMs: raw.nowMs };
+    }
     case 'start_match':
       return { t: 'start_match' };
+    case 'use_item':
+      return { t: 'use_item' };
+    case 'restart_room': {
+      if (raw.topology !== undefined && !isTopology(raw.topology)) return null;
+      return { t: 'restart_room', topology: raw.topology as Topology | undefined };
+    }
     default:
       return null;
   }

@@ -115,6 +115,11 @@ jobs:
           unzip -q godot.zip
           sudo mv "Godot_v${GODOT_VERSION}_linux.x86_64" /usr/local/bin/godot
           sudo chmod +x /usr/local/bin/godot
+      - name: Prime project (import resources)
+        # Generates .godot/imported/* so scenes that reference imported binary
+        # assets (fonts, textures) by ext_resource resolve during the run-mode
+        # parse check below, which does not import on its own.
+        run: godot --headless --path game --import || true
       - name: Validate project parses
         run: |
           output=$(godot --headless --path game --quit 2>&1 || true)

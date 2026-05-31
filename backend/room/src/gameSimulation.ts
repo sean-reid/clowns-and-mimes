@@ -39,6 +39,12 @@ const TURN_CAP_MS = 5 * 60_000;
 const JUMP_CLIENT_CLOCK_SKEW_MS = 500;
 // How long lag-comp history is retained per player.
 const POSITION_HISTORY_KEEP_MS = 500;
+// Max inputs applied per player per tick. The client sends ~60/s; this lets
+// a tick that ran late drain its backlog and keep ackSeq current, while
+// capping how far a banked-input burst can advance a player in one tick
+// (anti-warp). 6 covers a tick spaced ~100 ms apart and drains a 2 s stall
+// (~120 inputs) in well under a second once ticks resume.
+const MAX_INPUTS_PER_TICK = 6;
 
 /**
  * State the simulation reads and writes. Maps are exposed by reference
@@ -63,6 +69,8 @@ export interface GameSimulationHost {
   incrementRoundNumber(): void;
   activeHumans(): number;
   simulateBots(dt: number): void;
+  stepProjectiles(dt: number): void;
+  stepItems(dt: number): void;
   broadcast(msg: ServerToClient): void;
   broadcastDelta(): void;
 }
@@ -158,6 +166,15 @@ export class GameSimulation {
       this.host.prevTickPositions.set(p.id, { x: p.position.x, z: p.position.z });
     }
     this.recordPositionsForLagComp();
+    // Advance in-flight projectiles after players have settled this tick
+    // so hit tests run against post-collision positions. Freezes apply
+    // through the same tagged path; the next broadcastDelta carries the
+    // updated projectile set.
+    this.host.stepProjectiles(dt);
+    // Item respawn timers + pickup-on-touch run against post-collision
+    // positions too. Pickups/respawns broadcast as events; the static
+    // item set rides the snapshot, not the delta.
+    this.host.stepItems(dt);
   }
 
   /**
@@ -173,10 +190,11 @@ export class GameSimulation {
     for (const p of this.host.players.values()) {
       if (p.jumpStartedAt !== null && now - p.jumpStartedAt >= lockoutMs) {
         p.jumpStartedAt = null;
+        p.leaping = false;
       }
       p.position = {
         x: p.position.x,
-        y: bodyYForState({ jumpStartedAt: p.jumpStartedAt }, now),
+        y: bodyYForState({ jumpStartedAt: p.jumpStartedAt, leaping: p.leaping }, now),
         z: p.position.z,
       };
     }
@@ -243,44 +261,74 @@ export class GameSimulation {
         q.length = 0;
         continue;
       }
-      // Consume exactly ONE input per tick (oldest first). The client streams
-      // at TICK_HZ, so steady state is one in / one out.
-      const input = q.shift()!;
-      const lastSeq = this.host.lastAppliedSeq.get(id) ?? -1;
-      if (input.seq <= lastSeq) continue;
-      const next = stepMovement(
-        { position: p.position, sprintEnergy: p.sprintEnergy, sprinting: p.sprinting },
-        // Use the dt the client reported with this input, not the server's
-        // tick dt. Reconciliation replay on the client also drives
-        // stepMovement from input.dt; divergence would drift the replayed
-        // position from the server's authoritative result.
-        { move: input.move, sprint: input.sprint, dt: input.dt },
-        walls,
-        topology,
-        WORLD_WIDTH,
-        // No collision gate here: resolvePlayerCollisions in the
-        // post-step pass handles overlap by pushing bodies apart and
-        // adding the bounceback impulse.
-        () => false,
-      );
-      // Jump trigger / lockout. The client stamps input.nowMs when it
-      // sends; we use that timestamp (clamped to local clock skew) as
-      // the new jumpStartedAt so the client's predicted arc start
-      // matches the authoritative value without a round-trip.
-      const serverNow = Date.now();
-      const inputNow = input.nowMs ?? serverNow;
-      const skewMs = Math.abs(inputNow - serverNow);
-      const arcNow = skewMs > JUMP_CLIENT_CLOCK_SKEW_MS ? serverNow : inputNow;
-      const jump = stepJump(
-        { jumpStartedAt: p.jumpStartedAt },
-        { jump: input.jump ?? false, nowMs: arcNow },
-      );
-      p.position = next.position;
-      p.jumpStartedAt = jump.jumpStartedAt;
-      p.sprintEnergy = next.sprintEnergy;
-      p.sprinting = next.sprinting;
-      p.yaw = input.lookYaw;
-      this.host.lastAppliedSeq.set(id, input.seq);
+      // Drain the input backlog this tick (oldest first), bounded by
+      // MAX_INPUTS_PER_TICK. The client streams at TICK_HZ, but the DO's
+      // setInterval cannot hold a precise 60 Hz on Cloudflare (~45-54/s with
+      // multi-second pauses on I/O turns), so a one-in-one-out drain lets the
+      // queue overflow and silently drop inputs the client already predicted;
+      // lastAppliedSeq then jumps past the dropped seqs and the client's
+      // authoritative base snaps backward (the "backstep"). Applying the
+      // backlog keeps lastAppliedSeq in step with what the client actually
+      // sent, so reconcile() replays from a correct base regardless of tick
+      // jitter. The per-tick cap bounds replay cost and prevents a client
+      // from banking inputs for a single-tick time-warp burst.
+      let applied = 0;
+      while (q.length > 0 && applied < MAX_INPUTS_PER_TICK) {
+        const input = q.shift()!;
+        const lastSeq = this.host.lastAppliedSeq.get(id) ?? -1;
+        if (input.seq <= lastSeq) continue;
+        // Clamp the client's input timestamp to local clock skew. Used both as
+        // the jump arc start (below) and the surge-active test, so the client
+        // predictor and the server resolve both off the same stamp.
+        const serverNow = Date.now();
+        const inputNow = input.nowMs ?? serverNow;
+        const skewMs = Math.abs(inputNow - serverNow);
+        const arcNow = skewMs > JUMP_CLIENT_CLOCK_SKEW_MS ? serverNow : inputNow;
+        const next = stepMovement(
+          { position: p.position, sprintEnergy: p.sprintEnergy, sprinting: p.sprinting },
+          // Use the dt the client reported with this input, not the server's
+          // tick dt. Reconciliation replay on the client also drives
+          // stepMovement from input.dt; divergence would drift the replayed
+          // position from the server's authoritative result.
+          {
+            move: input.move,
+            sprint: input.sprint,
+            dt: input.dt,
+            surge: (p.surgeUntil ?? 0) > arcNow,
+          },
+          walls,
+          topology,
+          WORLD_WIDTH,
+          // No collision gate here: resolvePlayerCollisions in the
+          // post-step pass handles overlap by pushing bodies apart and
+          // adding the bounceback impulse.
+          () => false,
+        );
+        // Jump trigger / lockout. The client stamps input.nowMs when it
+        // sends; we use that timestamp (clamped to local clock skew) as
+        // the new jumpStartedAt so the client's predicted arc start
+        // matches the authoritative value without a round-trip.
+        const jump = stepJump(
+          { jumpStartedAt: p.jumpStartedAt },
+          { jump: input.jump ?? false, nowMs: arcNow },
+        );
+        // Leap: a fresh trigger (new non-null takeoff) consumes a banked
+        // leapArmed flag and marks this arc as a leap. leaping persists
+        // through the arc and clears when the lockout ends below.
+        const freshTrigger = jump.jumpStartedAt !== null && jump.jumpStartedAt !== p.jumpStartedAt;
+        if (freshTrigger && p.leapArmed) {
+          p.leaping = true;
+          p.leapArmed = false;
+        }
+        p.position = next.position;
+        p.jumpStartedAt = jump.jumpStartedAt;
+        if (jump.jumpStartedAt === null) p.leaping = false;
+        p.sprintEnergy = next.sprintEnergy;
+        p.sprinting = next.sprinting;
+        p.yaw = input.lookYaw;
+        this.host.lastAppliedSeq.set(id, input.seq);
+        applied++;
+      }
     }
   }
 }

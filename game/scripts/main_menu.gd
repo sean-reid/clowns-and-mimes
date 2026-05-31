@@ -9,6 +9,7 @@ const SettingsPanel := preload("res://scenes/settings_panel.tscn")
 
 @onready var host_button: Button = $Center/Buttons/HostButton
 @onready var open_button: Button = $Center/Buttons/OpenButton
+@onready var party_button: Button = $Center/Buttons/PartyButton
 @onready var username_input: LineEdit = $Center/UsernameRow/Username
 @onready var random_button: Button = $Center/UsernameRow/Random
 @onready var topology_picker: OptionButton = $Center/TopologyRow/Topology
@@ -36,6 +37,7 @@ func _ready() -> void:
 	# the field has focus.
 	code_input.text_submitted.connect(_on_code_submitted)
 	open_button.pressed.connect(_join_open)
+	party_button.pressed.connect(_open_party)
 	settings_button.pressed.connect(_open_settings)
 	username_input.text_changed.connect(_on_username_text_changed)
 	_populate_topologies()
@@ -54,6 +56,40 @@ func _ready() -> void:
 	AudioBus.set_bus_volume("Music", 0.0)
 	AudioBus.play_music_from_path(AssetPaths.THEME_AUDIO)
 	_check_for_updates()
+	_maybe_show_telemetry_opt_in()
+
+# First time the menu loads with no recorded consent answer, ask the
+# player. Once they answer (yes or no), the question never returns.
+# Independent of the version-check popup; both can stack if both fire.
+func _maybe_show_telemetry_opt_in() -> void:
+	if not Settings.telemetry_consent.is_empty():
+		return
+	var dialog := ConfirmationDialog.new()
+	dialog.title = "Share gameplay stats?"
+	dialog.dialog_text = (
+		"Help improve Clowns and Mimes by sharing anonymous gameplay "
+		+ "stats (match duration, items used, no personal info)?"
+	)
+	dialog.ok_button_text = "Yes, share"
+	dialog.get_cancel_button().text = "No thanks"
+	dialog.unresizable = true
+	dialog.confirmed.connect(_accept_telemetry)
+	dialog.canceled.connect(func(): Settings.set_telemetry_consent("no"))
+	dialog.confirmed.connect(dialog.queue_free)
+	dialog.canceled.connect(dialog.queue_free)
+	dialog.close_requested.connect(dialog.queue_free)
+	add_child(dialog)
+	dialog.popup_centered()
+
+func _accept_telemetry() -> void:
+	Settings.set_telemetry_consent("yes")
+	Telemetry.ensure_id()
+	Telemetry.event({
+		"t": "session_start",
+		"v": ProjectSettings.get_setting("application/config/version", "0.0.0"),
+		"platform": OS.get_name(),
+		"telemetryId": Settings.telemetry_id,
+	})
 
 func _check_for_updates() -> void:
 	var checker := VersionCheck.new()
@@ -152,8 +188,16 @@ func _on_code_submitted(_text: String) -> void:
 
 func _join_open() -> void:
 	_commit_username()
+	# Solo open-join: drop any party handle left over from a prior party so the
+	# lobby's /open/join doesn't route this player into a stale party room.
+	GameState.party_id = ""
+	GameState.party_member_id = ""
 	GameState.set_mode(GameState.Mode.OPEN)
 	requested_screen.emit("lobby")
+
+func _open_party() -> void:
+	_commit_username()
+	requested_screen.emit("party")
 
 func _open_settings() -> void:
 	add_child(SettingsPanel.instantiate())

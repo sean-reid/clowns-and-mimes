@@ -14,8 +14,11 @@ const SharedConstants := preload("res://scripts/shared_constants.gd")
 
 const WALK_SPEED := SharedConstants.WALK_SPEED
 const SPRINT_SPEED := SharedConstants.SPRINT_SPEED
-# Single-tick travel cap derived from SPRINT_SPEED * 1.5 on both sides.
-const MAX_TICK_TRAVEL := SPRINT_SPEED * 1.5
+const SURGE_SPEED_MULT := SharedConstants.SURGE_SPEED_MULT
+const SURGE_DURATION_MS := SharedConstants.SURGE_DURATION_MS
+# Single-tick travel cap derived from SPRINT_SPEED * SURGE_SPEED_MULT * 1.5 on
+# both sides (the fastest sustained pace is sprint under surge).
+const MAX_TICK_TRAVEL := SPRINT_SPEED * SURGE_SPEED_MULT * 1.5
 const MAX_SPRINT := SharedConstants.MAX_SPRINT
 const SPRINT_DRAIN_PER_S := SharedConstants.SPRINT_DRAIN_PER_S
 const SPRINT_REGEN_PER_S := SharedConstants.SPRINT_REGEN_PER_S
@@ -37,11 +40,16 @@ const TopologyScript := preload("res://scripts/topology/topology.gd")
 ## responsible for keeping y in sync. topology.wrap() handles seam wrapping.
 ##
 ## walls is an Array of {ax, az, bx, bz} dictionaries (labyrinth.wall_endpoints).
+## above_walls (Leap power-up): when true the body's center is above wall
+## height, so walls no longer block its XZ - the candidate loop and the
+## rebound both skip wall collision. Mirrors the Y-aware skip in
+## backend/shared/src/movement.ts::stepMovement.
 static func step(
 	state: Dictionary,
 	input: Dictionary,
 	walls: Array,
 	topology,
+	above_walls: bool = false,
 ) -> Dictionary:
 	var pos: Vector2 = state["position"]
 	var sprint_energy: float = state["sprint_energy"]
@@ -59,7 +67,11 @@ static func step(
 			want_sprint = true
 		else:
 			want_sprint = sprint_energy >= SPRINT_ENGAGE_THRESHOLD
-	var speed: float = SPRINT_SPEED if want_sprint else WALK_SPEED
+	# Surge forces sprint pace regardless of the sprint key and scales it;
+	# drain is skipped below. Mirrors backend/shared/src/movement.ts.
+	var surge: bool = input.get("surge", false)
+	var base_speed: float = SPRINT_SPEED if (surge or want_sprint) else WALK_SPEED
+	var speed: float = base_speed * (SURGE_SPEED_MULT if surge else 1.0)
 	var move_len: float = move.length()
 	var nx: float = move.x / move_len if move_len > 0.0 else 0.0
 	var nz: float = move.y / move_len if move_len > 0.0 else 0.0
@@ -72,12 +84,13 @@ static func step(
 		Vector2(pos.x + sign(dx) * speed * dt, pos.y),
 		Vector2(pos.x, pos.y + sign(dz) * speed * dt),
 	]
+	var walls_block: bool = walls.size() > 0 and not above_walls
 	var next_pos: Vector2 = pos
 	for c in candidates:
 		var candidate: Vector2 = c
 		if candidate.x == pos.x and candidate.y == pos.y:
 			continue
-		if walls.size() > 0 and path_crosses_wall(walls, pos.x, pos.y, candidate.x, candidate.y):
+		if walls_block and path_crosses_wall(walls, pos.x, pos.y, candidate.x, candidate.y):
 			continue
 		# Player-on-player collision is server-authoritative. During the
 		# client predict step we cannot know every other body's position at
@@ -122,7 +135,7 @@ static func step(
 		var rebound_z: float = -loss_dz * PhysicsScript.BOUNCE_E_WALL
 		var candidate_xz := Vector2(next_pos.x + rebound_x, next_pos.y + rebound_z)
 		var rebound_blocked: bool = (
-			walls.size() > 0
+			walls_block
 			and path_crosses_wall(
 				walls, next_pos.x, next_pos.y, candidate_xz.x, candidate_xz.y
 			)
@@ -130,7 +143,7 @@ static func step(
 		if not rebound_blocked:
 			next_pos = candidate_xz
 
-	var drained: bool = want_sprint and move_len > 0.0
+	var drained: bool = not surge and want_sprint and move_len > 0.0
 	var energy_delta: float = (-SPRINT_DRAIN_PER_S if drained else SPRINT_REGEN_PER_S) * dt
 	var next_energy: float = clampf(sprint_energy + energy_delta, 0.0, MAX_SPRINT)
 	var next_sprinting: bool = want_sprint and next_energy > 0.0

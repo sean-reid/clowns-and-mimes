@@ -24,6 +24,7 @@ const LABYRINTH := preload("res://scenes/labyrinth.tscn")
 const Movement := preload("res://scripts/movement.gd")
 const Physics := preload("res://scripts/physics.gd")
 const IN_GAME_MENU := preload("res://scenes/in_game_menu.tscn")
+const TUTORIAL_OVERLAY := preload("res://scenes/tutorial_overlay.tscn")
 # Preload kept here only for the `var rules: GameRulesScript` field
 # type annotation - OfflineMode (offline_mode.gd) is the actual lifecycle
 # owner and instantiates the GameRulesScript; contact_interactions.gd
@@ -38,6 +39,10 @@ const OnlinePredictorScript := preload("res://scripts/online_predictor.gd")
 const ReconnectControllerScript := preload("res://scripts/reconnect_controller.gd")
 const ContactInteractionsScript := preload("res://scripts/contact_interactions.gd")
 const OfflineModeScript := preload("res://scripts/offline_mode.gd")
+const ProjectileRendererScript := preload("res://scripts/projectile_renderer.gd")
+const ItemRendererScript := preload("res://scripts/item_renderer.gd")
+const PortalRendererScript := preload("res://scripts/portal_renderer.gd")
+const SharedConstants := preload("res://scripts/shared_constants.gd")
 
 # ---------------------------------------------------------------------------
 # Tunables
@@ -55,13 +60,30 @@ const SPAWN_RADIUS := 2.5
 const INPUT_TICK_HZ := 60.0
 const INPUT_TICK_PERIOD := 1.0 / INPUT_TICK_HZ
 
+# Hard cap on un-acked inputs held for reconciliation replay. Normal RTT
+# keeps this under a dozen entries; this only bites when the server stops
+# advancing ackSeq (rate-limit rejection, overload, partition). Without it
+# the buffer grows every tick and reconcile() replays the whole array each
+# delta, so frame cost climbs until the client locks up. 240 = 4 s at
+# INPUT_TICK_HZ, well beyond any real RTT; past that the oldest (already
+# unrecoverable) inputs are dropped, matching the server's MAX_INPUT_QUEUE
+# and the send queue's SEND_QUEUE_MAX bounding philosophy.
+const MAX_PENDING_INPUTS := 240
+
 # Keepalive ping interval + reconnect ladder constants live in
 # game/scripts/reconnect_controller.gd.
 
-# Environment palettes for the light / dark arena modes. Toggled by the
-# Settings overlay; apply_light_mode swaps between these wholesale.
-# Pulled into named consts so a designer pass on the palette doesn't
-# require fishing through if/else branches.
+# Environment palettes for the two arena looks. Toggled by the Settings
+# overlay; apply_light_mode swaps between these wholesale. Pulled into named
+# consts so a designer pass on the palette doesn't require fishing through
+# if/else branches.
+#
+# FACILITY is the default: a dim, gloomy strip-lit test-chamber look. The maze
+# is dark and moody; the wall-floor LED strips and the self-lit volumetric fog
+# do the visual work rather than broad ambient light. The volumetric fog stays
+# visible in the gloom because it carries its own emission (set in arena.tscn) -
+# scene lighting alone would render it near black under Forward+. LIGHT is a
+# bright outdoor-daylight variant for the toggle.
 const LIGHT_BACKGROUND := Color(0.55, 0.75, 0.95)
 const LIGHT_AMBIENT := Color(0.95, 0.95, 0.92)
 const LIGHT_AMBIENT_ENERGY := 0.6
@@ -69,13 +91,18 @@ const LIGHT_FOG := Color(0.72, 0.82, 0.95)
 const LIGHT_FOG_DENSITY := 0.006
 const LIGHT_SUN_COLOR := Color(1.0, 0.98, 0.92)
 const LIGHT_SUN_ENERGY := 1.0
-const DARK_BACKGROUND := Color(0.04, 0.04, 0.05)
-const DARK_AMBIENT := Color(0.45, 0.4, 0.55)
-const DARK_AMBIENT_ENERGY := 0.18
-const DARK_FOG := Color(0.06, 0.05, 0.09)
-const DARK_FOG_DENSITY := 0.018
-const DARK_SUN_COLOR := Color(1.0, 1.0, 1.0)
-const DARK_SUN_ENERGY := 0.45
+const FACILITY_BACKGROUND := Color(0.05, 0.06, 0.08)
+const FACILITY_AMBIENT := Color(0.42, 0.46, 0.55)
+const FACILITY_AMBIENT_ENERGY := 0.22
+const FACILITY_FOG := Color(0.08, 0.09, 0.12)
+const FACILITY_FOG_DENSITY := 0.012
+const FACILITY_SUN_COLOR := Color(0.82, 0.86, 0.95)
+const FACILITY_SUN_ENERGY := 0.45
+# Volumetric fog albedo per mode (separate from the classic distance fog
+# above). Facility is a muted cool tone that, paired with the emission in the
+# scene, reads as a moody haze in the gloom; daylight is a brighter blue.
+const LIGHT_VOL_FOG := Color(0.78, 0.85, 0.95)
+const FACILITY_VOL_FOG := Color(0.30, 0.34, 0.42)
 
 const MIME_BATTLE_CRIES := [
 	"MIMES- ATTACK!", "MIMES- STRIKE!", "MIMES- POUNCE!", "MIMES- ENTRAP!",
@@ -107,6 +134,9 @@ var rules: GameRulesScript = null
 var room_client: Node = null
 var online_mode: bool = false
 var snapshot_received: bool = false
+# Set once we begin swapping back to the lobby on a Play Again restart, so a
+# second phase/snapshot in the same frame doesn't emit the screen change twice.
+var returning_to_lobby: bool = false
 var phase_label: String = ""
 var turn_ends_at_ms: int = 0
 var input_seq: int = 0
@@ -134,9 +164,46 @@ var predictor: OnlinePredictorScript = null
 # player lets go.
 var _jump_was_held: bool = false
 
+# Rising-edge tracker for the shoot button so holding the mouse fires exactly
+# one shot per press. The server also gates re-fires on its cooldown, but
+# debouncing here keeps the wire stream to one shoot message per click.
+var _shoot_was_held: bool = false
+# Rising-edge tracker for the use-item key so holding E activates exactly once
+# per press. The server no-ops a use_item with an empty slot anyway.
+var _use_item_was_held: bool = false
+# Last server-reported activeItem for the local player. Read on the use_item
+# rising edge so a leap activation can arm the predictor's local leap
+# prediction at the same moment the server sets leapArmed.
+var _held_item: String = ""
+# Wall-clock ms of the last shoot message sent. Mirrors the server's cooldown
+# so rapid clicking doesn't spend wire frames on shots the server will reject.
+var _last_shot_at_ms: int = -1000000
+# Overcharge armed for the local player: the next shot skips the cooldown gate.
+# Predicted client-side like leap - set on the use_item rising edge, cleared
+# when the shot fires. The server is authoritative (its overchargeArmed gates
+# the actual piercing shot); this flag only lets the client fire early without
+# waiting a round-trip, so it isn't read back from the snapshot.
+var _overcharge_armed: bool = false
+
+# Online-only. Pooled sphere renderer for server-authoritative projectiles.
+# Instantiated on the online path once World is ready; null in offline mode.
+var projectile_renderer: RefCounted = null
+
+# Online-only. Pooled floating-icon renderer for server-authoritative power-up
+# items. Instantiated alongside projectile_renderer on the online path; null in
+# offline mode.
+var item_renderer: RefCounted = null
+
+# Online-only. Pooled ring renderer for server-authoritative portal pairs.
+# Instantiated alongside item_renderer on the online path; null in offline mode.
+var portal_renderer: RefCounted = null
+
 # Shared.
 var local_player: PlayerScript = null
 var local_player_id: String = ""
+# Winning team once the match ends, "" while live. Lets a host_changed
+# promotion that lands on the end screen re-show the overlay with Play Again.
+var _ended_win_team: String = ""
 var player_nodes: Dictionary = {}
 var contacts: ContactInteractionsScript = null
 # OfflineMode owns the offline match lifecycle: rules wiring, bot
@@ -167,6 +234,7 @@ func _ready() -> void:
 	online_mode = not GameState.server_url.is_empty()
 	apply_light_mode(Settings.light_mode)
 	_setup_menu()
+	hud.play_again_requested.connect(_on_play_again)
 	reconnect = ReconnectControllerScript.new()
 	add_child(reconnect)
 	reconnect.attach(self)
@@ -188,6 +256,15 @@ func _ready() -> void:
 		_start_online()
 	else:
 		offline.start()
+	if not Settings.has_seen_tutorial:
+		start_tutorial()
+
+func start_tutorial() -> void:
+	# Free any live overlay first so a restart never stacks instances.
+	var existing := get_node_or_null("TutorialOverlay")
+	if existing != null:
+		existing.free()
+	add_child(TUTORIAL_OVERLAY.instantiate())
 
 func _setup_menu() -> void:
 	menu = IN_GAME_MENU.instantiate()
@@ -196,10 +273,10 @@ func _setup_menu() -> void:
 	menu.quit_to_menu_requested.connect(_on_menu_quit)
 
 func apply_light_mode(enabled: bool) -> void:
-	# Re-skin the arena Environment + DirectionalLight to either the
-	# default moody dusk palette or a bright daylight palette. Called once
-	# on _ready and again whenever Settings.light_mode toggles while a
-	# match is in progress.
+	# Re-skin the arena Environment + DirectionalLight to either the default
+	# dim facility palette or the bright daylight palette. Called once on
+	# _ready and again whenever Settings.light_mode toggles while a match is
+	# in progress.
 	var env_node: WorldEnvironment = get_node_or_null("Environment")
 	var sun: DirectionalLight3D = get_node_or_null("DirectionalLight")
 	if env_node == null or env_node.environment == null or sun == null:
@@ -211,16 +288,18 @@ func apply_light_mode(enabled: bool) -> void:
 		env.ambient_light_energy = LIGHT_AMBIENT_ENERGY
 		env.fog_light_color = LIGHT_FOG
 		env.fog_density = LIGHT_FOG_DENSITY
+		env.volumetric_fog_albedo = LIGHT_VOL_FOG
 		sun.light_energy = LIGHT_SUN_ENERGY
 		sun.light_color = LIGHT_SUN_COLOR
 	else:
-		env.background_color = DARK_BACKGROUND
-		env.ambient_light_color = DARK_AMBIENT
-		env.ambient_light_energy = DARK_AMBIENT_ENERGY
-		env.fog_light_color = DARK_FOG
-		env.fog_density = DARK_FOG_DENSITY
-		sun.light_energy = DARK_SUN_ENERGY
-		sun.light_color = DARK_SUN_COLOR
+		env.background_color = FACILITY_BACKGROUND
+		env.ambient_light_color = FACILITY_AMBIENT
+		env.ambient_light_energy = FACILITY_AMBIENT_ENERGY
+		env.fog_light_color = FACILITY_FOG
+		env.fog_density = FACILITY_FOG_DENSITY
+		env.volumetric_fog_albedo = FACILITY_VOL_FOG
+		sun.light_energy = FACILITY_SUN_ENERGY
+		sun.light_color = FACILITY_SUN_COLOR
 
 func _unhandled_input(event: InputEvent) -> void:
 	if event.is_action_pressed("ui_pause") and not menu.visible:
@@ -248,6 +327,12 @@ func _process(delta: float) -> void:
 		# same XZ each frame.
 		if snapshot_received and local_player != null:
 			predictor.advance_local_prediction(delta)
+		if projectile_renderer != null:
+			projectile_renderer.tick(delta)
+		if item_renderer != null:
+			item_renderer.tick(delta)
+		if portal_renderer != null:
+			portal_renderer.tick(delta)
 	else:
 		offline.drive_hud()
 
@@ -278,6 +363,10 @@ func _physics_process(delta: float) -> void:
 
 func _start_online() -> void:
 	hud.append_log("Connecting...")
+	projectile_renderer = ProjectileRendererScript.new(self)
+	item_renderer = ItemRendererScript.new(self)
+	portal_renderer = PortalRendererScript.new(self)
+	hud.set_crosshair_visible(true)
 	# The lobby already opened the WebSocket (and sent `join`) before
 	# transitioning into the arena. Re-use that RoomClient so reconciliation
 	# state and the initial snapshot survive the scene swap. Only fall back
@@ -348,6 +437,13 @@ func _on_snapshot(snapshot: Dictionary, you_are: String) -> void:
 	# different origin and replaying them would compound the offset.
 	pending_inputs.clear()
 	contacts.reset_cooldowns()
+	if projectile_renderer != null:
+		projectile_renderer.clear()
+	# Items ride the snapshot (static between pickups); reconcile the floor set.
+	if item_renderer != null:
+		item_renderer.render_from_snapshot(snapshot.get("items", []))
+	if portal_renderer != null:
+		portal_renderer.render_from_snapshot(snapshot.get("portals", []))
 	for entry in snapshot.get("players", []):
 		if entry.get("id", "") == local_player_id and local_player != null:
 			var pos: Dictionary = entry.get("position", {"x": 0.0, "z": 0.0})
@@ -379,6 +475,10 @@ func _on_delta(delta: Dictionary) -> void:
 	_sync_players_from_snapshot(delta.get("players", []))
 	if predictor != null:
 		predictor.reconcile(delta)
+	if projectile_renderer != null:
+		# Field is omitted entirely when no projectiles are live; treat absent
+		# as empty so the renderer hides any sphere that just terminated.
+		projectile_renderer.render_from_delta(delta.get("projectiles", []))
 
 func _on_room_event(event: Dictionary) -> void:
 	match event.get("kind", event.get("t", "")):
@@ -387,6 +487,77 @@ func _on_room_event(event: Dictionary) -> void:
 		"win": _handle_win(event)
 		"phase": _handle_phase_event(event.get("phase", ""), int(event.get("cryIndex", -1)))
 		"tag_result": _handle_tag_result(event)
+		"projectile_fired": _handle_projectile_fired(event)
+		"projectile_hit": _handle_projectile_hit(event)
+		"item_spawn": _handle_item_spawn(event)
+		"item_pickup": _handle_item_pickup(event)
+		"portal_open": _handle_portal_open(event)
+		"portal_close": _handle_portal_close(event)
+		"player_teleport": _handle_player_teleport(event)
+		"host_changed": _handle_host_changed(event)
+
+func _handle_projectile_fired(event: Dictionary) -> void:
+	# Spawn the sphere instantly so the shooter sees their shot a frame after
+	# the click instead of waiting for the next delta. The delta then keeps it
+	# in sync with the authoritative path.
+	if projectile_renderer != null:
+		projectile_renderer.on_fired(event.get("projectile", {}))
+
+func _handle_projectile_hit(event: Dictionary) -> void:
+	# Hide the sphere the instant the server says it terminated (wall, enemy,
+	# or expiry) rather than waiting for the next delta to drop it.
+	if projectile_renderer != null:
+		projectile_renderer.on_hit(String(event.get("projectileId", "")))
+
+func _handle_item_spawn(event: Dictionary) -> void:
+	# Show a respawned item instantly. The initial layout rides the snapshot;
+	# only respawns arrive as item_spawn events.
+	if item_renderer != null:
+		item_renderer.on_spawn(event.get("item", {}))
+
+func _handle_item_pickup(event: Dictionary) -> void:
+	# Hide the picked-up item immediately. If the local player grabbed it, the
+	# held-item HUD slot fills off the next delta's activeItem.
+	if item_renderer != null:
+		item_renderer.on_pickup(String(event.get("itemId", "")))
+
+func _handle_portal_open(event: Dictionary) -> void:
+	# Show the pair instantly. Live pairs also ride the snapshot, so a late
+	# joiner / reconnect picks up an in-progress pair without this event.
+	if portal_renderer != null:
+		portal_renderer.on_open(event.get("portal", {}))
+
+func _handle_portal_close(event: Dictionary) -> void:
+	# Hide the pair the instant the server expires it rather than waiting for the
+	# next snapshot to drop it.
+	if portal_renderer != null:
+		portal_renderer.on_close(String(event.get("id", "")))
+
+func _handle_player_teleport(event: Dictionary) -> void:
+	# Snap the local player's facing away from the exit wall. Only the local
+	# body needs this: its yaw is client-owned (sampled from rotation.y each
+	# input tick), so the server can't turn it through the delta the way it
+	# does for remote bodies. Position still reconciles off the next delta.
+	if String(event.get("playerId", "")) != local_player_id:
+		return
+	if local_player != null:
+		local_player.rotation.y = float(event.get("yaw", local_player.rotation.y))
+
+func _handle_host_changed(event: Dictionary) -> void:
+	# The original host left and the server promoted a remaining human. If that
+	# is us, take the host role so the end-screen Play Again shows up - even
+	# though we never held a host token. If the match has already ended and the
+	# overlay is up, re-show it with the button now enabled.
+	if String(event.get("hostId", "")) != local_player_id or local_player_id.is_empty():
+		return
+	GameState.is_room_host = true
+	if hud != null:
+		hud.append_log("The host left - you're the host now.")
+	# If the match already ended, the overlay is up without a Play Again button;
+	# re-show it now that we can restart.
+	if online_mode and hud != null and not _ended_win_team.is_empty():
+		var victory: bool = local_player != null and _ended_win_team == local_player.team
+		hud.show_end(victory, true)
 
 func _handle_tag_result(event: Dictionary) -> void:
 	if bool(event.get("ok", false)):
@@ -417,6 +588,12 @@ func _surface_tag_reject(reason: String) -> void:
 	hud.append_log(hint)
 
 func _handle_phase_event(phase: String, cry_index: int) -> void:
+	# A drop back to `filling` means the host hit Play Again: the server reset
+	# the room to a fresh lobby with the same roster. Swap back to the lobby
+	# scene (keeping the live connection) rather than staying on the arena.
+	if phase == "filling":
+		_return_to_lobby()
+		return
 	# Server sends 'turn_mime' / 'turn_clown' for the active-turn phases plus a
 	# server-picked cryIndex so every client renders the same banner text. If
 	# the server omits cryIndex (pre-cryIndex room build), falls back to slot 0
@@ -429,6 +606,8 @@ func _handle_phase_event(phase: String, cry_index: int) -> void:
 		hud.flash_battle_cry(CLOWN_BATTLE_CRIES[idx % CLOWN_BATTLE_CRIES.size()], "clown")
 	elif phase == "free_roam":
 		hud.flash_disperse()
+	if labyrinth != null:
+		labyrinth.set_phase_tint(phase)
 
 const VersionCheck := preload("res://scripts/network/version_check.gd")
 
@@ -573,6 +752,40 @@ func _stream_input(delta: float) -> void:
 		_jump_was_held = true
 	else:
 		_jump_was_held = false
+	# Shoot is a standalone message, not part of the input frame. Rising-edge
+	# on the mouse so a held button fires one shot per press; aim is the
+	# camera's forward (-Z of its basis), giving full 3D pitch+yaw aim.
+	if not frozen and _input_active() and Input.is_action_pressed("shoot"):
+		var shot_now_ms: int = int(Time.get_unix_time_from_system() * 1000.0)
+		var off_cooldown: bool = (
+			_overcharge_armed
+			or shot_now_ms - _last_shot_at_ms >= int(SharedConstants.SHOOT_COOLDOWN_MS)
+		)
+		if not _shoot_was_held and off_cooldown and local_player.camera != null:
+			var aim: Vector3 = -local_player.camera.global_transform.basis.z
+			room_client.send_shoot(aim)
+			_last_shot_at_ms = shot_now_ms
+			_overcharge_armed = false
+		_shoot_was_held = true
+	else:
+		_shoot_was_held = false
+	# Use-item is a standalone message like shoot, on the rising edge of E so a
+	# held key activates once per press. The server no-ops an empty slot.
+	if not frozen and _input_active() and Input.is_action_pressed("use_item"):
+		if not _use_item_was_held:
+			room_client.send_use_item()
+			# Arm the local leap prediction in the same frame the server arms
+			# leapArmed, so the next predicted jump uses the boosted arc
+			# without waiting a round-trip for the authoritative leaping flag.
+			if _held_item == "leap":
+				predictor.arm_leap()
+			elif _held_item == "surge":
+				predictor.arm_surge()
+			elif _held_item == "overcharge":
+				_overcharge_armed = true
+		_use_item_was_held = true
+	else:
+		_use_item_was_held = false
 	var input_now_ms: int = int(Time.get_unix_time_from_system() * 1000.0)
 	pending_inputs.append({
 		"seq": input_seq,
@@ -582,6 +795,12 @@ func _stream_input(delta: float) -> void:
 		"jump": jump_pressed,
 		"now_ms": input_now_ms,
 	})
+	# Drop the oldest un-acked input when the buffer is over budget. Only
+	# happens when the server has stopped acking; the dropped frames are
+	# already too stale to reconcile against, and the cap keeps replay cost
+	# bounded so a stalled ack can never spiral into a crash.
+	while pending_inputs.size() > MAX_PENDING_INPUTS:
+		pending_inputs.pop_front()
 	room_client.send_input(
 		input_seq,
 		INPUT_TICK_PERIOD,
@@ -657,6 +876,12 @@ func _apply_player_state(entry: Dictionary) -> void:
 		# server-authoritative bits that the client cannot derive on its own.
 		node.frozen = is_frozen
 		node.sprint_energy = sprint
+		# Held power-up slot is server-authoritative: a pickup sets activeItem,
+		# a use_item clears it. Empty/absent string hides the slot. Cache the
+		# type so the use_item key can arm a type-specific local prediction
+		# (leap) in the same frame it sends the message.
+		_held_item = String(entry.get("activeItem", ""))
+		hud.set_held_item(_held_item)
 		# Local body's jumpStartedAt comes from the predictor, not the
 		# server snapshot - the predictor is one tick ahead and stays
 		# in sync via the reconcile replay. Setting it here would lag
@@ -664,6 +889,11 @@ func _apply_player_state(entry: Dictionary) -> void:
 	else:
 		node.apply_remote_state(pos_vec, yaw, is_frozen, sprint)
 		node.jump_started_at_ms = jump_started_at_ms
+		# Server-authoritative leap flag so the remote body's render-rate
+		# arc Y uses the boosted amplitude that clears walls.
+		node.leaping = bool(entry.get("leaping", false))
+		# Cloak deadline: while in the future the body hides itself locally.
+		node.cloak_until_ms = int(entry.get("cloakUntil", 0))
 
 func _handle_tagged(event: Dictionary) -> void:
 	var victim_id: String = event.get("victimId", "")
@@ -689,9 +919,28 @@ func _handle_saved(event: Dictionary) -> void:
 
 func _handle_win(event: Dictionary) -> void:
 	var team: String = event.get("team", "")
+	_ended_win_team = team
 	var victory: bool = local_player != null and team == local_player.team
-	hud.show_end(victory)
+	# Only the private-lobby host gets Play Again; the server gates the
+	# restart_room message to the host player anyway, so a non-host who
+	# never sees the button can't trigger a restart. OPEN matches have no
+	# host, so the button stays hidden for them too. is_room_host also covers
+	# a player the server promoted mid-match after the original host left.
+	var is_host: bool = online_mode and GameState.is_room_host
+	# Free the cursor so the end overlay is clickable; while captured the mouse
+	# only steers look yaw (player.gd gates motion on MOUSE_MODE_CAPTURED). A
+	# fresh match recaptures it when the next local player spawns.
+	Input.set_mouse_mode(Input.MOUSE_MODE_VISIBLE)
+	hud.show_end(victory, is_host)
 	_play_stinger(victory)
+
+func _on_play_again() -> void:
+	if room_client == null or not room_client.is_connected_to_server():
+		return
+	# Disable to swallow a double-click; the server's phase->filling
+	# broadcast swaps us to the lobby a moment later.
+	hud.set_play_again_enabled(false)
+	room_client.send_restart_room()
 
 # ---------------------------------------------------------------------------
 # Shared helpers
@@ -740,6 +989,7 @@ func _spawn_player(id: String, p_name: String, team: String, is_bot: bool, is_lo
 		p.predicted_externally = online_mode
 		p.sprint_changed.connect(hud.set_sprint)
 		p.frozen_changed.connect(_on_local_frozen_changed)
+		hud.set_local_player_id(id)
 		hud.set_local_team(team)
 
 func _team_spawn_offset(team: String) -> Vector3:
@@ -805,6 +1055,38 @@ func _on_back_to_menu() -> void:
 	NetClient.close()
 	room_client = null
 	requested_screen.emit("menu")
+
+# Host hit Play Again: the server reset the room to `filling` and re-broadcast
+# the lobby roster. Hand the still-open connection back to the lobby scene,
+# which adopts it (see lobby.gd's NetClient.is_open() branch) instead of
+# kicking off a fresh matchmaker call. We must NOT call NetClient.close() here -
+# that path is for leaving the match entirely.
+func _return_to_lobby() -> void:
+	if returning_to_lobby:
+		return
+	returning_to_lobby = true
+	Input.set_mouse_mode(Input.MOUSE_MODE_VISIBLE)
+	if reconnect != null:
+		reconnect.stop()
+	# Detach our own handlers before the swap so a delta landing in the same
+	# frame doesn't drive a half-torn-down arena, and so the surviving
+	# RoomClient has no dangling connections to this freed scene.
+	_disconnect_room_handlers()
+	room_client = null
+	requested_screen.emit("lobby")
+
+# Disconnect every RoomClient signal _start_online wired up. Used on the Play
+# Again hand-off so the RoomClient (which outlives this scene under NetClient)
+# carries no connections into the freed arena.
+func _disconnect_room_handlers() -> void:
+	if room_client == null:
+		return
+	room_client.connected.disconnect(_on_room_connected)
+	room_client.disconnected.disconnect(_on_room_disconnected)
+	room_client.snapshot_received.disconnect(_on_snapshot)
+	room_client.delta_received.disconnect(_on_delta)
+	room_client.event_received.disconnect(_on_room_event)
+	room_client.error_received.disconnect(_on_room_error)
 
 func _on_menu_resume() -> void:
 	menu.close()

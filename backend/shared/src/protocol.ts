@@ -3,7 +3,7 @@
  * Bump PROTOCOL_VERSION on every breaking change. The room rejects mismatches.
  */
 
-export const PROTOCOL_VERSION = 2 as const;
+export const PROTOCOL_VERSION = 3 as const;
 
 export type Team = 'mime' | 'clown';
 
@@ -48,6 +48,55 @@ export interface PlayerInput {
   actionUnfreeze?: string;
 }
 
+/**
+ * Active projectile broadcast in deltas. Server owns the simulation;
+ * clients render the position and predict locally for snappy feedback.
+ * Full 3D — projectiles follow the camera's aim direction so airborne
+ * targets and over-the-wall skill shots are both possible.
+ */
+export interface Projectile {
+  id: string;
+  ownerId: string;
+  team: Team;
+  position: Vec3;
+  velocity: Vec3;
+  spawnedAt: number;
+  expiresAt: number;
+  // Set on an Overcharge shot: the projectile passes through walls (the
+  // server skips its wall-collision check) and was fired ignoring the
+  // cooldown. Absent on ordinary shots. The client renders it like any
+  // other projectile - it draws server positions and never tests walls.
+  piercing?: boolean;
+}
+
+// Power-up kinds. surge + radar are always in a match's rotation; the rest
+// are drawn deterministically from the seed at match start (see items.ts).
+// PR #5 carries the state/spawn/pickup/use plumbing only; the per-type
+// effects land in later PRs.
+export type ItemType = 'leap' | 'portal' | 'surge' | 'clone' | 'radar' | 'overcharge' | 'cloak';
+
+// A power-up resting on the floor. Static between pickups, so items ride the
+// snapshot and change via item_spawn / item_pickup events rather than the
+// per-tick delta. id is a stable `i-${index}` from the spawn layout.
+export interface Item {
+  id: string;
+  type: ItemType;
+  position: Vec3;
+}
+
+// A live teleport pair. Both mouths are anchored on wall segments; a player
+// who walks within range of either mouth emerges at the other (offset into the
+// adjacent open cell). The pair closes after PORTAL_DURATION_MS. Server owns the
+// geometry and emergence; the wire carries only the two wall-anchored mouth
+// points so all clients render the same pair. a is the activating player's
+// entry mouth (the wall they faced); b is the server-picked random exit.
+export interface Portal {
+  id: string;
+  a: Vec3;
+  b: Vec3;
+  expiresAt: number;
+}
+
 export interface PlayerState {
   id: string;
   name: string;
@@ -70,6 +119,43 @@ export interface PlayerState {
   // rather than the height itself; client and server both compute Y from
   // the same source.
   jumpStartedAt: number | null;
+  // The single power-up the player is holding, or undefined for an empty
+  // slot. No stacking: picking one up while holding is blocked server-side.
+  activeItem?: ItemType;
+  // True while the current jump arc is a Leap (high arc that clears wall
+  // height). Set when a leap-armed jump triggers, cleared when the arc
+  // ends. Rides the wire so client prediction and remote rendering pick
+  // the boosted amplitude (Y is recomputed from jumpStartedAt on both
+  // sides, so the flag - not the height - is the source of truth).
+  leaping?: boolean;
+  // Server-authoritative "the next jump is a Leap" flag. Set by using a
+  // leap power-up, consumed (cleared) when that jump triggers. Serialized
+  // with the rest of PlayerState but unused by the client.
+  leapArmed?: boolean;
+  // Wall-clock (Unix ms) the player's Surge power-up stays active until.
+  // Surge is "active" while surgeUntil > now; it is never cleared, just left
+  // in the past, so reconciliation always adopts the server's value.
+  surgeUntil?: number;
+  // Wall-clock (Unix ms) the player's Radar power-up stays active until. While
+  // radarUntil > now the local player's minimap reveals the enemy team. Server
+  // state only; the visual consumer is the minimap HUD. Like surgeUntil it is
+  // never cleared, just left in the past.
+  radarUntil?: number;
+  // Set by using an Overcharge power-up: the player's next shot bypasses the
+  // cooldown and its projectile pierces walls. Consumed (cleared) by the
+  // server when that shot fires. Rides the snapshot so the client can show
+  // the armed state and reconcile its optimistic local arming.
+  overchargeArmed?: boolean;
+  // Set on a Clone power-up's temporary ally bot: the wall-clock (Unix ms) at
+  // which it despawns. Present only on clones (undefined on real players and
+  // ordinary bots), so it doubles as the "is a clone" marker. Carried on the
+  // player so it survives RoomPersistence across a deploy.
+  cloneExpiresAt?: number;
+  // Wall-clock (Unix ms) the player's Cloak power-up stays active until. While
+  // cloakUntil > now other clients hide this body. Visual only — the player
+  // stays taggable and shootable server-side. Like surgeUntil it is never
+  // cleared, just left in the past.
+  cloakUntil?: number;
 }
 
 export type RoomPhase = 'filling' | 'locked' | 'free_roam' | 'turn_mime' | 'turn_clown' | 'ended';
@@ -83,6 +169,13 @@ export interface RoomSnapshot {
   turnEndsAt: number;
   players: PlayerState[];
   winner?: Team;
+  // Available power-ups on the floor. Omitted when none are spawned. Items
+  // are static, so they ride the snapshot; pickups/respawns arrive as events.
+  items?: Item[];
+  // Live portal pairs. Omitted when none are open. Like items they ride the
+  // snapshot so a late joiner / reconnect sees an in-progress pair; open/close
+  // transitions arrive as events.
+  portals?: Portal[];
 }
 
 export type Topology = 'plane' | 'torus' | 'mobius' | 'klein';
@@ -110,11 +203,28 @@ export type ClientToServer =
   | { t: 'tag_attempt'; targetId: string; clientTime: number }
   | { t: 'unfreeze_attempt'; targetId: string; clientTime: number }
   | { t: 'ping'; clientTime: number }
+  // Fire a freeze projectile from the player's current position in
+  // the (dirX, dirY, dirZ) direction. Client normalizes the vector
+  // before sending. nowMs anchors the spawn timestamp the same way
+  // input.nowMs does for jumps; server clamps to ±500 ms of its own
+  // clock to bound client skew. Server enforces the cooldown.
+  | { t: 'shoot'; dirX: number; dirY: number; dirZ: number; nowMs: number }
   // Private-lobby host transitions the room out of `filling` and into
   // `free_roam`. Server fills empty slots with bots on receipt and rejects
   // the message from any non-host player or when the phase is past
   // `filling`.
-  | { t: 'start_match' };
+  | { t: 'start_match' }
+  // Activate the held power-up. Server clears the slot and broadcasts
+  // item_used; per-type effects are dispatched in later PRs. No-op when
+  // the player holds nothing.
+  | { t: 'use_item' }
+  // Private-lobby host restarts a finished match with the same roster: the
+  // server resets to `filling` with a fresh seed so players return to the
+  // lobby without re-sharing the code. `topology` is optional; the server
+  // keeps the current topology when omitted (the host's end-screen picker
+  // sends a concrete value, resolving "Random" client-side first). Rejected
+  // from non-host players or while the match is not yet `ended`.
+  | { t: 'restart_room'; topology?: Topology };
 
 export type ServerToClient =
   // sessionToken is the resumption secret for the recipient of this
@@ -122,10 +232,20 @@ export type ServerToClient =
   // and send it on the next join after a WS drop to resume the same
   // PlayerState rather than spawning fresh.
   | { t: 'snapshot'; snapshot: RoomSnapshot; youAre: string; sessionToken: string }
-  | { t: 'delta'; players: PlayerState[]; phase: RoomPhase; turnEndsAt: number; ackSeq: number }
+  | {
+      t: 'delta';
+      players: PlayerState[];
+      phase: RoomPhase;
+      turnEndsAt: number;
+      ackSeq: number;
+      projectiles?: Projectile[];
+    }
   | { t: 'event'; kind: GameEvent }
   | { t: 'tag_result'; ok: boolean; targetId?: string; reason?: string }
   | { t: 'unfreeze_result'; ok: boolean; targetId?: string; reason?: string }
+  // Server-side ack for a shoot message. ok=false carries the reject
+  // reason (`cooldown`, `wrong_turn`, `frozen`, `bad_direction`).
+  | { t: 'shoot_result'; ok: boolean; projectileId?: string; reason?: string }
   | { t: 'pong'; serverTime: number; clientTime: number }
   | { t: 'error'; code: ErrorCode; message: string };
 
@@ -136,7 +256,35 @@ export type GameEvent =
   // phases. All clients render the same cry by indexing into their local
   // MIME_BATTLE_CRIES / CLOWN_BATTLE_CRIES list. Omitted on non-turn phases.
   | { kind: 'phase'; phase: RoomPhase; cryIndex?: number }
-  | { kind: 'win'; team: Team };
+  | { kind: 'win'; team: Team }
+  // Projectile lifecycle. `fired` is broadcast for everyone to render
+  // the trail/audio; `hit` is broadcast on impact (with the victim id
+  // when the projectile hit a player, omitted when it hit a wall or
+  // expired in flight). The freeze itself rides on the standard
+  // 'tagged' event so existing handlers fire unchanged.
+  | { kind: 'projectile_fired'; projectile: Projectile }
+  | { kind: 'projectile_hit'; projectileId: string; victimId?: string }
+  // Power-up lifecycle. `item_spawn` is broadcast when an available item
+  // (re)appears after its respawn timer (the initial layout rides the
+  // snapshot); `item_pickup` when a player grabs one; `item_used` when a
+  // held power-up is activated.
+  | { kind: 'item_spawn'; item: Item }
+  | { kind: 'item_pickup'; itemId: string; playerId: string }
+  | { kind: 'item_used'; playerId: string; itemType: ItemType }
+  // Portal lifecycle. `portal_open` carries the new pair (also added to the
+  // snapshot for late joiners); `portal_close` fires when the pair expires.
+  | { kind: 'portal_open'; portal: Portal }
+  | { kind: 'portal_close'; id: string }
+  // A player was pulled through a portal. Position rides the next delta like
+  // any other movement, but yaw is client-owned for the local player, so the
+  // server emits the emergence yaw here for that client to snap its facing
+  // away from the exit wall. Remote bodies pick up the same yaw from the delta.
+  | { kind: 'player_teleport'; playerId: string; yaw: number }
+  // The private-room host left and the server promoted a remaining human so
+  // start/restart stays reachable. Broadcast to everyone; the client whose own
+  // id equals hostId assumes the host role (the original host token never
+  // reaches a promoted joiner, so this event is how they learn it).
+  | { kind: 'host_changed'; hostId: string };
 
 export const BATTLE_CRY_COUNT = 8;
 
@@ -170,4 +318,67 @@ export interface MatchmakeCreateResponse {
 export interface MatchmakeJoinResponse {
   roomId: string;
   wsUrl: string;
+  // The host's chosen topology, surfaced so the joiner can be told which room
+  // they're entering before connecting (the picker is host-only).
+  topology: Topology;
+}
+
+// Parties let friends queue into open matchmaking together: all members land
+// in the same room and on the same team. The matchmaker owns party state; the
+// room is unchanged - members just pass the party's `team` as their join
+// `preferTeam`, which the room already honors. Cap is PARTY_CAP (= TEAM_TARGET)
+// so the whole party fits one team and the other fills from strangers + bots.
+export const PARTY_CAP = 4;
+
+export interface PartyMember {
+  // Stable per-member id minted on create/join. The owner stashes it and sends
+  // it back to leave; it is not a secret, just a handle for removal/dedupe.
+  memberId: string;
+  name: string;
+}
+
+export interface PartyCreateBody {
+  name: string;
+}
+
+export interface PartyJoinBody {
+  name: string;
+}
+
+export interface PartyLeaveBody {
+  memberId: string;
+}
+
+// Returned by create and join. `memberId` is the caller's own handle; `members`
+// is the full current roster so the party UI can render everyone.
+export interface PartyStateResponse {
+  partyId: string;
+  code: string;
+  team: Team;
+  memberId: string;
+  members: PartyMember[];
+}
+
+// Returned by GET /party/:id, the poll the party screen runs to keep the
+// member list live as friends join. No `memberId` - the caller already holds
+// its own from create/join.
+export interface PartyView {
+  partyId: string;
+  code: string;
+  team: Team;
+  members: PartyMember[];
+}
+
+// Optional body on POST /open/join. When `partyId` is present the matchmaker
+// routes the caller to the party's shared room and returns the party `team`.
+export interface OpenJoinBody {
+  partyId?: string;
+}
+
+export interface OpenJoinResponse {
+  roomId: string;
+  wsUrl: string;
+  topology: Topology;
+  // Present only for party joins - the team every member should request.
+  team?: Team;
 }

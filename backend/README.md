@@ -19,7 +19,16 @@ Pure logic used on the server, on the client (via Godot's port of the same algor
 
 ### `@cm/matchmaker`
 
-HTTP endpoints the client hits before joining a match: code rooms, public-room listing, room provisioning. Backed by `MatchmakerDO`, a single Durable Object that holds the open-rooms pool and KV-stored lobby codes.
+HTTP endpoints the client hits before joining a match: code rooms, public-room listing, room provisioning, and parties. Backed by `MatchmakerDO`, a single Durable Object that holds the open-rooms pool, the live parties, and KV-stored lobby codes.
+
+Routes (all gated on the `X-Protocol-Version` header):
+
+- `POST /lobby` — create a private room, returns `{ code, roomId, wsUrl, hostToken }`.
+- `POST /lobby/:code/join` — join a private room by code (no host token in the response).
+- `POST /open/join` — join the most-populated open room under the soft cap, or spin up a fresh one. Accepts an optional `partyId` so a whole party lands in the same room on the same team.
+- `POST /party/create`, `POST /party/:code/join`, `POST /party/:id/leave`, `GET /party/:id` — party lifecycle. A party is a shared team handle; members each call `/open/join` with the party id when the leader starts.
+- `POST /lobby/room-state`, `POST /lobby/room-detach` — room → matchmaker callbacks that keep the open-rooms pool current.
+- `GET /healthz` — uptime check.
 
 ### `@cm/room`
 
@@ -60,13 +69,15 @@ Both require `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID` in the environme
 
 ## Protocol overview
 
-1. Client `POST`s to the matchmaker (`/host`, `/code`, `/strangers`) which returns a room URL + session-bound `hostToken` and/or `sessionToken`.
+`PROTOCOL_VERSION = 3` (in `backend/shared/src/protocol.ts`). The matchmaker rejects stale clients at the HTTP layer (`X-Protocol-Version` header) and the room re-checks the `v` field on the WS `join`.
+
+1. Client `POST`s to the matchmaker (`/lobby`, `/lobby/:code/join`, `/open/join`) which returns a room URL + session-bound `hostToken` and/or `sessionToken`.
 2. Client opens a WebSocket to that room URL. First message is `{ t: 'join', name, v, preferTeam?, hostToken?, sessionToken? }`.
 3. Server sends `{ t: 'snapshot' }` with the full world state + the client's `playerId` and a fresh `sessionToken`. Save it — the client can present it on reconnect to resume the same slot inside `RECONNECT_GRACE_MS`.
 4. Client streams `{ t: 'input' }` at the input tick rate. Each input has a monotonic `seq` so the server can ack with `ackSeq` in every `delta`.
-5. Server broadcasts `{ t: 'delta' }` per game tick with the player roster (positions, velocities, sprint, frozen, jumpStartedAt), phase, and `ackSeq`.
+5. Server broadcasts `{ t: 'delta' }` per game tick with the player roster (positions, velocities, sprint, frozen, jumpStartedAt, activeItem), phase, live items/portals/projectiles, and `ackSeq`.
 
-Tag and unfreeze go through their own client → server messages and produce a `{ t: 'tag_result' }` ack. See `backend/shared/src/protocol.ts` for the full schema.
+Tag, unfreeze, `shoot` (a freeze projectile down the player's aim), and `use_item` (the held power-up) each go through their own client → server messages and produce an ack (`tag_result`, `shoot_result`). Projectile, item, portal, and `host_changed` lifecycle changes ride `event` broadcasts. See `backend/shared/src/protocol.ts` for the full schema.
 
 ## Adding a new client → server message
 

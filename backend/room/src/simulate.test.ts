@@ -293,6 +293,172 @@ describe('Room.simulate', () => {
     expect(after.position.z).toBe(startPos.z);
   });
 
+  it('spawns a clone on the owner team and despawns it once its lifetime elapses', () => {
+    const room = makeRoom();
+    setPhase(room, 'free_roam');
+    const owner = placeHuman(room, 'h1', 'mime', 0, 0);
+    const bots = (room as unknown as { bots: { spawnClone: (o: PlayerState) => void } }).bots;
+    bots.spawnClone(owner);
+    const players = (room as unknown as { players: Map<string, PlayerState> }).players;
+    const clone = [...players.values()].find((p) => p.cloneExpiresAt !== undefined);
+    expect(clone).toBeDefined();
+    expect(clone!.bot).toBe(true);
+    expect(clone!.team).toBe('mime');
+    // Past the despawn deadline, the bot tick sweeps it out of the roster.
+    vi.advanceTimersByTime(31_000);
+    (room as unknown as { bots: { simulate: (dt: number) => void } }).bots.simulate(1 / 60);
+    expect(players.has(clone!.id)).toBe(false);
+  });
+
+  it('a bot does not see or react to a cloaked enemy', () => {
+    const room = makeRoom();
+    setPhase(room, 'free_roam');
+    const bot = placeHuman(room, 'b1', 'mime', 0, 0);
+    bot.bot = true;
+    const enemy = placeHuman(room, 'c1', 'clown', 3, 0);
+    const bots = room as unknown as {
+      bots: {
+        simulate: (dt: number) => void;
+        botMinds: Map<string, { engagedTargetId: string | null }>;
+      };
+    };
+    // In plain sight the bot engages the enemy.
+    bots.bots.simulate(1 / 60);
+    expect(bots.bots.botMinds.get('b1')!.engagedTargetId).toBe('c1');
+    // Once the enemy cloaks, the bot drops the target outright (no investigate).
+    enemy.cloakUntil = Date.now() + 2_000;
+    bots.bots.simulate(1 / 60);
+    expect(bots.bots.botMinds.get('b1')!.engagedTargetId).toBeNull();
+  });
+
+  it('fires a projectile at a visible enemy during its own turn', () => {
+    const room = makeRoom();
+    setPhase(room, 'turn_mime');
+    const bot = placeHuman(room, 'b1', 'mime', 0, 0);
+    bot.bot = true;
+    placeHuman(room, 'c1', 'clown', 5, 0);
+    const projectiles = room as unknown as {
+      projectiles: { getProjectiles: () => Array<{ ownerId: string; team: string }> };
+      bots: { simulate: (dt: number) => void };
+    };
+    projectiles.bots.simulate(1 / 60);
+    const shots = projectiles.projectiles.getProjectiles();
+    expect(shots).toHaveLength(1);
+    expect(shots[0]!.ownerId).toBe('b1');
+    expect(shots[0]!.team).toBe('mime');
+  });
+
+  it('does not fire on the enemy team turn', () => {
+    const room = makeRoom();
+    setPhase(room, 'turn_clown');
+    const bot = placeHuman(room, 'b1', 'mime', 0, 0);
+    bot.bot = true;
+    placeHuman(room, 'c1', 'clown', 5, 0);
+    const harness = room as unknown as {
+      projectiles: { getProjectiles: () => unknown[] };
+      bots: { simulate: (dt: number) => void };
+    };
+    harness.bots.simulate(1 / 60);
+    expect(harness.projectiles.getProjectiles()).toHaveLength(0);
+  });
+
+  it('dumps a radar power-up immediately to free the slot', () => {
+    const room = makeRoom();
+    setPhase(room, 'free_roam');
+    const bot = placeHuman(room, 'b1', 'mime', 0, 0);
+    bot.bot = true;
+    bot.activeItem = 'radar';
+    (room as unknown as { bots: { simulate: (dt: number) => void } }).bots.simulate(1 / 60);
+    expect(bot.activeItem).toBeUndefined();
+    expect(bot.radarUntil).toBeGreaterThan(Date.now());
+  });
+
+  it('arms overcharge and fires a piercing shot in the same tick', () => {
+    const room = makeRoom();
+    setPhase(room, 'turn_mime');
+    const bot = placeHuman(room, 'b1', 'mime', 0, 0);
+    bot.bot = true;
+    bot.activeItem = 'overcharge';
+    placeHuman(room, 'c1', 'clown', 5, 0);
+    const harness = room as unknown as {
+      projectiles: { getProjectiles: () => Array<{ piercing?: boolean }> };
+      bots: { simulate: (dt: number) => void };
+    };
+    harness.bots.simulate(1 / 60);
+    expect(bot.activeItem).toBeUndefined();
+    const shots = harness.projectiles.getProjectiles();
+    expect(shots).toHaveLength(1);
+    expect(shots[0]!.piercing).toBe(true);
+  });
+
+  it('spends a leap power-up to boost the jump it takes while fleeing', () => {
+    const room = makeRoom();
+    setPhase(room, 'turn_clown');
+    const bot = placeHuman(room, 'b1', 'mime', 0, 0);
+    bot.bot = true;
+    bot.activeItem = 'leap';
+    // Enemy within the flee-evade jump trigger distance so wantJump latches.
+    placeHuman(room, 'c1', 'clown', 1.5, 0);
+    (room as unknown as { bots: { simulate: (dt: number) => void } }).bots.simulate(1 / 60);
+    expect(bot.activeItem).toBeUndefined();
+    expect(bot.jumpStartedAt).not.toBeNull();
+    expect(bot.leaping).toBe(true);
+  });
+
+  it('drains a backlog of queued inputs in one tick (up to the per-tick cap)', () => {
+    // A Cloudflare DO setInterval cannot hold a precise 60 Hz, so a slow
+    // tick can leave several inputs queued. A one-per-tick drain would let
+    // the queue overflow and drop inputs the client already predicted,
+    // snapping its authoritative base backward (the "backstep"). One tick
+    // must instead apply the backlog up to MAX_INPUTS_PER_TICK (6).
+    const room = makeRoom();
+    setPhase(room, 'free_roam');
+    placeHuman(room, 'h1', 'mime', 0, 0);
+    for (let seq = 1; seq <= 6; seq += 1) {
+      queueInput(room, 'h1', {
+        seq,
+        dt: 1 / 60,
+        move: { x: 1, z: 0 },
+        lookYaw: 0,
+        sprint: false,
+        nowMs: Date.now(),
+      });
+    }
+    callSimulate(room);
+    const players = (room as unknown as { players: Map<string, PlayerState> }).players;
+    const lastApplied = (room as unknown as { lastAppliedSeq: Map<string, number> }).lastAppliedSeq;
+    // All 6 applied in the single tick: ack at 6, position advanced 6 steps.
+    expect(lastApplied.get('h1')).toBe(6);
+    expect(players.get('h1')!.position.x).toBeCloseTo(6 * (3.2 / 60), 5);
+  });
+
+  it('carries an over-cap backlog across ticks without dropping inputs', () => {
+    // Ten queued inputs, cap of 6: the first tick applies 6 and the second
+    // applies the remaining 4. No seq is skipped, so the client never sees
+    // ackSeq jump past an input the server failed to apply.
+    const room = makeRoom();
+    setPhase(room, 'free_roam');
+    placeHuman(room, 'h1', 'mime', 0, 0);
+    for (let seq = 1; seq <= 10; seq += 1) {
+      queueInput(room, 'h1', {
+        seq,
+        dt: 1 / 60,
+        move: { x: 1, z: 0 },
+        lookYaw: 0,
+        sprint: false,
+        nowMs: Date.now(),
+      });
+    }
+    const lastApplied = (room as unknown as { lastAppliedSeq: Map<string, number> }).lastAppliedSeq;
+    callSimulate(room);
+    expect(lastApplied.get('h1')).toBe(6);
+    vi.advanceTimersByTime(1000 / 60);
+    callSimulate(room);
+    expect(lastApplied.get('h1')).toBe(10);
+    const players = (room as unknown as { players: Map<string, PlayerState> }).players;
+    expect(players.get('h1')!.position.x).toBeCloseTo(10 * (3.2 / 60), 5);
+  });
+
   it('still advances lastAppliedSeq for a frozen player so the client can prune', () => {
     // Regression for the 2026-05-29 freeze: a frozen player's inputs were
     // drained without updating lastAppliedSeq, so every delta's ackSeq

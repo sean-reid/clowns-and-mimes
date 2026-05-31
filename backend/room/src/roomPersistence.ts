@@ -9,7 +9,7 @@
 // match, new seed, walk-through-walls because the client kept its old
 // labyrinth. See the 2026-05-28 playtest report.
 //
-// Single storage key `room:state:v1`. The whole room snapshot is one
+// Single storage key `room:state:v2`. The whole room snapshot is one
 // blob because the players are read together with the phase/seed/host
 // fields on restart - separating them would let restore see an
 // inconsistent intermediate state if a write was interrupted. CF DO
@@ -17,12 +17,13 @@
 // write, so save() is fire-and-forget and call sites stay synchronous.
 
 import type { PlayerState, RoomPhase, Team, Topology } from '@cm/shared';
+import type { ItemState } from './itemManager.ts';
 
 export interface PersistedRoomState {
   // Bumped when the schema changes incompatibly. load() returns null if
   // the on-disk version doesn't match, so a deploy that introduces a new
   // shape starts the rooms fresh rather than crashing on restore.
-  version: 1;
+  version: 2;
   phase: RoomPhase;
   turnEndsAt: number;
   topology: Topology;
@@ -35,6 +36,9 @@ export interface PersistedRoomState {
   // included so restart does not double-fill them (the room re-fills if
   // these are dropped, producing 2x the intended bot count).
   players: PlayerState[];
+  // Live item state including in-flight respawn timers, so a deploy
+  // mid-match restores pickups already taken rather than re-spawning them.
+  items: ItemState[];
   // [playerId, sessionToken]. Restored straight back into SessionManager
   // so the client's existing token still resolves on resume.
   sessions: Array<[string, string]>;
@@ -45,7 +49,7 @@ export interface PersistedRoomState {
   pendingDisconnects: Array<[string, number]>;
 }
 
-const STORAGE_KEY = 'room:state:v1';
+const STORAGE_KEY = 'room:state:v2';
 
 export class RoomPersistence {
   constructor(private readonly storage: DurableObjectStorage) {}
@@ -57,7 +61,7 @@ export class RoomPersistence {
   async load(): Promise<PersistedRoomState | null> {
     const v = await this.storage.get<PersistedRoomState>(STORAGE_KEY);
     if (!v) return null;
-    if (v.version !== 1) return null;
+    if (v.version !== 2) return null;
     return v;
   }
 

@@ -2,6 +2,12 @@ import type {
   MatchmakeCreateBody,
   MatchmakeCreateResponse,
   MatchmakeJoinResponse,
+  OpenJoinResponse,
+  PartyCreateBody,
+  PartyJoinBody,
+  PartyLeaveBody,
+  PartyStateResponse,
+  Team,
   Topology,
 } from '@cm/shared';
 import { PROTOCOL_VERSION } from '@cm/shared';
@@ -34,7 +40,11 @@ export default {
     if (
       url.pathname === '/lobby' ||
       url.pathname.match(/^\/lobby\/[A-Z0-9]+\/join$/) ||
-      url.pathname === '/open/join'
+      url.pathname === '/open/join' ||
+      url.pathname === '/party/create' ||
+      url.pathname.match(/^\/party\/[A-Z0-9]+\/join$/) ||
+      url.pathname.match(/^\/party\/[0-9a-f-]+\/leave$/) ||
+      url.pathname.match(/^\/party\/[0-9a-f-]+$/)
     ) {
       const mismatch = enforceProtocolVersion(req);
       if (mismatch !== null) return mismatch;
@@ -47,7 +57,22 @@ export default {
       return joinByCode(joinMatch[1]!, env);
     }
     if (req.method === 'POST' && url.pathname === '/open/join') {
-      return joinOpenRoom(env);
+      return joinOpenRoom(req, env);
+    }
+    if (req.method === 'POST' && url.pathname === '/party/create') {
+      return createParty(req, env);
+    }
+    const partyJoinMatch = url.pathname.match(/^\/party\/([A-Z0-9]+)\/join$/);
+    if (req.method === 'POST' && partyJoinMatch) {
+      return joinParty(partyJoinMatch[1]!, req, env);
+    }
+    const partyLeaveMatch = url.pathname.match(/^\/party\/([0-9a-f-]+)\/leave$/);
+    if (req.method === 'POST' && partyLeaveMatch) {
+      return leaveParty(partyLeaveMatch[1]!, req, env);
+    }
+    const partyStateMatch = url.pathname.match(/^\/party\/([0-9a-f-]+)$/);
+    if (req.method === 'GET' && partyStateMatch) {
+      return pollParty(partyStateMatch[1]!, env);
     }
     if (req.method === 'POST' && url.pathname === '/lobby/room-state') {
       return forwardToDO(env, '/roomState', req);
@@ -122,22 +147,103 @@ async function joinByCode(code: string, env: Env): Promise<Response> {
   const res: MatchmakeJoinResponse = {
     roomId: parsed.roomId,
     wsUrl: wsUrlFor(env, parsed.roomId, parsed.topology),
+    topology: parsed.topology,
   };
   return json(res);
 }
 
-async function joinOpenRoom(env: Env): Promise<Response> {
-  const doRes = await callDO(env, '/openJoin', { method: 'POST', body: '{}' });
+async function joinOpenRoom(req: Request, env: Env): Promise<Response> {
+  // Body is optional. A party member sends { partyId } so the DO routes them
+  // to the shared room and hands back the party's team; a solo join sends
+  // nothing. Tolerate an empty/malformed body either way.
+  let partyId: string | undefined;
+  try {
+    const body = (await req.json()) as { partyId?: unknown };
+    if (typeof body.partyId === 'string') partyId = body.partyId;
+  } catch {
+    // no body
+  }
+  const doRes = await callDO(env, '/openJoin', {
+    method: 'POST',
+    body: JSON.stringify(partyId ? { partyId } : {}),
+    headers: { 'content-type': 'application/json' },
+  });
   if (!doRes.ok) {
     return error(500, 'matchmaker_unavailable');
   }
-  const parsed = (await doRes.json()) as { roomId: string; topology: Topology };
-  const res: MatchmakeJoinResponse & { topology: Topology } = {
+  const parsed = (await doRes.json()) as { roomId: string; topology: Topology; team?: Team };
+  const res: OpenJoinResponse = {
     roomId: parsed.roomId,
     wsUrl: wsUrlFor(env, parsed.roomId, parsed.topology),
     topology: parsed.topology,
+    team: parsed.team,
   };
   return json(res);
+}
+
+async function createParty(req: Request, env: Env): Promise<Response> {
+  let body: PartyCreateBody;
+  try {
+    body = (await req.json()) as PartyCreateBody;
+  } catch {
+    return error(400, 'invalid_json');
+  }
+  const doRes = await callDO(env, '/partyCreate', {
+    method: 'POST',
+    body: JSON.stringify({ name: body.name ?? '' }),
+    headers: { 'content-type': 'application/json' },
+  });
+  if (!doRes.ok) return error(500, 'matchmaker_unavailable');
+  return json((await doRes.json()) as PartyStateResponse);
+}
+
+async function joinParty(code: string, req: Request, env: Env): Promise<Response> {
+  let body: PartyJoinBody;
+  try {
+    body = (await req.json()) as PartyJoinBody;
+  } catch {
+    return error(400, 'invalid_json');
+  }
+  const doRes = await callDO(env, '/partyJoin', {
+    method: 'POST',
+    body: JSON.stringify({ code, name: body.name ?? '' }),
+    headers: { 'content-type': 'application/json' },
+  });
+  // Surface the DO's own status (404 not_found / 409 full) so the client can
+  // tell "bad code" from "party full".
+  return new Response(await doRes.text(), {
+    status: doRes.status,
+    headers: { 'content-type': 'application/json' },
+  });
+}
+
+async function leaveParty(partyId: string, req: Request, env: Env): Promise<Response> {
+  let body: PartyLeaveBody;
+  try {
+    body = (await req.json()) as PartyLeaveBody;
+  } catch {
+    return error(400, 'invalid_json');
+  }
+  if (typeof body.memberId !== 'string') return error(400, 'invalid_body');
+  const doRes = await callDO(env, '/partyLeave', {
+    method: 'POST',
+    body: JSON.stringify({ partyId, memberId: body.memberId }),
+    headers: { 'content-type': 'application/json' },
+  });
+  if (!doRes.ok) return error(500, 'matchmaker_unavailable');
+  return json((await doRes.json()) as { ok: boolean });
+}
+
+async function pollParty(partyId: string, env: Env): Promise<Response> {
+  const doRes = await callDO(env, `/partyState?id=${encodeURIComponent(partyId)}`, {
+    method: 'GET',
+  });
+  // Pass the DO's own status through so a 404 (party gone) reaches the client
+  // as a 404 rather than being flattened to a 500.
+  return new Response(await doRes.text(), {
+    status: doRes.status,
+    headers: { 'content-type': 'application/json' },
+  });
 }
 
 async function forwardToDO(env: Env, path: string, req: Request): Promise<Response> {

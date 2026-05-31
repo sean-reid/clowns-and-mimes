@@ -11,6 +11,7 @@ signal closed
 @onready var mute_music: CheckButton = $Content/MuteMusic
 @onready var mute_sfx: CheckButton = $Content/MuteSfx
 @onready var light_mode: CheckButton = $Content/LightMode
+@onready var reset_settings: Button = $Content/ResetSettings
 @onready var close_button: Button = $Content/Close
 
 func _ready() -> void:
@@ -20,7 +21,9 @@ func _ready() -> void:
 	mute_music.toggled.connect(Settings.set_music_muted)
 	mute_sfx.toggled.connect(Settings.set_sfx_muted)
 	light_mode.toggled.connect(_on_light_mode_toggled)
+	reset_settings.pressed.connect(_on_reset_settings)
 	close_button.pressed.connect(_on_close)
+	AudioBus.wire_button_sfx(self)
 
 func _refresh_from_settings() -> void:
 	mute_music.button_pressed = Settings.music_muted
@@ -34,6 +37,14 @@ func _on_light_mode_toggled(value: bool) -> void:
 	var arena := get_tree().get_first_node_in_group("arena")
 	if arena and arena.has_method("apply_light_mode"):
 		arena.apply_light_mode(value)
+
+func _on_reset_settings() -> void:
+	Settings.reset_to_defaults()
+	_refresh_from_settings()
+	# Re-apply the visual side immediately if a match is live below us.
+	var arena := get_tree().get_first_node_in_group("arena")
+	if arena and arena.has_method("apply_light_mode"):
+		arena.apply_light_mode(Settings.light_mode)
 
 func _on_close() -> void:
 	closed.emit()

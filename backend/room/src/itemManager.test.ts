@@ -1,0 +1,320 @@
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import type { PlayerState, ServerToClient, Team, Topology, Vec3 } from '@cm/shared';
+import type { WallSegment } from '@cm/shared/labyrinth';
+import { CLOAK_DURATION_MS, ITEM_RESPAWN_MS, RADAR_DURATION_MS } from '@cm/shared/items';
+import { SURGE_DURATION_MS } from '@cm/shared/movement';
+import { PORTAL_DURATION_MS, PORTAL_TELEPORT_COOLDOWN_MS } from '@cm/shared/portals';
+import { ItemManager, type ItemManagerHost } from './itemManager.ts';
+
+function makePlayer(
+  id: string,
+  team: Team,
+  pos: Vec3,
+  over: Partial<PlayerState> = {},
+): PlayerState {
+  return {
+    id,
+    name: id,
+    team,
+    bot: false,
+    position: pos,
+    yaw: 0,
+    frozen: false,
+    sprintEnergy: 100,
+    sprinting: false,
+    jumpStartedAt: null,
+    ...over,
+  };
+}
+
+interface Harness {
+  im: ItemManager;
+  players: Map<string, PlayerState>;
+  connections: Map<WebSocket, { playerId: string }>;
+  broadcasts: ServerToClient[];
+  cloneSpawns: PlayerState[];
+}
+
+function harness(seed = 1, topology: Topology = 'plane', walls: WallSegment[] = []): Harness {
+  const players = new Map<string, PlayerState>();
+  const connections = new Map<WebSocket, { playerId: string }>();
+  const broadcasts: ServerToClient[] = [];
+  const cloneSpawns: PlayerState[] = [];
+  const host: ItemManagerHost = {
+    players,
+    connections,
+    worldWidth: 80,
+    getTopology: () => topology,
+    getSeed: () => seed,
+    getWalls: () => walls,
+    broadcast: (msg) => broadcasts.push(msg),
+    spawnClone: (owner) => cloneSpawns.push(owner),
+  };
+  return { im: new ItemManager(host), players, connections, broadcasts, cloneSpawns };
+}
+
+function kinds(broadcasts: ServerToClient[]): string[] {
+  return broadcasts.map((m) => (m as { kind?: { kind: string } }).kind?.kind ?? '');
+}
+
+afterEach(() => {
+  vi.useRealTimers();
+});
+
+describe('ItemManager.spawn', () => {
+  it('populates the floor from the deterministic layout', () => {
+    const h = harness();
+    h.im.spawn();
+    expect(h.im.available().length).toBeGreaterThan(0);
+  });
+});
+
+describe('ItemManager.step pickup', () => {
+  it('a player on an item picks it up and it leaves the floor', () => {
+    const h = harness();
+    h.im.spawn();
+    const target = h.im.available()[0]!;
+    h.players.set('p', makePlayer('p', 'mime', { ...target.position }));
+    h.im.step(1 / 60);
+    const p = h.players.get('p')!;
+    expect(p.activeItem).toBe(target.type);
+    expect(kinds(h.broadcasts)).toContain('item_pickup');
+    expect(h.im.available().some((i) => i.id === target.id)).toBe(false);
+  });
+
+  it('does not pick up while already holding (no stacking)', () => {
+    const h = harness();
+    h.im.spawn();
+    const target = h.im.available()[0]!;
+    h.players.set('p', makePlayer('p', 'mime', { ...target.position }, { activeItem: 'surge' }));
+    h.im.step(1 / 60);
+    expect(kinds(h.broadcasts)).not.toContain('item_pickup');
+    expect(h.im.available().some((i) => i.id === target.id)).toBe(true);
+  });
+
+  it('a frozen player cannot pick up', () => {
+    const h = harness();
+    h.im.spawn();
+    const target = h.im.available()[0]!;
+    h.players.set('p', makePlayer('p', 'mime', { ...target.position }, { frozen: true }));
+    h.im.step(1 / 60);
+    expect(kinds(h.broadcasts)).not.toContain('item_pickup');
+  });
+});
+
+describe('ItemManager.step respawn', () => {
+  it('respawns the item after ITEM_RESPAWN_MS and broadcasts item_spawn', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(0);
+    const h = harness();
+    h.im.spawn();
+    const target = h.im.available()[0]!;
+    h.players.set('p', makePlayer('p', 'mime', { ...target.position }));
+    h.im.step(1 / 60);
+    expect(h.im.available().some((i) => i.id === target.id)).toBe(false);
+    // Move the player off so the respawned item isn't grabbed again.
+    h.players.get('p')!.position = { x: 1000, y: 0, z: 1000 };
+    vi.setSystemTime(ITEM_RESPAWN_MS + 1);
+    h.im.step(1 / 60);
+    expect(kinds(h.broadcasts)).toContain('item_spawn');
+    expect(h.im.available().some((i) => i.id === target.id)).toBe(true);
+  });
+});
+
+describe('ItemManager.onUseItem', () => {
+  it('clears the held item and broadcasts item_used', () => {
+    const h = harness();
+    const ws = {} as WebSocket;
+    h.players.set('p', makePlayer('p', 'mime', { x: 0, y: 0, z: 0 }, { activeItem: 'leap' }));
+    h.connections.set(ws, { playerId: 'p' });
+    h.im.onUseItem(ws);
+    expect(h.players.get('p')!.activeItem).toBeUndefined();
+    expect(h.broadcasts).toEqual([
+      { t: 'event', kind: { kind: 'item_used', playerId: 'p', itemType: 'leap' } },
+    ]);
+  });
+
+  it('is a no-op when the player holds nothing', () => {
+    const h = harness();
+    const ws = {} as WebSocket;
+    h.players.set('p', makePlayer('p', 'mime', { x: 0, y: 0, z: 0 }));
+    h.connections.set(ws, { playerId: 'p' });
+    h.im.onUseItem(ws);
+    expect(h.broadcasts).toHaveLength(0);
+  });
+
+  it('arms the next jump when a leap is used', () => {
+    const h = harness();
+    const ws = {} as WebSocket;
+    h.players.set('p', makePlayer('p', 'mime', { x: 0, y: 0, z: 0 }, { activeItem: 'leap' }));
+    h.connections.set(ws, { playerId: 'p' });
+    h.im.onUseItem(ws);
+    expect(h.players.get('p')!.leapArmed).toBe(true);
+  });
+
+  it('does not arm a leap when a different item is used', () => {
+    const h = harness();
+    const ws = {} as WebSocket;
+    h.players.set('p', makePlayer('p', 'mime', { x: 0, y: 0, z: 0 }, { activeItem: 'surge' }));
+    h.connections.set(ws, { playerId: 'p' });
+    h.im.onUseItem(ws);
+    expect(h.players.get('p')!.leapArmed).toBeUndefined();
+  });
+
+  it('asks the host to spawn an ally when a clone is used', () => {
+    const h = harness();
+    const ws = {} as WebSocket;
+    const owner = makePlayer('p', 'mime', { x: 0, y: 0, z: 0 }, { activeItem: 'clone' });
+    h.players.set('p', owner);
+    h.connections.set(ws, { playerId: 'p' });
+    h.im.onUseItem(ws);
+    expect(h.cloneSpawns).toEqual([owner]);
+    expect(kinds(h.broadcasts)).toContain('item_used');
+  });
+
+  it('sets a surge deadline when a surge is used', () => {
+    const h = harness();
+    const ws = {} as WebSocket;
+    h.players.set('p', makePlayer('p', 'mime', { x: 0, y: 0, z: 0 }, { activeItem: 'surge' }));
+    h.connections.set(ws, { playerId: 'p' });
+    const before = Date.now();
+    h.im.onUseItem(ws);
+    const surgeUntil = h.players.get('p')!.surgeUntil ?? 0;
+    expect(surgeUntil).toBeGreaterThanOrEqual(before + SURGE_DURATION_MS);
+    expect(surgeUntil).toBeLessThanOrEqual(Date.now() + SURGE_DURATION_MS);
+  });
+
+  it('sets a radar deadline when a radar is used', () => {
+    const h = harness();
+    const ws = {} as WebSocket;
+    h.players.set('p', makePlayer('p', 'mime', { x: 0, y: 0, z: 0 }, { activeItem: 'radar' }));
+    h.connections.set(ws, { playerId: 'p' });
+    const before = Date.now();
+    h.im.onUseItem(ws);
+    const radarUntil = h.players.get('p')!.radarUntil ?? 0;
+    expect(radarUntil).toBeGreaterThanOrEqual(before + RADAR_DURATION_MS);
+    expect(radarUntil).toBeLessThanOrEqual(Date.now() + RADAR_DURATION_MS);
+  });
+
+  it('arms the next shot when an overcharge is used', () => {
+    const h = harness();
+    const ws = {} as WebSocket;
+    h.players.set('p', makePlayer('p', 'mime', { x: 0, y: 0, z: 0 }, { activeItem: 'overcharge' }));
+    h.connections.set(ws, { playerId: 'p' });
+    h.im.onUseItem(ws);
+    expect(h.players.get('p')!.overchargeArmed).toBe(true);
+  });
+
+  it('sets a cloak deadline when a cloak is used', () => {
+    const h = harness();
+    const ws = {} as WebSocket;
+    h.players.set('p', makePlayer('p', 'mime', { x: 0, y: 0, z: 0 }, { activeItem: 'cloak' }));
+    h.connections.set(ws, { playerId: 'p' });
+    const before = Date.now();
+    h.im.onUseItem(ws);
+    const cloakUntil = h.players.get('p')!.cloakUntil ?? 0;
+    expect(cloakUntil).toBeGreaterThanOrEqual(before + CLOAK_DURATION_MS);
+    expect(cloakUntil).toBeLessThanOrEqual(Date.now() + CLOAK_DURATION_MS);
+  });
+});
+
+describe('ItemManager portal', () => {
+  // One wall the player at the origin (yaw 0 -> facing -z) hits, plus a second
+  // elsewhere so the exit lands on a different wall.
+  const PORTAL_WALLS = [
+    { ax: -2, az: -3, bx: 2, bz: -3 },
+    { ax: -2, az: 10, bx: 2, bz: 10 },
+  ];
+
+  function openPortalFor(z: number): Harness {
+    const h = harness(1, 'plane', PORTAL_WALLS);
+    const ws = {} as WebSocket;
+    h.players.set('p', makePlayer('p', 'mime', { x: 0, y: 0, z }, { activeItem: 'portal' }));
+    h.connections.set(ws, { playerId: 'p' });
+    h.im.onUseItem(ws);
+    return h;
+  }
+
+  it('opens a wall-anchored pair on use and broadcasts portal_open', () => {
+    const h = openPortalFor(-2);
+    expect(kinds(h.broadcasts)).toContain('portal_open');
+    expect(h.im.activePortals()).toHaveLength(1);
+    const portal = h.im.activePortals()[0]!;
+    // Entry mouth lands on the faced wall (z=-3); exit on the other wall (z=10).
+    expect(portal.a.z).toBeCloseTo(-3, 6);
+    expect(portal.b.z).toBeCloseTo(10, 6);
+  });
+
+  it('is a no-op pair when there are no walls but still clears the slot', () => {
+    const h = harness(1, 'plane', []);
+    const ws = {} as WebSocket;
+    h.players.set('p', makePlayer('p', 'mime', { x: 0, y: 0, z: 0 }, { activeItem: 'portal' }));
+    h.connections.set(ws, { playerId: 'p' });
+    h.im.onUseItem(ws);
+    expect(h.players.get('p')!.activeItem).toBeUndefined();
+    expect(kinds(h.broadcasts)).toContain('item_used');
+    expect(kinds(h.broadcasts)).not.toContain('portal_open');
+    expect(h.im.activePortals()).toHaveLength(0);
+  });
+
+  it('teleports a player who walks into a mouth to the opposite side', () => {
+    const h = openPortalFor(-2);
+    // A second player stands on the exit mouth (z=10) and steps through.
+    h.players.set('q', makePlayer('q', 'clown', { x: 0, y: 0, z: 10 }));
+    h.im.step(1 / 60);
+    // Emerges off the entry wall into the open cell, well away from z=10.
+    expect(h.players.get('q')!.position.z).toBeLessThan(0);
+  });
+
+  it('faces the player away from the exit wall and broadcasts player_teleport', () => {
+    const h = openPortalFor(-2);
+    h.players.set('q', makePlayer('q', 'clown', { x: 0, y: 0, z: 10 }));
+    h.im.step(1 / 60);
+    // Entry wall at z=-3, emergence on the +z side, so facing is +z (yaw +/-PI).
+    expect(Math.abs(h.players.get('q')!.yaw)).toBeCloseTo(Math.PI, 6);
+    const ev = h.broadcasts
+      .map((m) => (m as { kind?: { kind: string; playerId?: string; yaw?: number } }).kind)
+      .find((k) => k?.kind === 'player_teleport');
+    expect(ev?.playerId).toBe('q');
+    expect(Math.abs(ev?.yaw ?? 0)).toBeCloseTo(Math.PI, 6);
+  });
+
+  it('does not teleport the opener while they stand on the entry mouth', () => {
+    const h = openPortalFor(-2);
+    h.im.step(1 / 60);
+    expect(h.players.get('p')!.position).toEqual({ x: 0, y: 0, z: -2 });
+  });
+
+  it('does not bounce a player back through a mouth within the teleport cooldown', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(0);
+    const h = openPortalFor(-2);
+    h.players.set('q', makePlayer('q', 'clown', { x: 0, y: 0, z: 10 }));
+    // First step pulls q through, off the entry wall to z<0.
+    h.im.step(1 / 60);
+    expect(h.players.get('q')!.position.z).toBeLessThan(0);
+    // q steps clear so the blocked set releases, then walks straight back onto
+    // a mouth. Still within the cooldown, they are not pulled through again.
+    h.players.get('q')!.position = { x: 0, y: 0, z: 5 };
+    h.im.step(1 / 60);
+    h.players.get('q')!.position = { x: 0, y: 0, z: 10 };
+    h.im.step(1 / 60);
+    expect(h.players.get('q')!.position).toEqual({ x: 0, y: 0, z: 10 });
+    // Once the cooldown lapses, re-entry teleports again (pairs are two-way).
+    vi.setSystemTime(PORTAL_TELEPORT_COOLDOWN_MS + 1);
+    h.im.step(1 / 60);
+    expect(h.players.get('q')!.position.z).toBeLessThan(0);
+    vi.useRealTimers();
+  });
+
+  it('closes the pair after PORTAL_DURATION_MS and broadcasts portal_close', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(0);
+    const h = openPortalFor(-2);
+    expect(h.im.activePortals()).toHaveLength(1);
+    vi.setSystemTime(PORTAL_DURATION_MS + 1);
+    h.im.step(1 / 60);
+    expect(kinds(h.broadcasts)).toContain('portal_close');
+    expect(h.im.activePortals()).toHaveLength(0);
+  });
+});

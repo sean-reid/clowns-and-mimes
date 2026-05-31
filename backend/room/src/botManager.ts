@@ -11,6 +11,7 @@
 import type { PlayerState, ServerToClient, Team, Topology, Vec2, Vec3 } from '@cm/shared';
 import { topologyDistance, wrapPosition, wrappedUnitDelta } from '@cm/shared/topology';
 import { pathCrossesWall, pointBlockedByWall, type WallSegment } from '@cm/shared/labyrinth';
+import { generateRandomName } from '@cm/shared/names';
 import {
   MAX_SPRINT,
   SPRINT_DRAIN_PER_S,
@@ -22,6 +23,13 @@ import type { BotPathfinder } from './botPathfinder.ts';
 
 // World half-extent (kept private here; Room owns the canonical constant).
 const WORLD_WIDTH = 80;
+
+// A player is hidden from bot perception while a Cloak power-up is active.
+// Mirrors the client's visual hide so bots can't see or react to a cloaked
+// enemy, matching what the cloaked player's opponents observe on screen.
+function isCloaked(p: PlayerState, now: number): boolean {
+  return p.cloakUntil !== undefined && p.cloakUntil > now;
+}
 
 // Bot AI constants. All bot tuning lives here so a single read explains
 // the AI's behavior.
@@ -43,6 +51,17 @@ const BOT_JUMP_REFRACTORY_MS = 1500;
 const BOT_JUMP_NOISE_PER_SECOND = 0.05;
 const BOT_JUMP_EVADE_BUFFER = 0.5;
 const BOT_JUMP_CORNER_THREAT_RADIUS = 4.0;
+// Bots fire at a visible enemy within this range during their turn. Inside
+// BOT_VISION_RADIUS but tighter, so shots have a realistic chance to connect
+// before the projectile expires.
+const BOT_SHOOT_RANGE = 18;
+// Random angular spread (radians) added to each bot shot so aim isn't pixel
+// perfect; keeps bots beatable and shots from feeling robotic.
+const BOT_SHOOT_AIM_JITTER = 0.09;
+// Clone power-up: a temporary ally bot lives this long, then despawns.
+const CLONE_DURATION_MS = 30_000;
+// Clone spawns this far from its owner, on the first unobstructed bearing.
+const CLONE_SPAWN_OFFSET = 2.0;
 
 interface BotMind {
   patrolTarget: { x: number; z: number };
@@ -56,77 +75,6 @@ interface BotMind {
   investigateUntil: number;
   recentTargets: Array<{ x: number; z: number }>;
   lastJumpedAt: number;
-}
-
-const BOT_NAME_ADJECTIVES = [
-  'Silent',
-  'Painted',
-  'Loud',
-  'Floppy',
-  'Crooked',
-  'Bashful',
-  'Velvet',
-  'Hushed',
-  'Ruffled',
-  'Striped',
-  'Glossy',
-  'Pale',
-  'Sneaky',
-  'Whiskered',
-  'Brittle',
-  'Tipsy',
-  'Polka',
-  'Wobbly',
-  'Crinkled',
-  'Powdered',
-  'Squeaky',
-  'Tufted',
-  'Knobbly',
-  'Frilly',
-  'Wonky',
-  'Boggled',
-  'Plucky',
-  'Drooping',
-];
-
-const BOT_NAME_NOUNS = [
-  'Bozo',
-  'Coulrophobe',
-  'Pierrot',
-  'Harlequin',
-  'Buffoon',
-  'Jester',
-  'Marceau',
-  'Tramp',
-  'Auguste',
-  'Whiteface',
-  'Carnie',
-  'Pagliacci',
-  'Punchinello',
-  'Hopo',
-  'Cake',
-  'Honk',
-  'Greasepaint',
-  'Stripes',
-  'Tear',
-  'Glove',
-  'Wig',
-  'Nose',
-  'Shoe',
-  'Banana',
-  'Pinwheel',
-  'Smile',
-  'Frown',
-  'Lapel',
-];
-
-function generateBotName(): string {
-  const adj = BOT_NAME_ADJECTIVES[Math.floor(Math.random() * BOT_NAME_ADJECTIVES.length)]!;
-  const noun = BOT_NAME_NOUNS[Math.floor(Math.random() * BOT_NAME_NOUNS.length)]!;
-  const num = Math.floor(Math.random() * 1000)
-    .toString()
-    .padStart(3, '0');
-  return `${adj}${noun}${num}`;
 }
 
 function clamp(v: number, lo: number, hi: number): number {
@@ -165,6 +113,10 @@ export interface BotManagerHost {
   freezePlayer(p: PlayerState): void;
   checkWin(): void;
   startMatch(): void;
+  // Fire a projectile on the bot's behalf; returns whether it launched.
+  botShoot(attacker: PlayerState, dir: Vec3): boolean;
+  // Activate the bot's held power-up (clears the slot, applies the effect).
+  useBotItem(player: PlayerState): void;
 }
 
 export class BotManager {
@@ -202,7 +154,7 @@ export class BotManager {
         const spawn = this.host.pickSpawnPosition(team);
         this.host.players.set(id, {
           id,
-          name: generateBotName(),
+          name: generateRandomName(),
           team,
           bot: true,
           position: spawn,
@@ -212,22 +164,90 @@ export class BotManager {
           sprinting: false,
           jumpStartedAt: null,
         });
-        this.botMinds.set(id, {
-          patrolTarget: this.randomPatrolPoint(),
-          patrolUntil: 0,
-          engagedTargetId: null,
-          lastDir: { x: 0, z: 0 },
-          lastYaw: 0,
-          progressSampleAt: Date.now(),
-          progressSamplePos: { x: spawn.x, z: spawn.z },
-          lastKnownPos: null,
-          investigateUntil: 0,
-          recentTargets: [],
-          lastJumpedAt: 0,
-        });
+        this.botMinds.set(id, this.freshMind(spawn, 0));
       }
     }
     this.host.notifyMatchmaker(this.host.humanCount(), this.host.botCount());
+  }
+
+  /**
+   * Spawn a Clone power-up's temporary ally: a bot on the owner's team,
+   * placed next to them, that despawns after CLONE_DURATION_MS. It rides the
+   * snapshot like any other player, so no event is needed; cloneExpiresAt on
+   * its PlayerState both schedules the despawn and survives persistence.
+   */
+  spawnClone(owner: PlayerState): void {
+    const id = crypto.randomUUID();
+    const spawn = this.cloneSpawnNear(owner);
+    this.host.players.set(id, {
+      id,
+      name: generateRandomName(),
+      team: owner.team,
+      bot: true,
+      position: spawn,
+      yaw: owner.yaw,
+      frozen: false,
+      sprintEnergy: MAX_SPRINT,
+      sprinting: false,
+      jumpStartedAt: null,
+      cloneExpiresAt: Date.now() + CLONE_DURATION_MS,
+    });
+    this.botMinds.set(id, this.freshMind(spawn, owner.yaw));
+    this.host.notifyMatchmaker(this.host.humanCount(), this.host.botCount());
+  }
+
+  private freshMind(pos: { x: number; z: number }, yaw: number): BotMind {
+    return {
+      patrolTarget: this.randomPatrolPoint(),
+      patrolUntil: 0,
+      engagedTargetId: null,
+      lastDir: { x: 0, z: 0 },
+      lastYaw: yaw,
+      progressSampleAt: Date.now(),
+      progressSamplePos: { x: pos.x, z: pos.z },
+      lastKnownPos: null,
+      investigateUntil: 0,
+      recentTargets: [],
+      lastJumpedAt: 0,
+    };
+  }
+
+  // First bearing around the owner at CLONE_SPAWN_OFFSET that doesn't land in
+  // a wall; falls back to the owner's own cell if every bearing is blocked.
+  private cloneSpawnNear(owner: PlayerState): Vec3 {
+    const walls = this.host.getWalls();
+    const topology = this.host.getTopology();
+    for (let i = 0; i < 8; i += 1) {
+      const a = (i / 8) * 2 * Math.PI;
+      const raw = {
+        x: owner.position.x + Math.cos(a) * CLONE_SPAWN_OFFSET,
+        z: owner.position.z + Math.sin(a) * CLONE_SPAWN_OFFSET,
+      };
+      const w = wrapPosition(raw, topology, WORLD_WIDTH);
+      if (walls.length === 0 || !pointBlockedByWall(walls, w.x, w.z)) {
+        return { x: w.x, y: owner.position.y, z: w.z };
+      }
+    }
+    return { x: owner.position.x, y: owner.position.y, z: owner.position.z };
+  }
+
+  // Despawn clones whose lifetime elapsed. Runs at the top of each bot tick.
+  // Re-checks win state because a team can lose its last standing member when
+  // a clone that was propping it up expires.
+  private sweepExpiredClones(now: number): void {
+    let removed = false;
+    for (const [id, p] of this.host.players) {
+      if (p.cloneExpiresAt !== undefined && p.cloneExpiresAt <= now) {
+        this.host.players.delete(id);
+        this.botMinds.delete(id);
+        this.host.lastSavedAt.delete(id);
+        removed = true;
+      }
+    }
+    if (removed) {
+      this.host.notifyMatchmaker(this.host.humanCount(), this.host.botCount());
+      this.host.checkWin();
+    }
   }
 
   /** Drop all bots. Called on detach when no humans remain. */
@@ -312,7 +332,7 @@ export class BotManager {
     return out;
   }
 
-  private nearestVisibleEnemy(bot: PlayerState): PlayerState | null {
+  private nearestVisibleEnemy(bot: PlayerState, now: number): PlayerState | null {
     let best: PlayerState | null = null;
     let bestDist = Infinity;
     const topology = this.host.getTopology();
@@ -320,6 +340,7 @@ export class BotManager {
       if (other.id === bot.id) continue;
       if (other.team === bot.team) continue;
       if (other.frozen) continue;
+      if (isCloaked(other, now)) continue;
       if (!this.botCanSee(bot.position, other.position)) continue;
       const d = topologyDistance(bot.position, other.position, topology, WORLD_WIDTH);
       if (d < bestDist) {
@@ -345,6 +366,7 @@ export class BotManager {
   simulate(dt: number): void {
     const active = this.host.getActiveTurnTeam();
     const now = Date.now();
+    this.sweepExpiredClones(now);
     const topology = this.host.getTopology();
     const walls = this.host.getWalls();
     const pathfinder = this.host.getPathfinder();
@@ -369,7 +391,7 @@ export class BotManager {
       };
       this.botMinds.set(bot.id, mind);
 
-      const candidate = this.nearestVisibleEnemy(bot);
+      const candidate = this.nearestVisibleEnemy(bot, now);
       const candidateDist = candidate
         ? topologyDistance(bot.position, candidate.position, topology, WORLD_WIDTH)
         : Infinity;
@@ -377,7 +399,15 @@ export class BotManager {
       let enemyDist = candidateDist;
       if (mind.engagedTargetId) {
         const existing = this.host.players.get(mind.engagedTargetId);
-        if (existing && !existing.frozen && existing.team !== bot.team) {
+        // A target that activates Cloak vanishes from bot perception entirely:
+        // engagement is dropped (the `else` below), with no investigate-the-
+        // last-known-position reaction a wall occlusion would trigger.
+        if (
+          existing &&
+          !existing.frozen &&
+          existing.team !== bot.team &&
+          !isCloaked(existing, now)
+        ) {
           const existingVisible = this.botCanSee(bot.position, existing.position);
           const existingDist = topologyDistance(
             bot.position,
@@ -439,6 +469,13 @@ export class BotManager {
       const fleeing =
         target !== null && enemyDist < BOT_VISION_RADIUS && active && active !== bot.team;
       const rescuing = rescueTarget !== null;
+      // Fire only on the bot's own turn, at a visible enemy in range. botShoot
+      // re-validates phase + cooldown, so this is the AI gate, not the rule.
+      const canShoot =
+        chasing &&
+        target !== null &&
+        enemyDist <= BOT_SHOOT_RANGE &&
+        this.botCanSee(bot.position, target.position);
 
       const sinceLastJump = now - mind.lastJumpedAt;
       const jumpEligible = bot.jumpStartedAt === null && sinceLastJump >= BOT_JUMP_REFRACTORY_MS;
@@ -468,9 +505,31 @@ export class BotManager {
           }
         }
       }
+      // Power-up use is decided before the jump applies so a Leap arms the
+      // very jump this tick. Other effects (surge / overcharge / cloak /
+      // clone / portal) take hold immediately; radar is dumped as dead weight.
+      if (
+        bot.activeItem !== undefined &&
+        this.botShouldUseItem(bot, {
+          chasing,
+          fleeing: fleeing === true,
+          wantJump,
+          canShoot,
+          enemyDist,
+        })
+      ) {
+        this.host.useBotItem(bot);
+      }
+
       if (wantJump) {
         bot.jumpStartedAt = now;
         mind.lastJumpedAt = now;
+        // A banked Leap turns this takeoff into the boosted arc, mirroring the
+        // human stepJump path. advanceIdleJumpState clears leaping on landing.
+        if (bot.leapArmed) {
+          bot.leaping = true;
+          bot.leapArmed = false;
+        }
       }
 
       let dir = { x: 0, z: 0 };
@@ -619,6 +678,18 @@ export class BotManager {
         this.host.checkWin();
       }
 
+      if (canShoot && target) {
+        const aim = wrappedUnitDelta(bot.position, target.position, topology, WORLD_WIDTH);
+        const jitter = (Math.random() - 0.5) * 2 * BOT_SHOOT_AIM_JITTER;
+        const cos = Math.cos(jitter);
+        const sin = Math.sin(jitter);
+        this.host.botShoot(bot, {
+          x: aim.x * cos - aim.z * sin,
+          y: 0,
+          z: aim.x * sin + aim.z * cos,
+        });
+      }
+
       if (
         rescuing &&
         rescueTarget &&
@@ -645,6 +716,47 @@ export class BotManager {
         0,
         MAX_SPRINT,
       );
+    }
+  }
+
+  /**
+   * Strategic power-up use, one held item at a time (no stacking). Each type
+   * fires only when its effect helps the bot's current intent; radar is dead
+   * weight for an AI that perceives players directly, so it's dumped to free
+   * the slot for something actionable.
+   */
+  private botShouldUseItem(
+    bot: PlayerState,
+    opts: {
+      chasing: boolean;
+      fleeing: boolean;
+      wantJump: boolean;
+      canShoot: boolean;
+      enemyDist: number;
+    },
+  ): boolean {
+    const { chasing, fleeing, wantJump, canShoot, enemyDist } = opts;
+    switch (bot.activeItem) {
+      case 'radar':
+        return true;
+      case 'leap':
+        return wantJump;
+      case 'surge':
+        return (
+          (chasing || fleeing) &&
+          enemyDist < BOT_SPRINT_TRIGGER_RADIUS &&
+          bot.sprintEnergy < MAX_SPRINT * 0.5
+        );
+      case 'overcharge':
+        return canShoot;
+      case 'cloak':
+        return fleeing && enemyDist <= BOT_SPRINT_TRIGGER_RADIUS;
+      case 'clone':
+        return chasing || fleeing;
+      case 'portal':
+        return fleeing && enemyDist <= TAG_RADIUS_BOT + BOT_JUMP_EVADE_BUFFER * 2;
+      default:
+        return false;
     }
   }
 

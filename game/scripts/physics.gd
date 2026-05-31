@@ -20,6 +20,12 @@ const HOVER_HEIGHT := SharedConstants.HOVER_HEIGHT
 # (~3.2 m) stays well below the 6 m wall but separation from a
 # grounded body (2.0 m) exceeds the 1.4 m tag overlap threshold.
 const JUMP_AMP := SharedConstants.JUMP_AMP
+# Peak rise of a Leap-boosted jump - clears the 6 m wall. Used in place of
+# JUMP_AMP when a jump arc is flagged leaping.
+const LEAP_JUMP_AMP := SharedConstants.LEAP_JUMP_AMP
+# Height of every labyrinth wall. The Y-aware wall skip uses this so a body
+# above it passes over walls.
+const WALL_HEIGHT := SharedConstants.WALL_HEIGHT
 # Length of a single jump arc takeoff to landing, in seconds.
 const JUMP_DURATION_S := SharedConstants.JUMP_DURATION_S
 # Tag vertical-overlap threshold. Tag rejected when
@@ -43,7 +49,7 @@ const BOUNCE_E_WALL := SharedConstants.BOUNCE_E_WALL
 ## Returns HOVER_HEIGHT for a started_at_ms of -1 (the GDScript null
 ## sentinel for jumpStartedAt; -1 was chosen over 0 because 0 is a
 ## valid epoch timestamp), or an elapsed time outside [0, duration].
-static func jump_arc_y(started_at_ms: int, now_ms: int) -> float:
+static func jump_arc_y(started_at_ms: int, now_ms: int, amp: float = JUMP_AMP) -> float:
 	if started_at_ms < 0:
 		return HOVER_HEIGHT
 	var elapsed_ms: int = now_ms - started_at_ms
@@ -51,7 +57,7 @@ static func jump_arc_y(started_at_ms: int, now_ms: int) -> float:
 	if elapsed_ms < 0 or elapsed_ms >= duration_ms:
 		return HOVER_HEIGHT
 	var t: float = float(elapsed_ms) / float(duration_ms)
-	return HOVER_HEIGHT + JUMP_AMP * 4.0 * t * (1.0 - t)
+	return HOVER_HEIGHT + amp * 4.0 * t * (1.0 - t)
 
 ## True if the player's jump arc is still in flight. started_at_ms of
 ## -1 (the null sentinel) is always false.

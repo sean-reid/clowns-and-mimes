@@ -3,7 +3,16 @@
 // Lifted out of room.ts so the network surface can be unit-tested with
 // a mock connections map; behavior is unchanged.
 
-import type { PlayerState, RoomPhase, RoomSnapshot, ServerToClient, Topology } from '@cm/shared';
+import type {
+  Item,
+  PlayerState,
+  Portal,
+  Projectile,
+  RoomPhase,
+  RoomSnapshot,
+  ServerToClient,
+  Topology,
+} from '@cm/shared';
 import { PROTOCOL_VERSION } from '@cm/shared';
 
 export interface BroadcastConnection {
@@ -20,6 +29,9 @@ export interface SnapshotBroadcasterHost {
   getSeed(): number;
   getTopology(): Topology;
   getRoomId(): string;
+  getProjectiles(): Projectile[];
+  getItems(): Item[];
+  getPortals(): Portal[];
 }
 
 export class SnapshotBroadcaster {
@@ -29,6 +41,10 @@ export class SnapshotBroadcaster {
     const players = [...this.host.players.values()];
     const phase = this.host.getPhase();
     const turnEndsAt = this.host.getTurnEndsAt();
+    // Omit the field entirely when no projectiles are live so the common
+    // case keeps the delta small; clients treat absent as empty.
+    const live = this.host.getProjectiles();
+    const projectiles = live.length > 0 ? live : undefined;
     for (const conn of this.host.connections.values()) {
       this.send(conn.ws, {
         t: 'delta',
@@ -40,11 +56,17 @@ export class SnapshotBroadcaster {
         // this to know which buffered inputs to drop and which to replay
         // when reconciling its predicted position with the server's truth.
         ackSeq: this.host.lastAppliedSeq.get(conn.playerId) ?? 0,
+        projectiles,
       });
     }
   }
 
   snapshot(): RoomSnapshot {
+    // Items are static between pickups, so they ride the snapshot rather
+    // than the per-tick delta. Omitted when none are on the floor. Live portal
+    // pairs ride it too so a late joiner / reconnect sees an in-progress pair.
+    const items = this.host.getItems();
+    const portals = this.host.getPortals();
     return {
       v: PROTOCOL_VERSION,
       roomId: this.host.getRoomId(),
@@ -53,6 +75,8 @@ export class SnapshotBroadcaster {
       phase: this.host.getPhase(),
       turnEndsAt: this.host.getTurnEndsAt(),
       players: [...this.host.players.values()],
+      ...(items.length > 0 ? { items } : {}),
+      ...(portals.length > 0 ? { portals } : {}),
     };
   }
 

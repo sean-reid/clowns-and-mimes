@@ -28,6 +28,8 @@ const SOURCES = [
     consts: [
       'HOVER_HEIGHT',
       'JUMP_AMP',
+      'LEAP_JUMP_AMP',
+      'WALL_HEIGHT',
       'JUMP_DURATION_S',
       'BODY_VERTICAL_EXTENT',
       'JUMP_COOLDOWN_S',
@@ -42,11 +44,28 @@ const SOURCES = [
     consts: [
       'WALK_SPEED',
       'SPRINT_SPEED',
+      'SURGE_SPEED_MULT',
+      'SURGE_DURATION_MS',
       'MAX_SPRINT',
       'SPRINT_DRAIN_PER_S',
       'SPRINT_REGEN_PER_S',
       'SPRINT_ENGAGE_THRESHOLD',
     ],
+  },
+  {
+    file: 'backend/shared/src/projectiles.ts',
+    sourceUrl: 'backend/shared/src/projectiles.ts',
+    consts: ['PROJECTILE_RADIUS', 'SHOOT_COOLDOWN_MS'],
+  },
+];
+
+// Source files + the string-array `export const`s to pull from each. These
+// emit as GDScript PackedStringArray-style array literals.
+const STRING_ARRAY_SOURCES = [
+  {
+    file: 'backend/shared/src/names.ts',
+    sourceUrl: 'backend/shared/src/names.ts',
+    consts: ['NAME_ADJECTIVES', 'NAME_NOUNS'],
   },
 ];
 
@@ -63,6 +82,26 @@ async function extract(file, name) {
     );
   }
   return { name, expr, value };
+}
+
+// Pull a string-array `export const NAME = [ '...', '...' ];` and return the
+// list of string entries in source order.
+async function extractStringArray(file, name) {
+  const text = await readFile(resolve(repoRoot, file), 'utf8');
+  const re = new RegExp(`^export const ${name}\\s*=\\s*\\[([\\s\\S]*?)\\];`, 'm');
+  const m = text.match(re);
+  if (!m) throw new Error(`${file}: missing string array ${name}`);
+  const items = [...m[1].matchAll(/'((?:[^'\\]|\\.)*)'/g)].map((x) => x[1]);
+  if (items.length === 0) {
+    throw new Error(`${file}: ${name} parsed to an empty array`);
+  }
+  return { name, items };
+}
+
+// Emit a GDScript array literal: const NAME := ["a", "b", ...].
+function gdStringArray(name, items) {
+  const quoted = items.map((s) => `"${s.replace(/"/g, '\\"')}"`).join(', ');
+  return `const ${name} := [${quoted}]`;
 }
 
 // Format the value the same way regardless of whether the literal was
@@ -98,6 +137,14 @@ async function generate() {
     lines.push(`# Mirrored from ${section.source.sourceUrl}`);
     for (const entry of section.entries) {
       lines.push(`const ${entry.name} := ${gdLiteral(entry.value)}`);
+    }
+    lines.push('');
+  }
+  for (const source of STRING_ARRAY_SOURCES) {
+    lines.push(`# Mirrored from ${source.sourceUrl}`);
+    for (const name of source.consts) {
+      const { items } = await extractStringArray(source.file, name);
+      lines.push(gdStringArray(name, items));
     }
     lines.push('');
   }

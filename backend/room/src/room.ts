@@ -22,6 +22,8 @@ import { MAX_SPRINT } from '@cm/shared/movement';
 import { BotManager, type BotManagerHost } from './botManager.ts';
 import { BotPathfinder } from './botPathfinder.ts';
 import { GameSimulation, type GameSimulationHost } from './gameSimulation.ts';
+import { ItemManager, type ItemManagerHost } from './itemManager.ts';
+import { ProjectileManager, type ProjectileManagerHost } from './projectileManager.ts';
 import { parseClientMessage } from './messageValidator.ts';
 import { RateLimiter } from './rateLimiter.ts';
 import { RoomPersistence, type PersistedRoomState } from './roomPersistence.ts';
@@ -36,18 +38,31 @@ import { TagManager, type TagManagerHost } from './tagManager.ts';
 // roster sizes.
 const TICK_HZ = 60;
 const TICK_MS = 1000 / TICK_HZ;
-// Per-player input-queue cap. The client streams inputs at TICK_HZ so the
-// steady-state queue size is 0 or 1. Allow a few ticks of headroom so a
-// network jitter burst is absorbed instead of dropping inputs at the door;
-// past this limit the OLDEST is dropped so the simulation does not lag
-// further behind live time.
-const MAX_INPUT_QUEUE = 4;
-// Per-WebSocket rate-limit budget. 120 msg burst, 60/s sustained.
-// At TICK_HZ=60 the steady-state client sends ~60 inputs/s plus
-// occasional ping/tag/etc; this caps a flooding client to roughly
-// the same cadence while letting a brief jitter burst through.
-const RATE_LIMIT_CAPACITY = 120;
-const RATE_LIMIT_REFILL_PER_MS = 0.06;
+// Per-player input-queue cap. The client streams inputs at TICK_HZ, but a
+// Durable Object setInterval cannot hold a precise 60 Hz on Cloudflare -
+// playtest telemetry measured the effective tick rate at ~45-54/s with
+// multi-second pauses on I/O turns. With a small cap, those slow ticks let
+// the queue overflow and the OLDEST inputs were dropped before the sim
+// could drain them; lastAppliedSeq then jumped past the dropped seqs, the
+// client pruned them from its replay buffer, and its authoritative base
+// snapped backward (the "backstep"). The cap is now large enough to bridge
+// a multi-second tick stall without dropping; anti-warp is enforced at the
+// drain instead (MAX_INPUTS_PER_TICK in gameSimulation). Memory stays
+// trivial (a few hundred small structs per human).
+const MAX_INPUT_QUEUE = 256;
+// Per-WebSocket rate-limit budget. 360 msg burst, 180/s sustained.
+// The steady-state client already sends one input per server tick
+// (TICK_HZ=60, so ~60/s) AND layers ping/shoot/tag/use_item on top,
+// plus bursts of several inputs in a single frame when the client's
+// physics loop runs catch-up steps after a hitch. A 60/s sustained
+// budget exactly equalled the input cadence, so any of those extras
+// drained the bucket; the server then rejected inputs at the door
+// without advancing ackSeq, the client's pending-input buffer grew
+// without bound, and replay cost spiralled into a crash. 180/s gives
+// ~3x headroom over the input stream while still capping a genuine
+// flood (a malicious client sends thousands/s).
+const RATE_LIMIT_CAPACITY = 360;
+const RATE_LIMIT_REFILL_PER_MS = 0.18;
 const FREE_ROAM_MS = 30_000;
 // Two-radius tag/unfreeze model.
 //
@@ -124,10 +139,10 @@ export class Room implements DurableObject {
   // See backend/room/src/sessionManager.ts.
   private readonly sessions = new SessionManager();
   // One queue per player. Inputs arrive at 60 Hz from the client and are
-  // drained one-per-tick by simulateHumans (matching the canonical Quake /
-  // Source / Overwatch model). The cap (MAX_INPUT_QUEUE) bounds memory if a
-  // bursting client outpaces the tick; an overflow drops the OLDEST so the
-  // simulation stays close to live time rather than running on stale inputs.
+  // drained by simulateHumans, which applies the backlog (up to
+  // MAX_INPUTS_PER_TICK) each tick so lastAppliedSeq keeps pace with what
+  // the client sent even when the DO tick under-runs 60 Hz. The cap
+  // (MAX_INPUT_QUEUE) bounds memory; an overflow drops the OLDEST.
   private readonly inputQueues = new Map<string, PlayerInput[]>();
   // Last input seq the server actually fed into stepMovement, per player.
   // This is what gets reported back to the client as ackSeq so reconciliation
@@ -165,6 +180,8 @@ export class Room implements DurableObject {
   private readonly broadcaster: SnapshotBroadcaster;
   private readonly bots: BotManager;
   private readonly sim: GameSimulation;
+  private readonly projectiles: ProjectileManager;
+  private readonly items: ItemManager;
   // One token bucket per live WebSocket. Created on accept, removed on
   // detach. webSocketMessage rejects with a rate_limited error when the
   // bucket is empty; the connection stays open so a transient burst
@@ -192,6 +209,21 @@ export class Room implements DurableObject {
     private readonly env: RoomEnv = {},
   ) {
     this.persistence = new RoomPersistence(state.storage);
+    // Built before blockConcurrencyWhile: restoreFromSnapshot can finalize an
+    // expired disconnect, whose persist() calls this.items.export(). Its host
+    // arrows resolve this.broadcaster lazily, so the not-yet-built broadcaster
+    // is fine - nothing inside the block broadcasts items.
+    const itemsHost: ItemManagerHost = {
+      players: this.players,
+      connections: this.connections,
+      worldWidth: WORLD_WIDTH,
+      getTopology: () => this.topology,
+      getSeed: () => this.seed,
+      getWalls: () => this.walls,
+      broadcast: (msg) => this.broadcast(msg),
+      spawnClone: (owner) => this.bots.spawnClone(owner),
+    };
+    this.items = new ItemManager(itemsHost);
     // Restore in-memory state from a prior DO incarnation, if any.
     // blockConcurrencyWhile guarantees no WS message is dispatched until
     // this resolves, so the first onJoin sees the full restored snapshot
@@ -232,6 +264,9 @@ export class Room implements DurableObject {
       getSeed: () => this.seed,
       getTopology: () => this.topology,
       getRoomId: () => this.state.id.toString(),
+      getProjectiles: () => this.projectiles.getProjectiles(),
+      getItems: () => this.items.available(),
+      getPortals: () => this.items.activePortals(),
     };
     this.broadcaster = new SnapshotBroadcaster(broadcasterHost);
     const host: TagManagerHost = {
@@ -274,6 +309,8 @@ export class Room implements DurableObject {
       freezePlayer: (p) => this.tagManager.freezePlayer(p),
       checkWin: () => this.tagManager.checkWin(),
       startMatch: () => this.startMatch(),
+      botShoot: (attacker, dir) => this.projectiles.botShoot(attacker, dir),
+      useBotItem: (player) => this.items.useItemForBot(player),
     };
     this.bots = new BotManager(botsHost);
     const simHost: GameSimulationHost = {
@@ -304,10 +341,27 @@ export class Room implements DurableObject {
       },
       activeHumans: () => this.activeHumans(),
       simulateBots: (dt) => this.bots.simulate(dt),
+      stepProjectiles: (dt) => this.projectiles.step(dt),
+      stepItems: (dt) => this.items.step(dt),
       broadcast: (msg) => this.broadcast(msg),
       broadcastDelta: () => this.broadcaster.broadcastDelta(),
     };
     this.sim = new GameSimulation(simHost);
+    const projectilesHost: ProjectileManagerHost = {
+      players: this.players,
+      lastSavedAt: this.lastSavedAt,
+      connections: this.connections,
+      worldWidth: WORLD_WIDTH,
+      unfreezeGraceMs: UNFREEZE_GRACE_MS,
+      getWalls: () => this.walls,
+      getTopology: () => this.topology,
+      getPhase: () => this.phase,
+      broadcast: (msg) => this.broadcast(msg),
+      send: (ws, msg) => this.send(ws, msg),
+      freezePlayer: (p) => this.tagManager.freezePlayer(p),
+      checkWin: () => this.tagManager.checkWin(),
+    };
+    this.projectiles = new ProjectileManager(projectilesHost);
   }
 
   private rebuildPathfinder(): void {
@@ -345,6 +399,7 @@ export class Room implements DurableObject {
     this.expectedHostToken = s.expectedHostToken;
     this.hostPlayerId = s.hostPlayerId;
     for (const p of s.players) this.players.set(p.id, p);
+    this.items.restore(s.items ?? []);
     for (const [id, token] of s.sessions) this.sessions.restore(id, token);
     const now = Date.now();
     for (const [id, expiresAt] of s.pendingDisconnects) {
@@ -376,7 +431,7 @@ export class Room implements DurableObject {
    */
   private persist(): void {
     this.persistence.save({
-      version: 1,
+      version: 2,
       phase: this.phase,
       turnEndsAt: this.turnEndsAt,
       topology: this.topology,
@@ -386,6 +441,7 @@ export class Room implements DurableObject {
       expectedHostToken: this.expectedHostToken,
       hostPlayerId: this.hostPlayerId,
       players: [...this.players.values()],
+      items: this.items.export(),
       sessions: this.sessions.exportSessions(),
       pendingDisconnects: this.sessions.exportPendingDisconnects(),
     });
@@ -535,8 +591,17 @@ export class Room implements DurableObject {
       case 'ping':
         this.send(ws, { t: 'pong', clientTime: msg.clientTime, serverTime: Date.now() });
         return;
+      case 'shoot':
+        this.projectiles.onShoot(ws, { x: msg.dirX, y: msg.dirY, z: msg.dirZ }, msg.nowMs);
+        return;
       case 'start_match':
         this.onStartMatch(ws);
+        return;
+      case 'use_item':
+        this.items.onUseItem(ws);
+        return;
+      case 'restart_room':
+        this.onRestartRoom(ws, msg.topology);
         return;
     }
   }
@@ -710,6 +775,71 @@ export class Room implements DurableObject {
     this.startMatch();
   }
 
+  /**
+   * Host clicks "Play Again" on the end screen. Reset the finished match back
+   * to `filling` with the same roster so everyone lands in the lobby again
+   * without re-sharing the code; the host then starts the next match with the
+   * usual `start_match`. Rejected from non-host players or before the match
+   * has ended (mid-match restart would yank everyone out of a live game).
+   */
+  private onRestartRoom(ws: WebSocket, topology?: Topology): void {
+    const conn = this.connections.get(ws);
+    if (!conn || conn.playerId !== this.hostPlayerId) {
+      this.send(ws, { t: 'error', code: 'not_host', message: 'only the host can restart' });
+      return;
+    }
+    if (this.phase !== 'ended') {
+      this.send(ws, {
+        t: 'error',
+        code: 'match_in_progress',
+        message: 'match has not ended',
+      });
+      return;
+    }
+    this.resetForReplay(topology);
+  }
+
+  /**
+   * Reset to a fresh lobby keeping the human roster. Fresh seed (and topology
+   * when the host picked one), players unfrozen and respawned with cleared
+   * power-ups, bots/projectiles/items wiped (a new bot fill + item layout
+   * lands when the host starts the next match). The tick is already stopped
+   * from the win transition; `filling` runs tickless like a brand-new room.
+   */
+  private resetForReplay(topology?: Topology): void {
+    this.stopTick();
+    this.bots.cancelFill();
+    this.bots.clear();
+    this.projectiles.clear();
+    this.items.clear();
+    if (topology !== undefined && topology !== this.topology) {
+      this.topology = topology;
+    }
+    // Regenerate walls + pathfinder for the new seed (and topology, if changed).
+    this.setSeed(Math.floor(Math.random() * 2 ** 31));
+    this.roundNumber = 0;
+    for (const player of this.players.values()) {
+      if (player.bot) continue;
+      player.frozen = false;
+      player.sprintEnergy = MAX_SPRINT;
+      player.sprinting = false;
+      player.jumpStartedAt = null;
+      player.position = this.pickSpawnPosition(player.team);
+      delete player.activeItem;
+      delete player.leapArmed;
+      delete player.leaping;
+      delete player.surgeUntil;
+      delete player.radarUntil;
+      delete player.overchargeArmed;
+      delete player.cloakUntil;
+    }
+    this.phase = 'filling';
+    this.turnEndsAt = 0;
+    this.broadcast({ t: 'event', kind: { kind: 'phase', phase: this.phase } });
+    this.broadcastSnapshot();
+    this.persist();
+  }
+
   /** Schedule a one-shot bot fill so a solo joiner gets opponents within a few seconds. */
 
   /**
@@ -785,13 +915,11 @@ export class Room implements DurableObject {
     this.connections.delete(ws);
     this.hostTokenByWs.delete(ws);
     this.rateLimiters.delete(ws);
-    // If the host drops, leave hostPlayerId null. They (or a successor
-    // who knows the hostToken) will re-claim on the next join. The room
-    // stays in `filling` until something triggers startMatch, so the
-    // empty-host state never strands the lobby.
-    if (this.hostPlayerId === conn.playerId) {
-      this.hostPlayerId = null;
-    }
+    // Keep hostPlayerId pointing at the host through the grace window: a
+    // transient drop should let them resume as host (resumeSession matches
+    // on the retained id even when the reconnect URL no longer carries the
+    // token). The role is only vacated - and handed to a successor - in
+    // finalizeDisconnect, once the host is truly gone.
     // Hold the slot open for RECONNECT_GRACE_MS so a transient drop can
     // resume via sessionToken instead of tearing the match down. The
     // PlayerState stays in `players`, the tick keeps running, and bots
@@ -815,6 +943,7 @@ export class Room implements DurableObject {
   }
 
   private finalizeDisconnect(playerId: string): void {
+    const wasHost = this.hostPlayerId === playerId;
     this.players.delete(playerId);
     this.sessions.forget(playerId);
     this.inputQueues.delete(playerId);
@@ -833,8 +962,32 @@ export class Room implements DurableObject {
       // point without leaving disk garbage behind.
       this.persistence.clear();
     } else {
+      // The host is truly gone now (grace expired without a resume). Hand the
+      // role to a remaining human so start_match / restart_room stays reachable
+      // and the others can keep playing.
+      if (wasHost) {
+        this.hostPlayerId = null;
+        this.promoteHostIfVacant();
+      }
       this.notifyMatchmaker(this.humanPlayers().length, this.botPlayers().length);
       this.persist();
+    }
+  }
+
+  // Pick a still-connected human to carry the host role when it has been
+  // vacated. Only private rooms have a host (the matchmaker minted an
+  // expectedHostToken); open rooms auto-start and must never grow one. The
+  // promoted client learns of its new role via the broadcast host_changed
+  // event, since the original host token never reaches a joiner.
+  private promoteHostIfVacant(): void {
+    if (this.expectedHostToken === null || this.hostPlayerId !== null) return;
+    for (const conn of this.connections.values()) {
+      const player = this.players.get(conn.playerId);
+      if (player && !player.bot) {
+        this.hostPlayerId = conn.playerId;
+        this.broadcast({ t: 'event', kind: { kind: 'host_changed', hostId: conn.playerId } });
+        return;
+      }
     }
   }
 
@@ -942,10 +1095,18 @@ export class Room implements DurableObject {
 
   private startMatch(): void {
     this.balanceHumansForMatchStart();
+    this.projectiles.clear();
+    this.items.spawn();
     this.firstTeam = Math.random() < 0.5 ? 'mime' : 'clown';
     this.phase = 'free_roam';
     this.turnEndsAt = Date.now() + FREE_ROAM_MS;
     this.broadcast({ t: 'event', kind: { kind: 'phase', phase: this.phase } });
+    // Re-send the snapshot now that items.spawn() has populated the floor.
+    // The static item layout only rides the snapshot, and clients that
+    // joined during `filling` already received one with no items; without
+    // this resend the floor power-ups never reach them. It also syncs the
+    // match-start spawn repositions from balanceHumansForMatchStart.
+    this.broadcastSnapshot();
     this.tickHandle = setInterval(() => this.sim.tick(), TICK_MS);
     // Drop ourselves from the matchmaker's open-room pool immediately
     // so strangers stop being routed here. The notifyMatchmaker guard
@@ -994,6 +1155,25 @@ export class Room implements DurableObject {
 
   private snapshot(): RoomSnapshot {
     return this.broadcaster.snapshot();
+  }
+
+  /**
+   * Re-send a fresh per-client snapshot envelope to every connection. The
+   * snapshot carries per-recipient youAre + sessionToken, so this can't go
+   * through the shared broadcast path. Used at match start to deliver the
+   * item layout (which only rides the snapshot) to clients that joined
+   * during `filling`.
+   */
+  private broadcastSnapshot(): void {
+    const snapshot = this.snapshot();
+    for (const conn of this.connections.values()) {
+      this.send(conn.ws, {
+        t: 'snapshot',
+        snapshot,
+        youAre: conn.playerId,
+        sessionToken: this.sessions.tokenFor(conn.playerId),
+      });
+    }
   }
 
   private broadcast(msg: ServerToClient): void {

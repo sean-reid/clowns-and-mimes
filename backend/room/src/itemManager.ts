@@ -52,6 +52,8 @@ interface PortalRecord {
   b: Vec3;
   aExit: Vec3;
   bExit: Vec3;
+  aExitYaw: number;
+  bExitYaw: number;
   expiresAt: number;
 }
 
@@ -239,13 +241,16 @@ export class ItemManager {
     const width = this.host.worldWidth;
     for (const player of this.host.players.values()) {
       let dest: Vec3 | null = null;
+      let destYaw = 0;
       for (const portal of this.portals.values()) {
         if (topologyDistance(player.position, portal.a, topology, width) <= PORTAL_ENTER_RADIUS) {
           dest = portal.bExit;
+          destYaw = portal.bExitYaw;
           break;
         }
         if (topologyDistance(player.position, portal.b, topology, width) <= PORTAL_ENTER_RADIUS) {
           dest = portal.aExit;
+          destYaw = portal.aExitYaw;
           break;
         }
       }
@@ -256,8 +261,16 @@ export class ItemManager {
       if (this.portalBlocked.has(player.id)) continue;
       if (now < (this.portalCooldownUntil.get(player.id) ?? 0)) continue;
       player.position = { x: dest.x, y: player.position.y, z: dest.z };
+      // Face away from the exit wall. The position rides the next delta, but
+      // the local player's yaw is client-owned, so emit it for that client to
+      // snap; remote bodies adopt it from the delta's yaw field.
+      player.yaw = destYaw;
       this.portalBlocked.add(player.id);
       this.portalCooldownUntil.set(player.id, now + PORTAL_TELEPORT_COOLDOWN_MS);
+      this.host.broadcast({
+        t: 'event',
+        kind: { kind: 'player_teleport', playerId: player.id, yaw: destYaw },
+      });
     }
   }
 

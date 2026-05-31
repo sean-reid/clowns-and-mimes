@@ -34,12 +34,29 @@ export const PORTAL_MOUTH_RADIUS = 1.3;
 const RAY_MAX = 200;
 
 // Wall-anchored mouth points (a/b) plus the off-wall emergence points a player
-// lands on when they arrive at each mouth. Emergence points are canonical.
+// lands on when they arrive at each mouth. Emergence points are canonical. The
+// exit yaws face away from each wall into the open cell, so a player emerges
+// looking where they can walk rather than back into the mouth they arrived at.
 export interface PortalGeom {
   a: Vec3;
   b: Vec3;
   aExit: Vec3;
   bExit: Vec3;
+  aExitYaw: number;
+  bExitYaw: number;
+}
+
+// Off-wall emergence point plus the yaw that faces away from the wall toward it.
+interface Emergence {
+  point: Vec3;
+  yaw: number;
+}
+
+// Body yaw whose forward vector matches a planar direction, inverting
+// forwardFromYaw (yaw = atan2(-x, -z), scale-invariant so an unnormalized
+// direction works).
+function yawFromForward(fx: number, fz: number): number {
+  return Math.atan2(-fx, -fz);
 }
 
 // Forward unit vector for a look yaw, matching the client's body-yaw
@@ -143,7 +160,7 @@ function emerge(
   walls: readonly WallSegment[],
   topology: Topology,
   worldWidth: number,
-): Vec3 {
+): Emergence {
   const ex = wall.bx - wall.ax;
   const ez = wall.bz - wall.az;
   const len = Math.hypot(ex, ez) || 1;
@@ -158,8 +175,10 @@ function emerge(
   } else {
     chosen = clearance(walls, plus.x, plus.z) >= clearance(walls, minus.x, minus.z) ? plus : minus;
   }
+  // Face the direction from the mouth out to the chosen side, away from the wall.
+  const yaw = yawFromForward(chosen.x - mx, chosen.z - mz);
   const wrapped = wrapPosition(chosen, topology, worldWidth);
-  return { x: wrapped.x, y: 0, z: wrapped.z };
+  return { point: { x: wrapped.x, y: 0, z: wrapped.z }, yaw };
 }
 
 /**
@@ -194,10 +213,14 @@ export function buildPortalPair(
     (exitWall.az + exitWall.bz) / 2,
     PORTAL_MOUTH_RADIUS,
   );
+  const aEmerge = emerge(entryWall, entry.x, entry.z, origin, walls, topology, worldWidth);
+  const bEmerge = emerge(exitWall, exitMid.x, exitMid.z, null, walls, topology, worldWidth);
   return {
     a: { x: entry.x, y: 0, z: entry.z },
     b: { x: exitMid.x, y: 0, z: exitMid.z },
-    aExit: emerge(entryWall, entry.x, entry.z, origin, walls, topology, worldWidth),
-    bExit: emerge(exitWall, exitMid.x, exitMid.z, null, walls, topology, worldWidth),
+    aExit: aEmerge.point,
+    bExit: bEmerge.point,
+    aExitYaw: aEmerge.yaw,
+    bExitYaw: bEmerge.yaw,
   };
 }

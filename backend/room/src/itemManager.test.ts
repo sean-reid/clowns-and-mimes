@@ -266,6 +266,19 @@ describe('ItemManager portal', () => {
     expect(h.players.get('q')!.position.z).toBeLessThan(0);
   });
 
+  it('faces the player away from the exit wall and broadcasts player_teleport', () => {
+    const h = openPortalFor(-2);
+    h.players.set('q', makePlayer('q', 'clown', { x: 0, y: 0, z: 10 }));
+    h.im.step(1 / 60);
+    // Entry wall at z=-3, emergence on the +z side, so facing is +z (yaw +/-PI).
+    expect(Math.abs(h.players.get('q')!.yaw)).toBeCloseTo(Math.PI, 6);
+    const ev = h.broadcasts
+      .map((m) => (m as { kind?: { kind: string; playerId?: string; yaw?: number } }).kind)
+      .find((k) => k?.kind === 'player_teleport');
+    expect(ev?.playerId).toBe('q');
+    expect(Math.abs(ev?.yaw ?? 0)).toBeCloseTo(Math.PI, 6);
+  });
+
   it('does not teleport the opener while they stand on the entry mouth', () => {
     const h = openPortalFor(-2);
     h.im.step(1 / 60);

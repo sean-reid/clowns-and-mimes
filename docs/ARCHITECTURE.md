@@ -221,15 +221,15 @@ Two combat extras layer on top of the contact-tag core, both server-authoritativ
 
 **Power-ups.** Floor pickups give a one-shot edge, used with E. The floor layout is a seeded sparse subset of maze cells (`items.ts`, one cell in `ITEM_SPAWN_KEEP_DENOM` carries one), derived purely from the room seed so every client agrees without a round-trip. Items respawn `ITEM_RESPAWN_MS` (30 s) after pickup. `surge` and `radar` spawn every match; the rest rotate by seed. The held item rides the snapshot as `activeItem`; pickups, uses, and respawns ride `item_spawn` / `item_pickup` / `item_used` events.
 
-| Item         | Category | Effect                                                                 |
-| ------------ | -------- | ---------------------------------------------------------------------- |
-| `leap`       | movement | Arms the next jump with a boosted arc.                                 |
+| Item         | Category | Effect                                                                                                                      |
+| ------------ | -------- | --------------------------------------------------------------------------------------------------------------------------- |
+| `leap`       | movement | Arms the next jump with a boosted arc.                                                                                      |
 | `portal`     | movement | Opens a portal pair (entry on the faced wall, exit on a random wall); step through to teleport. Lives `PORTAL_DURATION_MS`. |
-| `surge`      | combat   | Sprint-speed boost for `SURGE_DURATION_MS` (absolute deadline on the snapshot). |
-| `overcharge` | combat   | Arms the next shot to skip cooldown and pierce walls.                  |
-| `radar`      | info     | Reveals the enemy team on your minimap for `RADAR_DURATION_MS` (5 s).  |
-| `clone`      | defense  | Spawns a decoy clone of you.                                           |
-| `cloak`      | defense  | Hides your body from other clients for `CLOAK_DURATION_MS` (4 s).      |
+| `surge`      | combat   | Sprint-speed boost for `SURGE_DURATION_MS` (absolute deadline on the snapshot).                                             |
+| `overcharge` | combat   | Arms the next shot to skip cooldown and pierce walls.                                                                       |
+| `radar`      | info     | Reveals the enemy team on your minimap for `RADAR_DURATION_MS` (5 s).                                                       |
+| `clone`      | defense  | Spawns a decoy clone of you.                                                                                                |
+| `cloak`      | defense  | Hides your body from other clients for `CLOAK_DURATION_MS` (4 s).                                                           |
 
 `item_visuals.gd` maps each type to a category color, a short HUD-slot label, and a distinct primitive shape so same-category power-ups (leap vs portal, surge vs overcharge, cloak vs clone) read apart on the floor and in the slot.
 

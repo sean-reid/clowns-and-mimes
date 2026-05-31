@@ -1,8 +1,13 @@
-[gd_scene load_steps=4 format=3]
+[gd_scene load_steps=7 format=3]
 
 [ext_resource type="Script" path="res://scripts/party.gd" id="1_party"]
 [ext_resource type="Theme" uid="uid://b1cawvm5n8q7c" path="res://assets/themes/carnival_theme.tres" id="2_theme"]
-[ext_resource type="PackedScene" uid="uid://dn8q2vc7yk4ab" path="res://scenes/carnival_backdrop.tscn" id="3_backdrop"]
+[ext_resource type="Texture2D" uid="uid://d2dvcywxfev6h" path="res://assets/textures/clown_head.png" id="3_clown"]
+[ext_resource type="Texture2D" uid="uid://76ft2q7p6x2d" path="res://assets/textures/mime_head.png" id="4_mime"]
+[ext_resource type="Shader" path="res://assets/shaders/harlequin.gdshader" id="5_harlequin"]
+
+[sub_resource type="ShaderMaterial" id="Mat_harlequin"]
+shader = ExtResource("5_harlequin")
 
 [node name="Party" type="Control"]
 anchor_right = 1.0
@@ -10,7 +15,32 @@ anchor_bottom = 1.0
 theme = ExtResource("2_theme")
 script = ExtResource("1_party")
 
-[node name="Backdrop" parent="." instance=ExtResource("3_backdrop")]
+[node name="Background" type="ColorRect" parent="."]
+material = SubResource("Mat_harlequin")
+anchor_right = 1.0
+anchor_bottom = 1.0
+mouse_filter = 2
+
+[node name="ClownMascot" type="TextureRect" parent="."]
+anchor_top = 0.25
+anchor_bottom = 0.95
+anchor_right = 0.24
+offset_left = 16.0
+texture = ExtResource("3_clown")
+expand_mode = 1
+stretch_mode = 5
+mouse_filter = 2
+
+[node name="MimeMascot" type="TextureRect" parent="."]
+anchor_left = 0.76
+anchor_top = 0.25
+anchor_right = 1.0
+anchor_bottom = 0.95
+offset_right = -16.0
+texture = ExtResource("4_mime")
+expand_mode = 1
+stretch_mode = 5
+mouse_filter = 2
 
 [node name="Center" type="VBoxContainer" parent="."]
 anchor_left = 0.3

@@ -273,6 +273,10 @@ func _maybe_show_telemetry_opt_in() -> void:
 	dialog.ok_button_text = "Yes, share"
 	dialog.get_cancel_button().text = "No thanks"
 	dialog.unresizable = true
+	# Cap the label width so the prompt wraps instead of stretching wide.
+	var label := dialog.get_label()
+	label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	label.custom_minimum_size = Vector2(360, 0)
 	dialog.confirmed.connect(_accept_telemetry)
 	dialog.canceled.connect(func(): Settings.set_telemetry_consent("no"))
 	dialog.confirmed.connect(dialog.queue_free)

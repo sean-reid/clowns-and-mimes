@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { TelemetryEvent } from '@cm/shared';
-import { bucketLabel, parseArgs, rollup } from './inspect.ts';
+import { bucketLabel, parseArgs, parseWranglerJson, rollup } from './inspect.ts';
 
 describe('parseArgs', () => {
   it('defaults to dev and today', () => {
@@ -32,6 +32,25 @@ describe('bucketLabel', () => {
   it('labels item events by itemType', () => {
     expect(bucketLabel({ t: 'item_pickup', itemType: 'leap' })).toBe('leap');
     expect(bucketLabel({ t: 'item_used', itemType: 'portal' })).toBe('portal');
+  });
+});
+
+describe('parseWranglerJson', () => {
+  it('parses an array after a wrangler banner on stdout', () => {
+    const raw =
+      'Cloudflare agent skills are available for: Claude Code. Run wrangler ...\n' +
+      '[{"name":"tel:2026-05-31:item_used"}]';
+    expect(parseWranglerJson<Array<{ name: string }>>(raw)).toEqual([
+      { name: 'tel:2026-05-31:item_used' },
+    ]);
+  });
+
+  it('parses clean JSON with no banner', () => {
+    expect(parseWranglerJson<number[]>('[1,2,3]')).toEqual([1, 2, 3]);
+  });
+
+  it('throws when there is no JSON', () => {
+    expect(() => parseWranglerJson('not json at all')).toThrow(/no JSON/);
   });
 });
 

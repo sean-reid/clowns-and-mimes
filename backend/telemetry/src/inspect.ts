@@ -88,6 +88,19 @@ export function rollup(events: TelemetryEvent[]): Map<string, number> {
   return buckets;
 }
 
+// Wrangler prepends a human-readable banner (update notices, the
+// "agent skills" nag) to stdout, so the payload isn't the whole
+// string. Slice from the first JSON delimiter to its matching last
+// one and parse that.
+export function parseWranglerJson<T>(raw: string): T {
+  const start = raw.search(/[[{]/);
+  const end = Math.max(raw.lastIndexOf(']'), raw.lastIndexOf('}'));
+  if (start === -1 || end < start) {
+    throw new Error(`no JSON in wrangler output: ${raw.slice(0, 120).trim()}`);
+  }
+  return JSON.parse(raw.slice(start, end + 1)) as T;
+}
+
 // Wrangler emits its banner on stderr and the payload on stdout, so we
 // only read stdout. `--remote` is required or it hits the local store.
 function wrangler(args: string[], env: Args['env']): string {
@@ -99,7 +112,7 @@ function wrangler(args: string[], env: Args['env']): string {
 
 function listKeys(env: Args['env'], day: string): string[] {
   const raw = wrangler(['kv', 'key', 'list', '--prefix', `${KEY_PREFIX}:${day}:`], env);
-  const parsed = JSON.parse(raw) as Array<{ name: string }>;
+  const parsed = parseWranglerJson<Array<{ name: string }>>(raw);
   return parsed.map((k) => k.name).sort();
 }
 
@@ -112,7 +125,7 @@ function getEvents(env: Args['env'], key: string): TelemetryEvent[] {
     return [];
   }
   try {
-    const parsed = JSON.parse(raw) as unknown;
+    const parsed = parseWranglerJson<unknown>(raw);
     return Array.isArray(parsed) ? (parsed as TelemetryEvent[]) : [];
   } catch {
     console.error(`[inspect] skipping ${key}: value is not JSON`);

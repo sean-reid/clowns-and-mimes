@@ -692,6 +692,8 @@ func _stream_input(delta: float) -> void:
 			# without waiting a round-trip for the authoritative leaping flag.
 			if _held_item == "leap":
 				predictor.arm_leap()
+			elif _held_item == "surge":
+				predictor.arm_surge()
 		_use_item_was_held = true
 	else:
 		_use_item_was_held = false

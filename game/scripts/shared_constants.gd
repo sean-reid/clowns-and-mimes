@@ -23,6 +23,8 @@ const BOUNCE_E_WALL := 0.15
 # Mirrored from backend/shared/src/movement.ts
 const WALK_SPEED := 3.2
 const SPRINT_SPEED := 5.6
+const SURGE_SPEED_MULT := 1.5
+const SURGE_DURATION_MS := 10000.0
 const MAX_SPRINT := 100.0
 const SPRINT_DRAIN_PER_S := 25.0
 const SPRINT_REGEN_PER_S := 15.0

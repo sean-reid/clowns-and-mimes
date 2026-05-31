@@ -260,13 +260,25 @@ export class GameSimulation {
       const input = q.shift()!;
       const lastSeq = this.host.lastAppliedSeq.get(id) ?? -1;
       if (input.seq <= lastSeq) continue;
+      // Clamp the client's input timestamp to local clock skew. Used both as
+      // the jump arc start (below) and the surge-active test, so the client
+      // predictor and the server resolve both off the same stamp.
+      const serverNow = Date.now();
+      const inputNow = input.nowMs ?? serverNow;
+      const skewMs = Math.abs(inputNow - serverNow);
+      const arcNow = skewMs > JUMP_CLIENT_CLOCK_SKEW_MS ? serverNow : inputNow;
       const next = stepMovement(
         { position: p.position, sprintEnergy: p.sprintEnergy, sprinting: p.sprinting },
         // Use the dt the client reported with this input, not the server's
         // tick dt. Reconciliation replay on the client also drives
         // stepMovement from input.dt; divergence would drift the replayed
         // position from the server's authoritative result.
-        { move: input.move, sprint: input.sprint, dt: input.dt },
+        {
+          move: input.move,
+          sprint: input.sprint,
+          dt: input.dt,
+          surge: (p.surgeUntil ?? 0) > arcNow,
+        },
         walls,
         topology,
         WORLD_WIDTH,
@@ -279,10 +291,6 @@ export class GameSimulation {
       // sends; we use that timestamp (clamped to local clock skew) as
       // the new jumpStartedAt so the client's predicted arc start
       // matches the authoritative value without a round-trip.
-      const serverNow = Date.now();
-      const inputNow = input.nowMs ?? serverNow;
-      const skewMs = Math.abs(inputNow - serverNow);
-      const arcNow = skewMs > JUMP_CLIENT_CLOCK_SKEW_MS ? serverNow : inputNow;
       const jump = stepJump(
         { jumpStartedAt: p.jumpStartedAt },
         { jump: input.jump ?? false, nowMs: arcNow },

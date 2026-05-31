@@ -21,13 +21,20 @@ extends RefCounted
 # live pair.
 const MAX_PAIRS := 8
 
-const MOUTH_HEIGHT := 1.0
+const MOUTH_HEIGHT := 1.6
 const RING_OUTER := 1.2
 const RING_INNER := 0.95
-const SPIN_SPEED := 1.5
 const PULSE_SPEED := 3.0
 const PULSE_AMPLITUDE := 0.12
+const EMISSION_BASE := 2.0
+const EMISSION_PULSE := 1.0
 const PORTAL_COLOR := Color(0.6, 0.4, 1.0)
+# The mouth sits on a wall centerline (walls are WALL_THICKNESS thick and solid),
+# so the ring is offset toward the local camera to clear the wall face and read
+# as a hoop standing in front of the wall on the viewer's side rather than buried
+# inside it. Each client offsets toward its own camera, so two players on
+# opposite sides of a wall each see a mouth facing them.
+const FACE_OFFSET := 0.55
 
 var _arena: Object
 # slot -> {a_root: Node3D, b_root: Node3D}
@@ -58,8 +65,8 @@ func _init(arena: Object) -> void:
 		_pool.append({"a_root": a_root, "b_root": b_root})
 		_free_slots.append(i)
 
-# An upright ring: the default TorusMesh lies flat in XZ, so rotate it to stand
-# vertical and read as a doorway in the wall.
+# The ring stays at the root's local origin; the root's basis is rebuilt each
+# tick so the torus axis points at the viewer (a vertical hoop facing them).
 func _make_mouth(ring_mesh: TorusMesh) -> Node3D:
 	var root := Node3D.new()
 	root.visible = false
@@ -67,7 +74,6 @@ func _make_mouth(ring_mesh: TorusMesh) -> Node3D:
 	ring.mesh = ring_mesh
 	ring.material_override = _material
 	ring.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-	ring.rotation.x = PI / 2.0
 	root.add_child(ring)
 	return root
 
@@ -94,25 +100,31 @@ func on_close(id: String) -> void:
 	if not id.is_empty():
 		_release(id)
 
-## Spin + pulse every live ring and reproject both mouths to their wrap-nearest
-## copy so a seam crossing doesn't teleport them. Cheap transform writes; runs at
-## render rate for smooth motion between the (infrequent) portal state changes.
-func tick(delta: float) -> void:
+## Pulse every live ring (a breathing glow + gentle scale), face it at the
+## viewer, and reproject both mouths to their wrap-nearest copy so a seam
+## crossing doesn't teleport them. Deliberately no spin: the ring stands upright
+## on the wall face, so spinning it would sweep it in and out through the wall.
+## Cheap writes; runs at render rate for smooth motion between state changes.
+func tick(_delta: float) -> void:
 	if _active.is_empty():
 		return
-	_pulse_phase += delta * PULSE_SPEED
+	_pulse_phase += _delta * PULSE_SPEED
+	var wave := sin(_pulse_phase)
+	_material.emission_energy_multiplier = EMISSION_BASE + wave * EMISSION_PULSE
+	var scale := 1.0 + wave * PULSE_AMPLITUDE
 	for id in _active:
-		var state: Dictionary = _active[id]
-		var entry: Dictionary = _pool[state["slot"]]
-		var scale := 1.0 + sin(_pulse_phase) * PULSE_AMPLITUDE
-		_place_mouth(entry["a_root"], state["a_canonical"], delta, scale)
-		_place_mouth(entry["b_root"], state["b_canonical"], delta, scale)
+		var entry: Dictionary = _pool[_active[id]["slot"]]
+		_place_mouth(entry["a_root"], _active[id]["a_canonical"], scale)
+		_place_mouth(entry["b_root"], _active[id]["b_canonical"], scale)
 
-func _place_mouth(root: Node3D, canonical: Vector3, delta: float, scale: float) -> void:
+func _place_mouth(root: Node3D, canonical: Vector3, scale: float) -> void:
 	var near := _to_camera_nearest_copy(canonical)
-	root.global_position = Vector3(near.x, MOUTH_HEIGHT, near.z)
-	root.rotate_y(delta * SPIN_SPEED)
-	root.scale = Vector3(scale, scale, scale)
+	var base := Vector3(near.x, MOUTH_HEIGHT, near.z)
+	# Horizontal direction from the mouth to the local camera. The torus axis is
+	# aimed along it (so the hoop faces the player) and the mouth is nudged that
+	# way to clear the wall face it sits on.
+	var to_cam := _camera_horizontal_dir(base)
+	root.global_transform = Transform3D(_facing_basis(to_cam).scaled(Vector3(scale, scale, scale)), base + to_cam * FACE_OFFSET)
 
 ## Hide all rings and reclaim every slot. Called on match (re)start.
 func clear() -> void:
@@ -136,10 +148,10 @@ func _upsert(entry: Dictionary) -> void:
 		return
 	_active[id] = {"slot": slot, "a_canonical": a_canonical, "b_canonical": b_canonical}
 	var pool_entry: Dictionary = _pool[slot]
-	var a_near := _to_camera_nearest_copy(a_canonical)
-	var b_near := _to_camera_nearest_copy(b_canonical)
-	pool_entry["a_root"].global_position = Vector3(a_near.x, MOUTH_HEIGHT, a_near.z)
-	pool_entry["b_root"].global_position = Vector3(b_near.x, MOUTH_HEIGHT, b_near.z)
+	# Place once now so the pair is correct the frame it opens; tick() refines it
+	# as the camera moves.
+	_place_mouth(pool_entry["a_root"], a_canonical, 1.0)
+	_place_mouth(pool_entry["b_root"], b_canonical, 1.0)
 	pool_entry["a_root"].visible = true
 	pool_entry["b_root"].visible = true
 
@@ -154,6 +166,30 @@ func _release(id: String) -> void:
 
 func _read_vec3(d: Dictionary) -> Vector3:
 	return Vector3(float(d.get("x", 0.0)), float(d.get("y", 0.0)), float(d.get("z", 0.0)))
+
+# Horizontal unit vector from a world point toward the local camera. Defaults to
+# +Z when the camera is unavailable or directly overhead.
+func _camera_horizontal_dir(from: Vector3) -> Vector3:
+	var local: Node = _arena.local_player
+	if local == null:
+		return Vector3(0, 0, 1)
+	var d: Vector3 = local.global_position - from
+	d.y = 0.0
+	if d.length() < 0.0001:
+		return Vector3(0, 0, 1)
+	return d.normalized()
+
+# Orthonormal basis whose +Y (the torus axis) points along `axis`, so the ring's
+# plane is perpendicular to it -- a vertical hoop facing whatever `axis` points
+# at. The torus is rotationally symmetric, so the in-plane axes are arbitrary.
+func _facing_basis(axis: Vector3) -> Basis:
+	var y := axis.normalized()
+	var x := Vector3.UP.cross(y)
+	if x.length() < 0.0001:
+		x = Vector3.RIGHT
+	x = x.normalized()
+	var z := x.cross(y)
+	return Basis(x, y, z)
 
 # Mirror of player.gd / item_renderer.gd: render the canonical position at the
 # wrap-equivalent copy nearest the local camera so a mouth near a seam reads on

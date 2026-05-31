@@ -6,6 +6,14 @@ When cutting a release: rename the `[Unreleased]` heading below to the version b
 
 ## [Unreleased]
 
+## [0.6.1] - 2026-05-31
+
+Patch release. The carnival main menu, lobby, and party screens shared their backdrop through an instanced scene, which renders in the editor but comes up blank in exported builds — so the released menu showed a flat dark background with no clown/mime mascots and no harlequin pattern. The backdrop nodes are now inlined into each screen, matching the title screen.
+
+### Fixed
+
+- Clown and mime mascots and the harlequin background now render on the menu, lobby, and party screens in release builds.
+
 ## [0.6.0] - 2026-05-31
 
 The combat-and-carnival release. Tag is no longer just running into people: every match now has seven floor power-ups and a left-click freeze shot, the arena is lit like a fog-filled funhouse, and the main menu is a proper carnival with parties so friends queue onto the same team. Bots play the full mechanic set, a minimap replaces the old team-status bars, and private rooms survive the host leaving. The protocol bumps to v3, so online play needs an updated client on both ends.

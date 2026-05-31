@@ -11,6 +11,7 @@
 import type { PlayerState, ServerToClient, Team, Topology, Vec2, Vec3 } from '@cm/shared';
 import { topologyDistance, wrapPosition, wrappedUnitDelta } from '@cm/shared/topology';
 import { pathCrossesWall, pointBlockedByWall, type WallSegment } from '@cm/shared/labyrinth';
+import { generateRandomName } from '@cm/shared/names';
 import {
   MAX_SPRINT,
   SPRINT_DRAIN_PER_S,
@@ -67,77 +68,6 @@ interface BotMind {
   investigateUntil: number;
   recentTargets: Array<{ x: number; z: number }>;
   lastJumpedAt: number;
-}
-
-const BOT_NAME_ADJECTIVES = [
-  'Silent',
-  'Painted',
-  'Loud',
-  'Floppy',
-  'Crooked',
-  'Bashful',
-  'Velvet',
-  'Hushed',
-  'Ruffled',
-  'Striped',
-  'Glossy',
-  'Pale',
-  'Sneaky',
-  'Whiskered',
-  'Brittle',
-  'Tipsy',
-  'Polka',
-  'Wobbly',
-  'Crinkled',
-  'Powdered',
-  'Squeaky',
-  'Tufted',
-  'Knobbly',
-  'Frilly',
-  'Wonky',
-  'Boggled',
-  'Plucky',
-  'Drooping',
-];
-
-const BOT_NAME_NOUNS = [
-  'Bozo',
-  'Coulrophobe',
-  'Pierrot',
-  'Harlequin',
-  'Buffoon',
-  'Jester',
-  'Marceau',
-  'Tramp',
-  'Auguste',
-  'Whiteface',
-  'Carnie',
-  'Pagliacci',
-  'Punchinello',
-  'Hopo',
-  'Cake',
-  'Honk',
-  'Greasepaint',
-  'Stripes',
-  'Tear',
-  'Glove',
-  'Wig',
-  'Nose',
-  'Shoe',
-  'Banana',
-  'Pinwheel',
-  'Smile',
-  'Frown',
-  'Lapel',
-];
-
-function generateBotName(): string {
-  const adj = BOT_NAME_ADJECTIVES[Math.floor(Math.random() * BOT_NAME_ADJECTIVES.length)]!;
-  const noun = BOT_NAME_NOUNS[Math.floor(Math.random() * BOT_NAME_NOUNS.length)]!;
-  const num = Math.floor(Math.random() * 1000)
-    .toString()
-    .padStart(3, '0');
-  return `${adj}${noun}${num}`;
 }
 
 function clamp(v: number, lo: number, hi: number): number {
@@ -213,7 +143,7 @@ export class BotManager {
         const spawn = this.host.pickSpawnPosition(team);
         this.host.players.set(id, {
           id,
-          name: generateBotName(),
+          name: generateRandomName(),
           team,
           bot: true,
           position: spawn,
@@ -240,7 +170,7 @@ export class BotManager {
     const spawn = this.cloneSpawnNear(owner);
     this.host.players.set(id, {
       id,
-      name: generateBotName(),
+      name: generateRandomName(),
       team: owner.team,
       bot: true,
       position: spawn,

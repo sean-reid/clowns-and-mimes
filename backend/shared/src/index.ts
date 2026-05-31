@@ -9,3 +9,4 @@ export * from './projectiles.ts';
 export * from './items.ts';
 export * from './portals.ts';
 export * from './telemetry.ts';
+export * from './names.ts';

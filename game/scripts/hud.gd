@@ -81,6 +81,7 @@ func _ready() -> void:
 	item_slot.visible = false
 	_setup_log_lines()
 	_setup_crosshair()
+	AudioBus.wire_button_sfx(self)
 
 func _setup_crosshair() -> void:
 	_crosshair = Label.new()

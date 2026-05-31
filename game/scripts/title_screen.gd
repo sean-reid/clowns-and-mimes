@@ -27,6 +27,7 @@ func _ready() -> void:
 	enter_button.modulate.a = 0.0
 	background.modulate.a = 0.0
 	enter_button.pressed.connect(_on_enter)
+	AudioBus.wire_button_sfx(self)
 	AudioBus.play_music_from_path(AssetPaths.THEME_AUDIO)
 	_animate()
 

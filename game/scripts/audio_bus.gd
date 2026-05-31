@@ -8,6 +8,8 @@ extends Node
 ## their AudioStreamPlayer to themselves and lost playback the moment the root
 ## scene called queue_free() on them.
 
+const AssetPaths := preload("res://scripts/asset_paths.gd")
+
 const BUSES := ["Music", "SFX", "UI"]
 
 var _music_player: AudioStreamPlayer = null
@@ -98,6 +100,22 @@ func play_ui(path: String) -> void:
 	_ui_next = (_ui_next + 1) % _ui_players.size()
 	player.stream = stream
 	player.play()
+
+## Recursively connect every Button under `root` to the UI click/hover SFX.
+## Screens call this once in _ready so all their buttons sound the same without
+## per-button wiring. Bound Callables compare equal, so re-wiring an already
+## wired tree (e.g. a panel that re-enters _ready) is a no-op rather than a
+## duplicate connection.
+func wire_button_sfx(root: Node) -> void:
+	for child in root.get_children():
+		if child is BaseButton:
+			var click := play_ui.bind(AssetPaths.UI_CLICK)
+			var hover := play_ui.bind(AssetPaths.UI_HOVER)
+			if not child.pressed.is_connected(click):
+				child.pressed.connect(click)
+			if not child.mouse_entered.is_connected(hover):
+				child.mouse_entered.connect(hover)
+		wire_button_sfx(child)
 
 func set_bus_volume(bus_name: String, db: float) -> void:
 	var idx := AudioServer.get_bus_index(bus_name)

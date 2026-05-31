@@ -23,6 +23,7 @@ func _ready() -> void:
 	light_mode.toggled.connect(_on_light_mode_toggled)
 	reset_settings.pressed.connect(_on_reset_settings)
 	close_button.pressed.connect(_on_close)
+	AudioBus.wire_button_sfx(self)
 
 func _refresh_from_settings() -> void:
 	mute_music.button_pressed = Settings.music_muted

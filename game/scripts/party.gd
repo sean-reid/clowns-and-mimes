@@ -45,6 +45,7 @@ func _ready() -> void:
 	find_button.pressed.connect(_on_find_pressed)
 	leave_button.pressed.connect(_on_leave_pressed)
 	back_button.pressed.connect(_on_back_pressed)
+	AudioBus.wire_button_sfx(self)
 	_poll_timer = Timer.new()
 	_poll_timer.wait_time = POLL_INTERVAL
 	_poll_timer.timeout.connect(_poll)

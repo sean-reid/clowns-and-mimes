@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { PlayerState, ServerToClient, Team, Topology, Vec3 } from '@cm/shared';
 import type { WallSegment } from '@cm/shared/labyrinth';
-import { ITEM_RESPAWN_MS } from '@cm/shared/items';
+import { ITEM_RESPAWN_MS, RADAR_DURATION_MS } from '@cm/shared/items';
 import { SURGE_DURATION_MS } from '@cm/shared/movement';
 import { PORTAL_DURATION_MS } from '@cm/shared/portals';
 import { ItemManager, type ItemManagerHost } from './itemManager.ts';
@@ -182,6 +182,18 @@ describe('ItemManager.onUseItem', () => {
     const surgeUntil = h.players.get('p')!.surgeUntil ?? 0;
     expect(surgeUntil).toBeGreaterThanOrEqual(before + SURGE_DURATION_MS);
     expect(surgeUntil).toBeLessThanOrEqual(Date.now() + SURGE_DURATION_MS);
+  });
+
+  it('sets a radar deadline when a radar is used', () => {
+    const h = harness();
+    const ws = {} as WebSocket;
+    h.players.set('p', makePlayer('p', 'mime', { x: 0, y: 0, z: 0 }, { activeItem: 'radar' }));
+    h.connections.set(ws, { playerId: 'p' });
+    const before = Date.now();
+    h.im.onUseItem(ws);
+    const radarUntil = h.players.get('p')!.radarUntil ?? 0;
+    expect(radarUntil).toBeGreaterThanOrEqual(before + RADAR_DURATION_MS);
+    expect(radarUntil).toBeLessThanOrEqual(Date.now() + RADAR_DURATION_MS);
   });
 });
 

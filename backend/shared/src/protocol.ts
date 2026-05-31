@@ -131,6 +131,11 @@ export interface PlayerState {
   // Surge is "active" while surgeUntil > now; it is never cleared, just left
   // in the past, so reconciliation always adopts the server's value.
   surgeUntil?: number;
+  // Wall-clock (Unix ms) the player's Radar power-up stays active until. While
+  // radarUntil > now the local player's minimap reveals the enemy team. Server
+  // state only; the visual consumer is the minimap HUD. Like surgeUntil it is
+  // never cleared, just left in the past.
+  radarUntil?: number;
   // Set on a Clone power-up's temporary ally bot: the wall-clock (Unix ms) at
   // which it despawns. Present only on clones (undefined on real players and
   // ordinary bots), so it doubles as the "is a clone" marker. Carried on the

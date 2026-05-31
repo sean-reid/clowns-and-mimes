@@ -318,4 +318,34 @@ describe('MatchmakerDO parties', () => {
     const { json } = await call(doInstance, '/openJoin');
     expect((json as { team?: string }).team).toBeUndefined();
   });
+
+  it('partyState returns the live roster as members join', async () => {
+    const doInstance = makeDO();
+    const { json: created } = await call(doInstance, '/partyCreate', { name: 'Ada' });
+    const party = created as { partyId: string; code: string; team: string };
+    await call(doInstance, '/partyJoin', { code: party.code, name: 'Bob' });
+
+    const res = await doInstance.fetch(
+      new Request(`https://x.test/partyState?id=${party.partyId}`, { method: 'GET' }),
+    );
+    expect(res.status).toBe(200);
+    const view = (await res.json()) as {
+      partyId: string;
+      code: string;
+      team: string;
+      members: { name: string }[];
+    };
+    expect(view.partyId).toBe(party.partyId);
+    expect(view.code).toBe(party.code);
+    expect(view.team).toBe(party.team);
+    expect(view.members.map((m) => m.name)).toEqual(['Ada', 'Bob']);
+  });
+
+  it('partyState 404s an unknown party id', async () => {
+    const doInstance = makeDO();
+    const res = await doInstance.fetch(
+      new Request('https://x.test/partyState?id=missing', { method: 'GET' }),
+    );
+    expect(res.status).toBe(404);
+  });
 });

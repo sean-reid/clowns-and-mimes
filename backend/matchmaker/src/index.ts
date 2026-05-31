@@ -43,7 +43,8 @@ export default {
       url.pathname === '/open/join' ||
       url.pathname === '/party/create' ||
       url.pathname.match(/^\/party\/[A-Z0-9]+\/join$/) ||
-      url.pathname.match(/^\/party\/[0-9a-f-]+\/leave$/)
+      url.pathname.match(/^\/party\/[0-9a-f-]+\/leave$/) ||
+      url.pathname.match(/^\/party\/[0-9a-f-]+$/)
     ) {
       const mismatch = enforceProtocolVersion(req);
       if (mismatch !== null) return mismatch;
@@ -68,6 +69,10 @@ export default {
     const partyLeaveMatch = url.pathname.match(/^\/party\/([0-9a-f-]+)\/leave$/);
     if (req.method === 'POST' && partyLeaveMatch) {
       return leaveParty(partyLeaveMatch[1]!, req, env);
+    }
+    const partyStateMatch = url.pathname.match(/^\/party\/([0-9a-f-]+)$/);
+    if (req.method === 'GET' && partyStateMatch) {
+      return pollParty(partyStateMatch[1]!, env);
     }
     if (req.method === 'POST' && url.pathname === '/lobby/room-state') {
       return forwardToDO(env, '/roomState', req);
@@ -226,6 +231,18 @@ async function leaveParty(partyId: string, req: Request, env: Env): Promise<Resp
   });
   if (!doRes.ok) return error(500, 'matchmaker_unavailable');
   return json((await doRes.json()) as { ok: boolean });
+}
+
+async function pollParty(partyId: string, env: Env): Promise<Response> {
+  const doRes = await callDO(env, `/partyState?id=${encodeURIComponent(partyId)}`, {
+    method: 'GET',
+  });
+  // Pass the DO's own status through so a 404 (party gone) reaches the client
+  // as a 404 rather than being flattened to a 500.
+  return new Response(await doRes.text(), {
+    status: doRes.status,
+    headers: { 'content-type': 'application/json' },
+  });
 }
 
 async function forwardToDO(env: Env, path: string, req: Request): Promise<Response> {

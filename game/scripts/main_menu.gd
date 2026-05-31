@@ -9,6 +9,7 @@ const SettingsPanel := preload("res://scenes/settings_panel.tscn")
 
 @onready var host_button: Button = $Center/Buttons/HostButton
 @onready var open_button: Button = $Center/Buttons/OpenButton
+@onready var party_button: Button = $Center/Buttons/PartyButton
 @onready var username_input: LineEdit = $Center/UsernameRow/Username
 @onready var random_button: Button = $Center/UsernameRow/Random
 @onready var topology_picker: OptionButton = $Center/TopologyRow/Topology
@@ -36,6 +37,7 @@ func _ready() -> void:
 	# the field has focus.
 	code_input.text_submitted.connect(_on_code_submitted)
 	open_button.pressed.connect(_join_open)
+	party_button.pressed.connect(_open_party)
 	settings_button.pressed.connect(_open_settings)
 	username_input.text_changed.connect(_on_username_text_changed)
 	_populate_topologies()
@@ -186,8 +188,16 @@ func _on_code_submitted(_text: String) -> void:
 
 func _join_open() -> void:
 	_commit_username()
+	# Solo open-join: drop any party handle left over from a prior party so the
+	# lobby's /open/join doesn't route this player into a stale party room.
+	GameState.party_id = ""
+	GameState.party_member_id = ""
 	GameState.set_mode(GameState.Mode.OPEN)
 	requested_screen.emit("lobby")
+
+func _open_party() -> void:
+	_commit_username()
+	requested_screen.emit("party")
 
 func _open_settings() -> void:
 	add_child(SettingsPanel.instantiate())

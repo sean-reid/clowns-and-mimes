@@ -1,4 +1,4 @@
-import type { PartyMember, Team, Topology } from '@cm/shared';
+import type { PartyMember, PartyView, Team, Topology } from '@cm/shared';
 import { PARTY_CAP } from '@cm/shared';
 
 export const VALID_TOPOLOGIES: readonly Topology[] = ['plane', 'torus', 'mobius', 'klein'];
@@ -177,6 +177,9 @@ export class MatchmakerDO {
     if (req.method === 'POST' && url.pathname === '/partyLeave') {
       return this.partyLeave(req);
     }
+    if (req.method === 'GET' && url.pathname === '/partyState') {
+      return this.partyStateView(url.searchParams.get('id'));
+    }
     return new Response(JSON.stringify({ error: 'not_found' }), {
       status: 404,
       headers: { 'content-type': 'application/json' },
@@ -312,6 +315,21 @@ export class MatchmakerDO {
       await this.persistParties();
     }
     return json({ ok: true });
+  }
+
+  // Read-only roster fetch backing the party screen's poll. Bumps lastSeenAt
+  // so a party someone is actively watching doesn't age into the prune window;
+  // the bump stays in memory (no persist) to keep the 2s poll off storage.
+  private partyStateView(id: string | null): Response {
+    const party = id ? this.parties.get(id) : undefined;
+    if (!party) return json({ error: 'party_not_found' }, 404);
+    party.lastSeenAt = Date.now();
+    return json({
+      partyId: party.id,
+      code: party.code,
+      team: party.team,
+      members: party.members,
+    } satisfies PartyView);
   }
 
   private partyResponse(party: PartyEntry, memberId: string) {

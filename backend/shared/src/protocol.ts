@@ -351,6 +351,16 @@ export interface PartyStateResponse {
   members: PartyMember[];
 }
 
+// Returned by GET /party/:id, the poll the party screen runs to keep the
+// member list live as friends join. No `memberId` - the caller already holds
+// its own from create/join.
+export interface PartyView {
+  partyId: string;
+  code: string;
+  team: Team;
+  members: PartyMember[];
+}
+
 // Optional body on POST /open/join. When `partyId` is present the matchmaker
 // routes the caller to the party's shared room and returns the party `team`.
 export interface OpenJoinBody {

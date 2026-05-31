@@ -79,7 +79,11 @@ export const BOUNCE_E_WALL = 0.15;
  * the "not currently jumping" cases; the caller is expected to clear
  * `jumpStartedAt` once the window expires.
  */
-export function jumpArcY(startedAtMs: number | null, nowMs: number, amp: number = JUMP_AMP): number {
+export function jumpArcY(
+  startedAtMs: number | null,
+  nowMs: number,
+  amp: number = JUMP_AMP,
+): number {
   if (startedAtMs === null) return HOVER_HEIGHT;
   const elapsedMs = nowMs - startedAtMs;
   const durationMs = JUMP_DURATION_S * 1000;

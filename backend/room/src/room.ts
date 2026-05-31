@@ -38,12 +38,18 @@ import { TagManager, type TagManagerHost } from './tagManager.ts';
 // roster sizes.
 const TICK_HZ = 60;
 const TICK_MS = 1000 / TICK_HZ;
-// Per-player input-queue cap. The client streams inputs at TICK_HZ so the
-// steady-state queue size is 0 or 1. Allow a few ticks of headroom so a
-// network jitter burst is absorbed instead of dropping inputs at the door;
-// past this limit the OLDEST is dropped so the simulation does not lag
-// further behind live time.
-const MAX_INPUT_QUEUE = 4;
+// Per-player input-queue cap. The client streams inputs at TICK_HZ, but a
+// Durable Object setInterval cannot hold a precise 60 Hz on Cloudflare -
+// playtest telemetry measured the effective tick rate at ~45-54/s with
+// multi-second pauses on I/O turns. With a small cap, those slow ticks let
+// the queue overflow and the OLDEST inputs were dropped before the sim
+// could drain them; lastAppliedSeq then jumped past the dropped seqs, the
+// client pruned them from its replay buffer, and its authoritative base
+// snapped backward (the "backstep"). The cap is now large enough to bridge
+// a multi-second tick stall without dropping; anti-warp is enforced at the
+// drain instead (MAX_INPUTS_PER_TICK in gameSimulation). Memory stays
+// trivial (a few hundred small structs per human).
+const MAX_INPUT_QUEUE = 256;
 // Per-WebSocket rate-limit budget. 360 msg burst, 180/s sustained.
 // The steady-state client already sends one input per server tick
 // (TICK_HZ=60, so ~60/s) AND layers ping/shoot/tag/use_item on top,
@@ -133,10 +139,10 @@ export class Room implements DurableObject {
   // See backend/room/src/sessionManager.ts.
   private readonly sessions = new SessionManager();
   // One queue per player. Inputs arrive at 60 Hz from the client and are
-  // drained one-per-tick by simulateHumans (matching the canonical Quake /
-  // Source / Overwatch model). The cap (MAX_INPUT_QUEUE) bounds memory if a
-  // bursting client outpaces the tick; an overflow drops the OLDEST so the
-  // simulation stays close to live time rather than running on stale inputs.
+  // drained by simulateHumans, which applies the backlog (up to
+  // MAX_INPUTS_PER_TICK) each tick so lastAppliedSeq keeps pace with what
+  // the client sent even when the DO tick under-runs 60 Hz. The cap
+  // (MAX_INPUT_QUEUE) bounds memory; an overflow drops the OLDEST.
   private readonly inputQueues = new Map<string, PlayerInput[]>();
   // Last input seq the server actually fed into stepMovement, per player.
   // This is what gets reported back to the client as ackSeq so reconciliation

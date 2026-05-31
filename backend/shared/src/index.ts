@@ -7,4 +7,5 @@ export * from './physics.ts';
 export * from './tagRules.ts';
 export * from './projectiles.ts';
 export * from './items.ts';
+export * from './portals.ts';
 export * from './telemetry.ts';

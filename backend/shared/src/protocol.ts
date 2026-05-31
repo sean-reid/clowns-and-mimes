@@ -79,6 +79,19 @@ export interface Item {
   position: Vec3;
 }
 
+// A live teleport pair. Both mouths are anchored on wall segments; a player
+// who walks within range of either mouth emerges at the other (offset into the
+// adjacent open cell). The pair closes after PORTAL_DURATION_MS. Server owns the
+// geometry and emergence; the wire carries only the two wall-anchored mouth
+// points so all clients render the same pair. a is the activating player's
+// entry mouth (the wall they faced); b is the server-picked random exit.
+export interface Portal {
+  id: string;
+  a: Vec3;
+  b: Vec3;
+  expiresAt: number;
+}
+
 export interface PlayerState {
   id: string;
   name: string;
@@ -130,6 +143,10 @@ export interface RoomSnapshot {
   // Available power-ups on the floor. Omitted when none are spawned. Items
   // are static, so they ride the snapshot; pickups/respawns arrive as events.
   items?: Item[];
+  // Live portal pairs. Omitted when none are open. Like items they ride the
+  // snapshot so a late joiner / reconnect sees an in-progress pair; open/close
+  // transitions arrive as events.
+  portals?: Portal[];
 }
 
 export type Topology = 'plane' | 'torus' | 'mobius' | 'klein';
@@ -217,7 +234,11 @@ export type GameEvent =
   // held power-up is activated.
   | { kind: 'item_spawn'; item: Item }
   | { kind: 'item_pickup'; itemId: string; playerId: string }
-  | { kind: 'item_used'; playerId: string; itemType: ItemType };
+  | { kind: 'item_used'; playerId: string; itemType: ItemType }
+  // Portal lifecycle. `portal_open` carries the new pair (also added to the
+  // snapshot for late joiners); `portal_close` fires when the pair expires.
+  | { kind: 'portal_open'; portal: Portal }
+  | { kind: 'portal_close'; id: string };
 
 export const BATTLE_CRY_COUNT = 8;
 

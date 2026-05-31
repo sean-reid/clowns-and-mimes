@@ -40,6 +40,7 @@ const ContactInteractionsScript := preload("res://scripts/contact_interactions.g
 const OfflineModeScript := preload("res://scripts/offline_mode.gd")
 const ProjectileRendererScript := preload("res://scripts/projectile_renderer.gd")
 const ItemRendererScript := preload("res://scripts/item_renderer.gd")
+const PortalRendererScript := preload("res://scripts/portal_renderer.gd")
 const SharedConstants := preload("res://scripts/shared_constants.gd")
 
 # ---------------------------------------------------------------------------
@@ -161,6 +162,10 @@ var projectile_renderer: RefCounted = null
 # offline mode.
 var item_renderer: RefCounted = null
 
+# Online-only. Pooled ring renderer for server-authoritative portal pairs.
+# Instantiated alongside item_renderer on the online path; null in offline mode.
+var portal_renderer: RefCounted = null
+
 # Shared.
 var local_player: PlayerScript = null
 var local_player_id: String = ""
@@ -279,6 +284,8 @@ func _process(delta: float) -> void:
 			projectile_renderer.tick(delta)
 		if item_renderer != null:
 			item_renderer.tick(delta)
+		if portal_renderer != null:
+			portal_renderer.tick(delta)
 	else:
 		offline.drive_hud()
 
@@ -311,6 +318,7 @@ func _start_online() -> void:
 	hud.append_log("Connecting...")
 	projectile_renderer = ProjectileRendererScript.new(self)
 	item_renderer = ItemRendererScript.new(self)
+	portal_renderer = PortalRendererScript.new(self)
 	hud.set_crosshair_visible(true)
 	# The lobby already opened the WebSocket (and sent `join`) before
 	# transitioning into the arena. Re-use that RoomClient so reconciliation
@@ -387,6 +395,8 @@ func _on_snapshot(snapshot: Dictionary, you_are: String) -> void:
 	# Items ride the snapshot (static between pickups); reconcile the floor set.
 	if item_renderer != null:
 		item_renderer.render_from_snapshot(snapshot.get("items", []))
+	if portal_renderer != null:
+		portal_renderer.render_from_snapshot(snapshot.get("portals", []))
 	for entry in snapshot.get("players", []):
 		if entry.get("id", "") == local_player_id and local_player != null:
 			var pos: Dictionary = entry.get("position", {"x": 0.0, "z": 0.0})
@@ -434,6 +444,8 @@ func _on_room_event(event: Dictionary) -> void:
 		"projectile_hit": _handle_projectile_hit(event)
 		"item_spawn": _handle_item_spawn(event)
 		"item_pickup": _handle_item_pickup(event)
+		"portal_open": _handle_portal_open(event)
+		"portal_close": _handle_portal_close(event)
 
 func _handle_projectile_fired(event: Dictionary) -> void:
 	# Spawn the sphere instantly so the shooter sees their shot a frame after
@@ -459,6 +471,18 @@ func _handle_item_pickup(event: Dictionary) -> void:
 	# held-item HUD slot fills off the next delta's activeItem.
 	if item_renderer != null:
 		item_renderer.on_pickup(String(event.get("itemId", "")))
+
+func _handle_portal_open(event: Dictionary) -> void:
+	# Show the pair instantly. Live pairs also ride the snapshot, so a late
+	# joiner / reconnect picks up an in-progress pair without this event.
+	if portal_renderer != null:
+		portal_renderer.on_open(event.get("portal", {}))
+
+func _handle_portal_close(event: Dictionary) -> void:
+	# Hide the pair the instant the server expires it rather than waiting for the
+	# next snapshot to drop it.
+	if portal_renderer != null:
+		portal_renderer.on_close(String(event.get("id", "")))
 
 func _handle_tag_result(event: Dictionary) -> void:
 	if bool(event.get("ok", false)):

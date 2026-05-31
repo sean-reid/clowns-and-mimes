@@ -13,6 +13,7 @@ class MockArena:
 	var world: Node3D
 	var topology
 	var local_player: Node3D
+	var labyrinth = null
 
 static func _make_arena() -> MockArena:
 	var a := MockArena.new()

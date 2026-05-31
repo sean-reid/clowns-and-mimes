@@ -905,6 +905,10 @@ func _handle_win(event: Dictionary) -> void:
 	# never sees the button can't trigger a restart. OPEN matches have no
 	# host token, so the button stays hidden for them too.
 	var is_host: bool = online_mode and not GameState.host_token.is_empty()
+	# Free the cursor so the end overlay is clickable; while captured the mouse
+	# only steers look yaw (player.gd gates motion on MOUSE_MODE_CAPTURED). A
+	# fresh match recaptures it when the next local player spawns.
+	Input.set_mouse_mode(Input.MOUSE_MODE_VISIBLE)
 	hud.show_end(victory, is_host)
 	_play_stinger(victory)
 

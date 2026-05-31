@@ -44,12 +44,19 @@ const TICK_MS = 1000 / TICK_HZ;
 // past this limit the OLDEST is dropped so the simulation does not lag
 // further behind live time.
 const MAX_INPUT_QUEUE = 4;
-// Per-WebSocket rate-limit budget. 120 msg burst, 60/s sustained.
-// At TICK_HZ=60 the steady-state client sends ~60 inputs/s plus
-// occasional ping/tag/etc; this caps a flooding client to roughly
-// the same cadence while letting a brief jitter burst through.
-const RATE_LIMIT_CAPACITY = 120;
-const RATE_LIMIT_REFILL_PER_MS = 0.06;
+// Per-WebSocket rate-limit budget. 360 msg burst, 180/s sustained.
+// The steady-state client already sends one input per server tick
+// (TICK_HZ=60, so ~60/s) AND layers ping/shoot/tag/use_item on top,
+// plus bursts of several inputs in a single frame when the client's
+// physics loop runs catch-up steps after a hitch. A 60/s sustained
+// budget exactly equalled the input cadence, so any of those extras
+// drained the bucket; the server then rejected inputs at the door
+// without advancing ackSeq, the client's pending-input buffer grew
+// without bound, and replay cost spiralled into a crash. 180/s gives
+// ~3x headroom over the input stream while still capping a genuine
+// flood (a malicious client sends thousands/s).
+const RATE_LIMIT_CAPACITY = 360;
+const RATE_LIMIT_REFILL_PER_MS = 0.18;
 const FREE_ROAM_MS = 30_000;
 // Two-radius tag/unfreeze model.
 //

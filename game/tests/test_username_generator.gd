@@ -12,3 +12,10 @@ func test_generated_names_have_expected_shape() -> void:
 		var last_three: String = generated_name.substr(generated_name.length() - 3, 3)
 		assert_true(last_three.is_valid_int(), "last three chars should be digits: %s" % generated_name)
 	generator.free()
+
+func test_word_lists_have_no_duplicates() -> void:
+	for list in [GeneratorScript.ADJECTIVES, GeneratorScript.NOUNS]:
+		var seen := {}
+		for word in list:
+			assert_false(seen.has(word), "duplicate word: %s" % word)
+			seen[word] = true

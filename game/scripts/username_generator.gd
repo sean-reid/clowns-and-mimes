@@ -15,6 +15,10 @@ const ADJECTIVES := [
 	"Dusty", "Garish", "Hapless", "Wistful", "Brassy", "Maudlin",
 	"Frumpy", "Yawning", "Stooped", "Vexed", "Spotty", "Lurching",
 	"Foggy", "Crumbly",
+	"Goofy", "Zany", "Wacky", "Kooky", "Loopy", "Nutty",
+	"Bonkers", "Clumsy", "Giddy", "Madcap", "Cockeyed", "Harebrained",
+	"Addled", "Ditzy", "Screwball", "Cuckoo", "Jumbled", "Galumphing",
+	"Bamboozled", "Slapstick",
 ]
 
 const NOUNS := [
@@ -30,6 +34,10 @@ const NOUNS := [
 	"Curtain", "Footlight", "Spotlight", "Soliloquy", "Pirouette", "Maskmaker",
 	"Topiary", "Sashay", "Gambol", "Tumbler", "Patter", "Whoopee",
 	"Mime", "Clown",
+	"Zanni", "Pulcinella", "Brighella", "Colombina", "Pantalone", "Scaramuccia",
+	"Dottore", "Capitano", "Innamorato", "Lazzo", "Burla", "Maschera",
+	"Carnevale", "Tarantella", "Saltarello", "Serenata", "Gondola", "Pizzicato",
+	"Cannoli", "Biscotto",
 ]
 
 func generate() -> String:

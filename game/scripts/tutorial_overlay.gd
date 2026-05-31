@@ -1,8 +1,8 @@
 extends CanvasLayer
 
-## First-match onboarding. Shows a short sequence of hint cards, one at a time,
-## each auto-advancing after STEP_SECONDS. Esc skips the rest. The overlay is
-## click-through (Root ignores the mouse) so the player can actually move and
+## First-match onboarding. Shows a short sequence of hint cards in one fixed
+## spot, each auto-advancing after STEP_SECONDS. Esc skips the rest. The overlay
+## is click-through (Root ignores the mouse) so the player can actually move and
 ## shoot while reading — binding advance-on-click would steal the shoot input
 ## the very first hint tells them about.
 ##
@@ -11,17 +11,15 @@ extends CanvasLayer
 
 signal finished
 
-# Each step: textual hint + a normalized screen anchor for the card so a hint
-# can sit near the UI it describes (item slot, minimap, sprint bar).
 const STEPS := [
-	{"text": "Click to shoot. There's a cooldown.", "anchor": Vector2(0.5, 0.82)},
-	{"text": "Walk over items to pick one up. Press E to use it.", "anchor": Vector2(0.5, 0.82)},
-	{"text": "Touch a frozen teammate to save them.", "anchor": Vector2(0.5, 0.82)},
-	{"text": "The minimap shows your team. Some items reveal the enemy team.", "anchor": Vector2(0.62, 0.55)},
-	{"text": "Last team standing wins. Watch your sprint meter.", "anchor": Vector2(0.32, 0.78)},
+	"Click to shoot. There's a cooldown.",
+	"Walk over items to pick one up. Press E to use it.",
+	"Touch a frozen teammate to save them.",
+	"The minimap shows your team. Some items reveal the enemy team.",
+	"Last team standing wins. Watch your sprint meter.",
 ]
-const STEP_SECONDS := 4.0
-const FADE_SECONDS := 0.25
+const STEP_SECONDS := 6.0
+const FADE_SECONDS := 0.3
 
 @onready var root: Control = $Root
 @onready var card: PanelContainer = $Root/Card
@@ -58,19 +56,11 @@ func _advance() -> void:
 
 func _show_step(index: int) -> void:
 	_elapsed = 0.0
-	var step: Dictionary = STEPS[index]
-	hint.text = String(step["text"])
+	hint.text = String(STEPS[index])
 	counter.text = "%d / %d" % [index + 1, STEPS.size()]
-	_position_card(step["anchor"])
 	card.modulate.a = 0.0
 	var t := create_tween()
 	t.tween_property(card, "modulate:a", 1.0, FADE_SECONDS)
-
-func _position_card(anchor: Vector2) -> void:
-	card.anchor_left = anchor.x
-	card.anchor_right = anchor.x
-	card.anchor_top = anchor.y
-	card.anchor_bottom = anchor.y
 
 func _finish() -> void:
 	set_process(false)

@@ -8,10 +8,9 @@ const Overlay := preload("res://scripts/tutorial_overlay.gd")
 func test_five_steps() -> void:
 	assert_eq(Overlay.STEPS.size(), 5, "expected five onboarding hints")
 
-func test_every_step_has_text_and_anchor() -> void:
+func test_every_step_has_text() -> void:
 	for step in Overlay.STEPS:
-		assert_false(String(step["text"]).is_empty(), "hint text must be non-empty")
-		assert_true(step["anchor"] is Vector2, "anchor must be a Vector2")
+		assert_false(String(step).is_empty(), "hint text must be non-empty")
 
 func test_is_finished_only_past_last_index() -> void:
 	assert_false(Overlay.is_finished(0), "first step is not finished")

@@ -72,6 +72,11 @@ func send_start_match() -> void:
 		return
 	room_client.send_start_match()
 
+func send_restart_room() -> void:
+	if room_client == null:
+		return
+	room_client.send_restart_room()
+
 func close() -> void:
 	cached_snapshot = {}
 	cached_you_are = ""

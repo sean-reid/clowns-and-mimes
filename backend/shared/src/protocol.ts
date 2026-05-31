@@ -217,7 +217,14 @@ export type ClientToServer =
   // Activate the held power-up. Server clears the slot and broadcasts
   // item_used; per-type effects are dispatched in later PRs. No-op when
   // the player holds nothing.
-  | { t: 'use_item' };
+  | { t: 'use_item' }
+  // Private-lobby host restarts a finished match with the same roster: the
+  // server resets to `filling` with a fresh seed so players return to the
+  // lobby without re-sharing the code. `topology` is optional; the server
+  // keeps the current topology when omitted (the host's end-screen picker
+  // sends a concrete value, resolving "Random" client-side first). Rejected
+  // from non-host players or while the match is not yet `ended`.
+  | { t: 'restart_room'; topology?: Topology };
 
 export type ServerToClient =
   // sessionToken is the resumption secret for the recipient of this

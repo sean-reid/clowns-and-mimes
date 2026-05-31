@@ -76,6 +76,12 @@ func send_join(name: String, prefer_team: String = "", host_token: String = "") 
 func send_start_match() -> void:
 	_enqueue({"t": "start_match"})
 
+# Host-only message that resets a finished match back to the `filling` lobby
+# with the same roster (fresh seed). The server rejects it from non-hosts and
+# while the match has not ended. `topology` is omitted to keep the current one.
+func send_restart_room() -> void:
+	_enqueue({"t": "restart_room"})
+
 func send_input(
 	seq: int,
 	dt: float,

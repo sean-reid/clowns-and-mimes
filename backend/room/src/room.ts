@@ -598,6 +598,9 @@ export class Room implements DurableObject {
       case 'use_item':
         this.items.onUseItem(ws);
         return;
+      case 'restart_room':
+        this.onRestartRoom(ws, msg.topology);
+        return;
     }
   }
 
@@ -768,6 +771,71 @@ export class Room implements DurableObject {
     this.bots.cancelFill();
     this.bots.fillTeams();
     this.startMatch();
+  }
+
+  /**
+   * Host clicks "Play Again" on the end screen. Reset the finished match back
+   * to `filling` with the same roster so everyone lands in the lobby again
+   * without re-sharing the code; the host then starts the next match with the
+   * usual `start_match`. Rejected from non-host players or before the match
+   * has ended (mid-match restart would yank everyone out of a live game).
+   */
+  private onRestartRoom(ws: WebSocket, topology?: Topology): void {
+    const conn = this.connections.get(ws);
+    if (!conn || conn.playerId !== this.hostPlayerId) {
+      this.send(ws, { t: 'error', code: 'not_host', message: 'only the host can restart' });
+      return;
+    }
+    if (this.phase !== 'ended') {
+      this.send(ws, {
+        t: 'error',
+        code: 'match_in_progress',
+        message: 'match has not ended',
+      });
+      return;
+    }
+    this.resetForReplay(topology);
+  }
+
+  /**
+   * Reset to a fresh lobby keeping the human roster. Fresh seed (and topology
+   * when the host picked one), players unfrozen and respawned with cleared
+   * power-ups, bots/projectiles/items wiped (a new bot fill + item layout
+   * lands when the host starts the next match). The tick is already stopped
+   * from the win transition; `filling` runs tickless like a brand-new room.
+   */
+  private resetForReplay(topology?: Topology): void {
+    this.stopTick();
+    this.bots.cancelFill();
+    this.bots.clear();
+    this.projectiles.clear();
+    this.items.clear();
+    if (topology !== undefined && topology !== this.topology) {
+      this.topology = topology;
+    }
+    // Regenerate walls + pathfinder for the new seed (and topology, if changed).
+    this.setSeed(Math.floor(Math.random() * 2 ** 31));
+    this.roundNumber = 0;
+    for (const player of this.players.values()) {
+      if (player.bot) continue;
+      player.frozen = false;
+      player.sprintEnergy = MAX_SPRINT;
+      player.sprinting = false;
+      player.jumpStartedAt = null;
+      player.position = this.pickSpawnPosition(player.team);
+      delete player.activeItem;
+      delete player.leapArmed;
+      delete player.leaping;
+      delete player.surgeUntil;
+      delete player.radarUntil;
+      delete player.overchargeArmed;
+      delete player.cloakUntil;
+    }
+    this.phase = 'filling';
+    this.turnEndsAt = 0;
+    this.broadcast({ t: 'event', kind: { kind: 'phase', phase: this.phase } });
+    this.broadcastSnapshot();
+    this.persist();
   }
 
   /** Schedule a one-shot bot fill so a solo joiner gets opponents within a few seconds. */

@@ -17,6 +17,11 @@ const ItemVisuals := preload("res://scripts/item_visuals.gd")
 @onready var battle_cry_label: Label = $BattleCry
 @onready var end_overlay: Control = $EndOverlay
 @onready var end_label: Label = $EndOverlay/EndLabel
+@onready var play_again_button: Button = $EndOverlay/PlayAgainButton
+
+# Emitted when the host clicks Play Again on the end screen. The arena
+# forwards it to the room as a restart_room message.
+signal play_again_requested
 
 # Team palette for HUD elements (team badge, sprint bar tint, battle cry
 # label, status icons). Used everywhere in this file that needs to draw
@@ -67,6 +72,8 @@ var _crosshair: Label = null
 func _ready() -> void:
 	frozen_overlay.text = ""
 	end_overlay.visible = false
+	play_again_button.visible = false
+	play_again_button.pressed.connect(func() -> void: play_again_requested.emit())
 	team_badge.text = ""
 	topology_badge.text = ""
 	battle_cry_label.text = ""
@@ -221,6 +228,13 @@ func flash_disperse() -> void:
 	tw.tween_interval(DISPERSE_HOLD_S)
 	tw.tween_property(battle_cry_label, "modulate:a", 0.0, DISPERSE_FADE_OUT_S)
 
-func show_end(victory: bool) -> void:
+func show_end(victory: bool, allow_play_again: bool = false) -> void:
 	end_label.text = "Victory!" if victory else "Failure."
+	play_again_button.disabled = false
+	play_again_button.visible = allow_play_again
 	end_overlay.visible = true
+	if allow_play_again:
+		play_again_button.grab_focus()
+
+func set_play_again_enabled(enabled: bool) -> void:
+	play_again_button.disabled = not enabled

@@ -92,7 +92,7 @@ func _ready() -> void:
 	username_input.text_submitted.connect(func(_t): _commit_edit())
 
 	_populate_topologies()
-	_wire_button_sfx(self)
+	AudioBus.wire_button_sfx(self)
 	# A screen can hand us back to a specific panel (e.g. leaving a party returns
 	# to "joinparty"); fall back to root when unset or unknown.
 	var open_panel := GameState.menu_panel
@@ -116,12 +116,6 @@ func _show_panel(panel_name: String) -> void:
 	for key in _panels:
 		_panels[key].visible = key == panel_name
 
-func _wire_button_sfx(node: Node) -> void:
-	for child in node.get_children():
-		if child is Button:
-			child.pressed.connect(func(): AudioBus.play_ui(AssetPaths.UI_CLICK))
-			child.mouse_entered.connect(func(): AudioBus.play_ui(AssetPaths.UI_HOVER))
-		_wire_button_sfx(child)
 
 func _populate_topologies() -> void:
 	topology_picker.clear()

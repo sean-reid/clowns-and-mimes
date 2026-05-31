@@ -50,6 +50,7 @@ func _ready() -> void:
 	back_button.pressed.connect(_on_back_pressed)
 	copy_button.pressed.connect(_on_copy_pressed)
 	start_button.pressed.connect(_on_start_pressed)
+	AudioBus.wire_button_sfx(self)
 	_render()
 	# Re-entry from a host Play Again leaves the WebSocket open under NetClient
 	# with the room already reset to `filling`. Adopt that connection instead of

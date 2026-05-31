@@ -314,3 +314,53 @@ export interface MatchmakeJoinResponse {
   roomId: string;
   wsUrl: string;
 }
+
+// Parties let friends queue into open matchmaking together: all members land
+// in the same room and on the same team. The matchmaker owns party state; the
+// room is unchanged - members just pass the party's `team` as their join
+// `preferTeam`, which the room already honors. Cap is PARTY_CAP (= TEAM_TARGET)
+// so the whole party fits one team and the other fills from strangers + bots.
+export const PARTY_CAP = 4;
+
+export interface PartyMember {
+  // Stable per-member id minted on create/join. The owner stashes it and sends
+  // it back to leave; it is not a secret, just a handle for removal/dedupe.
+  memberId: string;
+  name: string;
+}
+
+export interface PartyCreateBody {
+  name: string;
+}
+
+export interface PartyJoinBody {
+  name: string;
+}
+
+export interface PartyLeaveBody {
+  memberId: string;
+}
+
+// Returned by create and join. `memberId` is the caller's own handle; `members`
+// is the full current roster so the party UI can render everyone.
+export interface PartyStateResponse {
+  partyId: string;
+  code: string;
+  team: Team;
+  memberId: string;
+  members: PartyMember[];
+}
+
+// Optional body on POST /open/join. When `partyId` is present the matchmaker
+// routes the caller to the party's shared room and returns the party `team`.
+export interface OpenJoinBody {
+  partyId?: string;
+}
+
+export interface OpenJoinResponse {
+  roomId: string;
+  wsUrl: string;
+  topology: Topology;
+  // Present only for party joins - the team every member should request.
+  team?: Team;
+}

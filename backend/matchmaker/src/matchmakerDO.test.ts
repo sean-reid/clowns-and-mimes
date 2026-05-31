@@ -1,10 +1,14 @@
+import { PARTY_CAP } from '@cm/shared';
 import { describe, expect, it } from 'vitest';
 import {
   MatchmakerDO,
   OPEN_ROOM_FRESH_MS,
   OPEN_ROOM_SOFT_CAPACITY,
+  PARTY_PRUNE_MS,
+  type PartyEntry,
   pickRoom,
   pruneStale,
+  pruneStaleParties,
   type OpenRoomEntry,
 } from './matchmakerDO.ts';
 
@@ -191,5 +195,127 @@ describe('MatchmakerDO.fetch', () => {
     const doInstance = makeDO();
     const { res } = await call(doInstance, '/roomState', { roomId: 'x' });
     expect(res.status).toBe(400);
+  });
+});
+
+describe('pruneStaleParties', () => {
+  it('drops parties past the prune cutoff', () => {
+    const now = PARTY_PRUNE_MS + 5_000;
+    const base: Omit<PartyEntry, 'id' | 'code' | 'lastSeenAt'> = {
+      team: 'mime',
+      members: [],
+      roomId: null,
+      createdAt: 0,
+    };
+    const parties = new Map<string, PartyEntry>([
+      ['fresh', { ...base, id: 'fresh', code: 'AAAAAA', lastSeenAt: now - 1_000 }],
+      ['stale', { ...base, id: 'stale', code: 'BBBBBB', lastSeenAt: now - PARTY_PRUNE_MS - 1 }],
+    ]);
+    pruneStaleParties(parties, now);
+    expect([...parties.keys()]).toEqual(['fresh']);
+  });
+});
+
+describe('MatchmakerDO parties', () => {
+  it('partyCreate returns a code, ids, a team, and the founding member', async () => {
+    const doInstance = makeDO();
+    const { res, json } = await call(doInstance, '/partyCreate', { name: 'Ada' });
+    expect(res.status).toBe(200);
+    const body = json as {
+      partyId: string;
+      code: string;
+      team: string;
+      memberId: string;
+      members: { memberId: string; name: string }[];
+    };
+    expect(body.partyId).toMatch(/^[0-9a-f-]{36}$/);
+    expect(body.code).toMatch(/^[A-Z0-9]{6}$/);
+    expect(['mime', 'clown']).toContain(body.team);
+    expect(body.members).toEqual([{ memberId: body.memberId, name: 'Ada' }]);
+  });
+
+  it('partyJoin adds a member and keeps the same id/code/team', async () => {
+    const doInstance = makeDO();
+    const { json: created } = await call(doInstance, '/partyCreate', { name: 'Ada' });
+    const party = created as { partyId: string; code: string; team: string };
+    const { res, json } = await call(doInstance, '/partyJoin', {
+      code: party.code,
+      name: 'Bob',
+    });
+    expect(res.status).toBe(200);
+    const joined = json as {
+      partyId: string;
+      code: string;
+      team: string;
+      members: { name: string }[];
+    };
+    expect(joined.partyId).toBe(party.partyId);
+    expect(joined.team).toBe(party.team);
+    expect(joined.members.map((m) => m.name)).toEqual(['Ada', 'Bob']);
+  });
+
+  it('partyJoin lowercases-insensitively matches the code', async () => {
+    const doInstance = makeDO();
+    const { json: created } = await call(doInstance, '/partyCreate', { name: 'Ada' });
+    const code = (created as { code: string }).code;
+    const { res } = await call(doInstance, '/partyJoin', {
+      code: code.toLowerCase(),
+      name: 'Bob',
+    });
+    expect(res.status).toBe(200);
+  });
+
+  it('partyJoin 404s an unknown code', async () => {
+    const doInstance = makeDO();
+    const { res } = await call(doInstance, '/partyJoin', { code: 'ZZZZZZ', name: 'Bob' });
+    expect(res.status).toBe(404);
+  });
+
+  it('partyJoin 409s a full party', async () => {
+    const doInstance = makeDO();
+    const { json: created } = await call(doInstance, '/partyCreate', { name: 'p0' });
+    const code = (created as { code: string }).code;
+    for (let i = 1; i < PARTY_CAP; i += 1) {
+      const { res } = await call(doInstance, '/partyJoin', { code, name: `p${i}` });
+      expect(res.status).toBe(200);
+    }
+    const { res } = await call(doInstance, '/partyJoin', { code, name: 'overflow' });
+    expect(res.status).toBe(409);
+  });
+
+  it('partyLeave removes a member and deletes the party when empty', async () => {
+    const doInstance = makeDO();
+    const { json: created } = await call(doInstance, '/partyCreate', { name: 'Ada' });
+    const party = created as { partyId: string; code: string; memberId: string };
+    await call(doInstance, '/partyLeave', {
+      partyId: party.partyId,
+      memberId: party.memberId,
+    });
+    // The party is now empty and gone, so joining by its code 404s.
+    const { res } = await call(doInstance, '/partyJoin', { code: party.code, name: 'Bob' });
+    expect(res.status).toBe(404);
+  });
+
+  it('routes both party members to the same room and team via open-join', async () => {
+    const doInstance = makeDO();
+    const { json: created } = await call(doInstance, '/partyCreate', { name: 'Ada' });
+    const party = created as { partyId: string; code: string; team: string };
+    await call(doInstance, '/partyJoin', { code: party.code, name: 'Bob' });
+
+    const { json: first } = await call(doInstance, '/openJoin', { partyId: party.partyId });
+    const a = first as { roomId: string; team: string; created: boolean };
+    expect(a.team).toBe(party.team);
+
+    const { json: second } = await call(doInstance, '/openJoin', { partyId: party.partyId });
+    const b = second as { roomId: string; team: string; created: boolean };
+    expect(b.roomId).toBe(a.roomId);
+    expect(b.created).toBe(false);
+    expect(b.team).toBe(party.team);
+  });
+
+  it('open-join without a partyId carries no team', async () => {
+    const doInstance = makeDO();
+    const { json } = await call(doInstance, '/openJoin');
+    expect((json as { team?: string }).team).toBeUndefined();
   });
 });

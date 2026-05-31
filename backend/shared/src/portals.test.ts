@@ -6,7 +6,7 @@ import {
   buildPortalPair,
   forwardFromYaw,
 } from './portals.ts';
-import type { WallSegment } from './labyrinth.ts';
+import { pointBlockedByWall, type WallSegment } from './labyrinth.ts';
 import type { Vec3 } from './protocol.ts';
 
 // One wall a player at the origin faces (yaw 0 -> -z) and one elsewhere, so the
@@ -74,6 +74,23 @@ describe('buildPortalPair', () => {
     const f = forwardFromYaw(g.aExitYaw);
     expect(f.x).toBeCloseTo(0, 6);
     expect(f.z).toBeCloseTo(1, 6);
+  });
+
+  it('keeps both emergence points clear of a wall on the plane perimeter', () => {
+    // The plane CLAMPS x/z to [-40, 40], so a perimeter wall sits where a point
+    // pushed off it outward gets clamped back onto the wall. Player faces the
+    // interior z=-3 wall (entry); the only other wall is the top edge at z=40
+    // (exit). The exit emergence must land on the interior side, not be clamped
+    // into the boundary wall it anchors on (the #177 strand-in-wall bug).
+    const walls: WallSegment[] = [
+      { ax: -2, az: -3, bx: 2, bz: -3 },
+      { ax: -40, az: 40, bx: 40, bz: 40 },
+    ];
+    const g = buildPortalPair({ x: 0, z: 0 }, 0, walls, 'plane', 80)!;
+    expect(g.b.z).toBeCloseTo(40, 6);
+    expect(g.bExit.z).toBeLessThan(40);
+    expect(pointBlockedByWall(walls, g.bExit.x, g.bExit.z)).toBe(false);
+    expect(pointBlockedByWall(walls, g.aExit.x, g.aExit.z)).toBe(false);
   });
 
   it('insets the entry mouth from a wall end so the ring does not overhang', () => {

@@ -10,6 +10,9 @@ This document is the single source of truth for how the project is built. Other 
 - [Game client](#game-client)
 - [Topology system](#topology-system)
 - [Labyrinth generator](#labyrinth-generator)
+- [Power-ups and projectiles](#power-ups-and-projectiles)
+- [HUD and minimap](#hud-and-minimap)
+- [Environment and lighting](#environment-and-lighting)
 - [Audio system](#audio-system)
 - [Bot AI](#bot-ai)
 - [Networking](#networking)
@@ -80,12 +83,14 @@ clowns-and-mimes/
     room/                    Durable Object hosting one game room.
                              room.ts is the lifecycle + simulation;
                              tagManager.ts, snapshotBroadcaster.ts,
-                             messageValidator.ts, rateLimiter.ts are
+                             messageValidator.ts, rateLimiter.ts,
+                             itemManager.ts (power-ups + portals),
+                             projectileManager.ts (freeze shots) are
                              the extracted concerns.
     shared/                  protocol types + pure rules used by both
                              sides AND the Godot client (movement,
                              physics, topology, labyrinth, gridMaze,
-                             mobius, tagRules)
+                             mobius, tagRules, items, portals)
   website/                   Astro static site
   tests/
     e2e/                     Playwright + headless game smoke checks
@@ -102,44 +107,51 @@ clowns-and-mimes/
 
 ```mermaid
 flowchart TB
-  TitleScreen --> MainMenu
-  MainMenu -->|Host| HostFlow[Host private game]
-  MainMenu -->|Code| CodeFlow[Enter join code]
-  MainMenu -->|Strangers| StrangerFlow[Open matchmaking]
+  TitleScreen --> Menu[Carnival menu]
+  Menu -->|Open match → Solo| OpenFlow[Open matchmaking]
+  Menu -->|Open match → Party| PartyFlow[Party screen]
+  Menu -->|Private match → Host| HostFlow[Host private game]
+  Menu -->|Private match → Join| CodeFlow[Enter join code]
+  PartyFlow -->|leader starts| OpenFlow
+  OpenFlow --> Lobby
   HostFlow --> Lobby
   CodeFlow --> Lobby
-  StrangerFlow --> Lobby
   Lobby -->|host clicks Start / open auto-fills| Freeroam[30s free roam]
   Freeroam --> TurnLoop
   TurnLoop -->|all of one team frozen| EndScreen
-  EndScreen -->|Quit| MainMenu
+  EndScreen -->|Quit| Menu
+  EndScreen -->|host Play Again| Lobby
 ```
 
 The game client is structured around scene composition in Godot:
 
 - `main.tscn` is the root that swaps the active screen.
 - `title_screen.tscn` plays the title animation and the menu theme.
-- `main_menu.tscn` shows host, code, and strangers options plus username entry and a gear icon for settings.
-- `lobby.tscn` is the pre-arena screen that surfaces the lobby code (host) or join status (joiner), the live player roster, and the host's Start button.
+- `menu_v2.tscn` is the carnival main menu, a small panel navigator: **Open match** (party up / play solo) and **Private match** (host with a topology picker / join by code), plus inline username editing and a settings button. (`Settings.use_v1_menu` still ships the old flat `main_menu.tscn` behind a flag.)
+- `party.tscn` creates or joins a party (a shared team handle); the leader's start routes every member into the same open room via `/open/join` with the party id.
+- `lobby.tscn` is the pre-arena screen that surfaces the lobby code (host) or join status (joiner), the live player roster, and the host's Start button. It also adopts a still-open connection after a host Play Again instead of matchmaking afresh.
 - `arena.tscn` instantiates a topology, the labyrinth, the HUD, and the in-game menu overlay.
-- `hud.tscn` overlays sprint bar, countdown, team status, side log, and frozen overlay.
+- `hud.tscn` overlays the sprint bar, turn countdown, team + topology badges, held-item slot, minimap, aim crosshair, side event log, centered frozen/battle-cry/disperse banners, and the end-of-match overlay (with the host's Play Again button).
 - `in_game_menu.tscn` is the Esc overlay (Resume / Settings / Quit to main menu).
-- `settings_panel.tscn` is the modal opened from the gear icon or the in-game menu: mute music, mute SFX, light-mode arena palette. Persisted to `user://settings.cfg` via the `Settings` autoload.
+- `settings_panel.tscn` is the modal opened from the menu button or the in-game menu: mute music, mute SFX, light-mode arena palette, reset to defaults. Persisted to `user://settings.cfg` via the `Settings` autoload.
 
 Autoloads:
 
-- `GameState` holds cross-scene state (mode, username, topology, lobby_code, server_url, host_token).
-- `AudioBus` configures the Music / SFX / UI buses at boot and owns the long-lived music player so a track started on the title screen survives scene swaps.
-- `Settings` is the player-preferences singleton (audio mutes + light mode) backed by `user://settings.cfg`.
+- `GameState` holds cross-scene state (mode, username, topology, lobby_code, server_url, host_token, `is_room_host`, party fields, `menu_panel` for menu re-entry).
+- `AudioBus` configures the Music / SFX / UI buses at boot, owns the long-lived music player so a track started on the title screen survives scene swaps, and exposes `wire_button_sfx(root)` so every screen wires click/hover SFX onto its buttons with one call.
+- `Settings` is the player-preferences singleton (audio mutes, light mode, custom username, telemetry consent) backed by `user://settings.cfg`.
 - `UsernameGenerator` produces the adjective-and-noun random names.
 - `NetClient` owns the `RoomClient` across scene transitions: the lobby opens the WebSocket and the arena re-uses the same connection, so reconciliation state and the initial snapshot survive the lobby → arena swap.
+- `Telemetry` posts anonymous gameplay stats once the player opts in.
 
 Player movement is handled by `player.gd`, a `CharacterBody3D` with:
 
 - WASD for translational movement
 - Mouse look with capture
 - Shift to sprint while sprint energy is above zero
-- Space to jump on a deterministic 0.6 s parabolic arc, peak 2 m above hover (clears the 1.4 m tag-overlap threshold). Sprint is orthogonal — holding Shift through a jump preserves sprint and does not drain extra energy. Cooldown is 0.1 s after landing.
+- Space to jump on a deterministic 0.6 s parabolic arc, peak 2 m above hover (clears the 1.4 m tag-overlap threshold). Sprint is orthogonal — holding Shift through a jump preserves sprint and does not drain extra energy. Cooldown is 0.1 s after landing. A `leap` power-up arms the next jump with a boosted arc.
+- Left click to fire a freeze projectile down the camera's aim (server-simulated; an `overcharge` power-up arms a wall-piercing, cooldown-free shot)
+- E to use the held power-up
 - Footstep sound emitter modulated by current planar speed
 - Tag and unfreeze fire on contact: when the active turn's team brushes within `CONTACT_RADIUS` (1.4 m) of an eligible opponent or teammate, `tag_attempt` / `unfreeze_attempt` is sent to the server. A 0.15 s per-target cooldown keeps one physics frame from firing the same tag repeatedly; the server's own cooldown is the long gate.
 
@@ -201,6 +213,41 @@ Generation steps:
 
 A legacy ring-based layout (`_build_ring` / `_add_arc_wall` in `labyrinth.gd`) is retained as dead code for a possible experimental mode but no current topology dispatches to it.
 
+## Power-ups and projectiles
+
+Two combat extras layer on top of the contact-tag core, both server-authoritative.
+
+**Freeze projectiles.** Left click fires a freeze shot down the camera's aim. The server owns the simulation in `projectileManager.ts`: the shot travels in 3D, tests the wall list each step, and freezes the first eligible opponent it hits (reusing the same `tagged` path as a contact tag). The client renders projectiles from their authoritative positions in the delta. A fire has its own cooldown; an armed `overcharge` skips the cooldown and pierces walls for one shot.
+
+**Power-ups.** Floor pickups give a one-shot edge, used with E. The floor layout is a seeded sparse subset of maze cells (`items.ts`, one cell in `ITEM_SPAWN_KEEP_DENOM` carries one), derived purely from the room seed so every client agrees without a round-trip. Items respawn `ITEM_RESPAWN_MS` (30 s) after pickup. `surge` and `radar` spawn every match; the rest rotate by seed. The held item rides the snapshot as `activeItem`; pickups, uses, and respawns ride `item_spawn` / `item_pickup` / `item_used` events.
+
+| Item         | Category | Effect                                                                 |
+| ------------ | -------- | ---------------------------------------------------------------------- |
+| `leap`       | movement | Arms the next jump with a boosted arc.                                 |
+| `portal`     | movement | Opens a portal pair (entry on the faced wall, exit on a random wall); step through to teleport. Lives `PORTAL_DURATION_MS`. |
+| `surge`      | combat   | Sprint-speed boost for `SURGE_DURATION_MS` (absolute deadline on the snapshot). |
+| `overcharge` | combat   | Arms the next shot to skip cooldown and pierce walls.                  |
+| `radar`      | info     | Reveals the enemy team on your minimap for `RADAR_DURATION_MS` (5 s).  |
+| `clone`      | defense  | Spawns a decoy clone of you.                                           |
+| `cloak`      | defense  | Hides your body from other clients for `CLOAK_DURATION_MS` (4 s).      |
+
+`item_visuals.gd` maps each type to a category color, a short HUD-slot label, and a distinct primitive shape so same-category power-ups (leap vs portal, surge vs overcharge, cloak vs clone) read apart on the floor and in the slot.
+
+## HUD and minimap
+
+`hud.tscn` / `hud.gd` overlays the live match state. To avoid the per-event scene-tree churn that froze the app in an early playtest, the side event log is a fixed pool of pre-allocated `Label`s that text shifts up through (capped at `MAX_LOG_LINES`, older lines faded), never an allocate/free per event.
+
+The minimap (`minimap.gd`) plots teammate dots and a both-team tally, projected for the local viewer's topology. For non-orientable shapes it draws the cylindrical double cover so dots near a seam fold correctly rather than jumping. A `radar` power-up reveals the enemy team on it for the radar window.
+
+## Environment and lighting
+
+The arena is deliberately dark. Two effects shape the mood and are gated so they degrade gracefully:
+
+- **Volumetric fog** thickens the dark and shortens sight lines, reinforcing the limited-visibility design goal.
+- **Wall-base uplighting strips** wash the foot of the walls in the active turn's team tint (warm for clowns, cool for mimes) so the current turn reads at a glance even in the gloom; neutral during free roam.
+
+Light mode (a settings toggle) swaps the night palette for a brighter arena; `arena.gd::apply_light_mode` applies it live so a mid-match change is not jarring.
+
 ## Audio system
 
 Three audio buses configured at runtime: Music, SFX, UI.
@@ -233,6 +280,7 @@ stateDiagram-v2
 - Pathfinding is topology-aware: the offline `AStar2D` graph connects across seams via `_wrap_cell`, and the server-side BFS in `botPathfinder.ts` works on the same coarse grid. The follow-up here is mainly performance / quality of the routed paths, not whether seams are traversed.
 - Server-side bots use the same wall-segment list the client renders from (generated from the room seed), so wall collisions and LOS are authoritative.
 - Patrol exploration memory: each bot remembers its last 6 patrol targets and rejects new candidates within 10 m of any of them, so wandering bots no longer pace between two adjacent cells.
+- Server-side bots use the same combat extras as humans: they fire freeze projectiles at a chasing line of sight and pick up + use power-ups, so a bot-heavy match plays with the full mechanic set rather than contact-tag only.
 
 ## Networking
 
@@ -253,9 +301,9 @@ sequenceDiagram
   C->>DO: start_match  (host only, transitions out of `filling`)
 ```
 
-Wire protocol is JSON over WebSocket with a `t` discriminator on every message and `PROTOCOL_VERSION = 2` (defined in `@cm/shared/protocol`). The room rejects mismatched versions with a `version_mismatch` error and closes the socket with close code 4001. Version 2 carries `position: Vec3` (Y is meaningful for the jump arc) and `jumpStartedAt: number | null` on `PlayerState`, plus a `jump: boolean` rising-edge field on `PlayerInput`.
+Wire protocol is JSON over WebSocket with a `t` discriminator on every message and `PROTOCOL_VERSION = 3` (defined in `@cm/shared/protocol`). The room rejects mismatched versions with a `version_mismatch` error and closes the socket with close code 4001. The protocol carries `position: Vec3` (Y is meaningful for the jump arc) and `jumpStartedAt: number | null` on `PlayerState`, a `jump: boolean` rising-edge field on `PlayerInput`, and (version 3) the power-up + projectile surface: `activeItem` and the per-type armed/expiry fields on `PlayerState`, plus live `items`, `portals`, and `projectiles` arrays on the snapshot/delta.
 
-Message types: `join`, `leave`, `input`, `start_match`, `tag_attempt`, `tag_result`, `unfreeze_attempt`, `unfreeze_result`, `ping`, `pong`, `snapshot`, `delta`, `event`, `error`.
+Message types: `join`, `leave`, `input`, `start_match`, `restart_room`, `tag_attempt`, `tag_result`, `unfreeze_attempt`, `unfreeze_result`, `shoot`, `shoot_result`, `use_item`, `ping`, `pong`, `snapshot`, `delta`, `event`, `error`. Event kinds rendered by every client include `phase`, `tagged`, `projectile_fired` / `projectile_hit`, `item_spawn` / `item_pickup` / `item_used`, `portal_open` / `portal_close`, and `host_changed`.
 
 Per-tick cadence:
 
@@ -302,7 +350,9 @@ flowchart LR
 - `matchmaker` Worker exposes:
   - `POST /lobby` creates a private room and returns `{code, roomId, wsUrl, hostToken}`. The matchmaker mints a random `hostToken` and stores it in the KV entry next to `roomId` and `topology`. Only this response surfaces the token; subsequent joiners never see it. The KV entry has a 6 hour TTL.
   - `POST /lobby/{code}/join` reads the KV entry and returns `{roomId, wsUrl}` (deliberately omitting the host token so a joiner cannot claim the host role).
-  - `POST /open/join` lists open-room entries by prefix, picks the most populated one under the soft capacity (12), increments its joined counter, and returns its `wsUrl`. Falls back to spinning up a fresh open room with a random topology when no candidate exists.
+  - `POST /open/join` lists open-room entries by prefix, picks the most populated one under the soft capacity (12), increments its joined counter, and returns its `wsUrl`. Accepts an optional `partyId` so every member of a party routes into the same room on the same team. Falls back to spinning up a fresh open room with a random topology when no candidate exists.
+  - `POST /party/create`, `POST /party/{code}/join`, `POST /party/{id}/leave`, `GET /party/{id}` manage parties — a shared team handle with no leader role (team is a party property). Members poll `GET /party/{id}` for the roster and then each call `/open/join` with the party id when starting.
+  - `POST /lobby/room-state` and `POST /lobby/room-detach` are room → matchmaker callbacks that keep the open-rooms pool current (entries are created only via `/open/join`).
   - `GET /healthz` for uptime checks.
 - `wsUrl` is composed as `wss://<room-worker-name>.<account-subdomain>.workers.dev/ws/{roomId}?topology=<topology>` where `<account-subdomain>` is the account's `*.workers.dev` slug, provided to the matchmaker as the `WORKERS_SUBDOMAIN` env var. The host's URL additionally carries `&host=<hostToken>` so the Room DO can identify the host connection on WS upgrade.
 - `room` Durable Object holds room state, broadcasts deltas, drives the 60 Hz tick loop, and runs the server-side bot AI for every room. Uses the WebSocket hibernation API to stay cheap when idle.
@@ -332,6 +382,8 @@ flowchart TD
 
 Open rooms target a soft capacity of 12 humans before opening a fresh room. Once a human joins, the room schedules a 3 second bot-fill timer (`BOT_FILL_DELAY_MS`); when it fires the room fills empty seats up to `TEAM_TARGET = 4` bots per team and transitions straight into free roam, so a solo player never sits in an empty lobby. Private (hosted) rooms skip the auto-fill timer: the room stays in `filling` until the host's `start_match` message arrives, then bots fill the remaining slots and the match begins. At match start, `balanceTeamAssignments` rebalances the human roster across teams (sort by id, alternate) so all five humans never land on the same side.
 
+Parties let friends share an open match. The party screen creates or joins a party (a `MatchmakerDO`-held handle with a shared team, no leader role); when a member starts, each one calls `/open/join` carrying the party id, so the matchmaker routes them into the same room on the same team. The room snapshot's server-authored names are the source of truth for the roster, so the client never fabricates placeholder member names.
+
 ## Room lifecycle
 
 ```mermaid
@@ -341,10 +393,13 @@ stateDiagram-v2
   Filling --> FreeRoam30: host start_match (private) / auto-fill timer (open)
   FreeRoam30 --> TurnLoop
   TurnLoop --> Ended: a team is fully frozen
+  Ended --> Filling: host restart_room (Play Again)
   Ended --> [*]: all humans quit (room torn down on next disconnect)
 ```
 
-There is no in-room rematch flow yet. Players Quit out of the end screen and matchmake again from the menu.
+Private rooms support a one-click rematch: from the end screen the host sends `restart_room`, and the room resets to `filling` with a fresh seed and the same roster, so everyone returns to the lobby instead of re-matchmaking. Open matches have no host and skip this; players Quit and matchmake again.
+
+Host migration keeps a private room playable when the host leaves. The host is held through the `RECONNECT_GRACE_MS` window (a transient drop resumes as host); only when `finalizeDisconnect` retires the host slot does the room promote the first remaining human, broadcasting a `host_changed` event so that client surfaces the Start / Play Again controls. Open rooms (no host token) are never promoted.
 
 Joins arriving after `Filling` are rejected with `match_in_progress` **unless** the client presents a valid `sessionToken` whose matching `PlayerState` is still within the `RECONNECT_GRACE_MS` window, in which case the WS is rebound to the original player and the match resumes. The reject path remains the freeze-circumvention guard against leave-and-rejoin attempts (no token means no resume).
 
@@ -358,7 +413,8 @@ Turn duration progression: round 1 is 30 seconds per team, round 2 is 60 seconds
 - Every incoming WebSocket message is shape-validated (`messageValidator.ts`) before dispatch. Bad payloads (wrong type, `NaN`, missing fields, overlong strings) get `invalid_message` and are dropped.
 - Per-connection token-bucket rate limit (`rateLimiter.ts`): 120 burst, 60/s sustained. Flooding clients receive `rate_limited` and the message is dropped without closing the socket.
 - Clients are gated on protocol version twice: matchmaker checks the `X-Protocol-Version` header before vending a `wsUrl` (426 `protocol_mismatch` on mismatch), and the room re-checks the version field on the WS `join` payload (close 4001 `version_mismatch`). The first slice catches stale clients before the WS dial.
-- Private lobbies receive a `hostToken` from the matchmaker on create. Only the host's WS URL carries it (`?host=<token>`) and only that connection is allowed to issue the `start_match` message that transitions the room out of `filling`. Joiners never see the token.
+- Freeze projectiles are server-simulated: the room owns each shot's path, wall tests, and the hit decision (routed through the same eligibility rules as a contact tag). The client only renders authoritative projectile positions, so a tampered client cannot fabricate a freeze.
+- Private lobbies receive a `hostToken` from the matchmaker on create. Only the host's WS URL carries it (`?host=<token>`) and only that connection (or a player promoted via host migration) is allowed to issue the `start_match` / `restart_room` messages that transition the room out of `filling`. Joiners never see the token.
 
 We do not attempt binary anti-tamper. The blast radius of cheating is limited because the server is the source of truth.
 
@@ -366,12 +422,7 @@ We do not attempt binary anti-tamper. The blast radius of cheating is limited be
 
 A small Astro site at `website/` deployed to GitHub Pages on every push to `main`.
 
-Pages:
-
-- Home: title, screenshot, install buttons that detect the visitor's OS.
-- How to play: rules summary.
-- Topologies: short visual explainer for each.
-- Credits: assets and acknowledgements.
+It is a single carnival-poster page (`src/pages/index.astro`) with stacked sections: title with the clown/mime portraits, Download (OS-detecting install buttons), How to play, Topologies (an inline SVG explainer per shape), and Controls.
 
 The install buttons resolve to the latest GitHub release asset by platform using a small client-side fetch against the GitHub API at runtime, with a static fallback.
 

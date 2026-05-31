@@ -10,9 +10,13 @@ extends Control
 ## "who's still standing" affordance from the old bars.
 ##
 ## Fed once per delta via update_state(); positions lerp toward their targets
-## in _process so the 10 Hz delta cadence doesn't stutter the dots.
+## in _process so the 10 Hz delta cadence doesn't stutter the dots. The lerp is
+## seam-aware (see _smooth_axis): on axes the topology wraps, a dot crossing the
+## seam hops the short way off one edge and back on the opposite one rather than
+## racing across the whole map.
 
 const TopologyFactory := preload("res://scripts/topology/topology_factory.gd")
+const TopologyScript := preload("res://scripts/topology/topology.gd")
 const Hud := preload("res://scripts/hud.gd")
 
 # Team palette is owned by hud.gd (this widget lives inside the HUD); reuse it
@@ -21,6 +25,14 @@ const Hud := preload("res://scripts/hud.gd")
 const FROZEN_COLOR := Color(0.55, 0.55, 0.58)
 const MAP_BG := Color(0, 0, 0, 0.55)
 const MAP_BORDER := Color(0.6, 0.6, 0.65, 0.6)
+# Mobius/Klein store their playfield as a double cover: two z-mirrored copies of
+# the surface, identified by (x,z) ~ (x+L, -z). The minimap folds that cover onto
+# a single copy in the local viewer's frame, so a player on the copy opposite the
+# viewer lands on its mirror partner (z-flipped) and renders dimmed - the cue that
+# they're on the unseen side of the surface. Crossing the fold then reads as a dot
+# hopping the map edge with its facing mirrored, which is the topology's seam.
+# FAR_SIDE_ALPHA is that dimming.
+const FAR_SIDE_ALPHA := 0.35
 
 const TALLY_HEIGHT := 14.0
 const TALLY_GAP := 6.0
@@ -37,6 +49,9 @@ var _display: Dictionary = {}
 var _rows: Array = []
 var _topology_name: String = ""
 var _topology = null
+# Id of the local viewer, kept so _draw can work out which double-cover copy
+# the viewer is on and fade the dots sitting on the opposite copy.
+var _local_id: String = ""
 
 ## Normalized [0,1]^2 projection of a world XZ position for the given topology
 ## adapter. Static so it can be unit-tested without a scene tree. The full
@@ -61,6 +76,7 @@ static func _to_vec3(value) -> Vector3:
 ## dicts); local_id/local_team identify the viewer; topology_name selects the
 ## projection. Enemies are only included when the local player's Radar is live.
 func update_state(players: Array, local_id: String, local_team: String, topology_name: String) -> void:
+	_local_id = local_id
 	if topology_name != _topology_name or _topology == null:
 		_topology_name = topology_name
 		_topology = TopologyFactory.from_string(topology_name) if not topology_name.is_empty() else null
@@ -102,14 +118,39 @@ func _process(delta: float) -> void:
 	if _rows.is_empty():
 		return
 	var w := clampf(delta * LERP_RATE, 0.0, 1.0)
+	# Only smooth across a seam on axes the active topology actually wraps:
+	# plane wraps neither, Mobius wraps x but hard-bounds z, torus/klein wrap
+	# both. A non-wrapping axis lerps straight so its dot never hops an edge.
+	var wraps_u: bool = _topology != null and _topology.wraps_x()
+	var wraps_v: bool = _topology != null and _topology.wraps_z()
 	for row in _rows:
 		var id: String = row["id"]
 		var target: Vector2 = row["target"]
 		if _display.has(id):
-			_display[id] = (_display[id] as Vector2).lerp(target, w)
+			var cur: Vector2 = _display[id]
+			_display[id] = Vector2(
+				_smooth_axis(cur.x, target.x, w, wraps_u),
+				_smooth_axis(cur.y, target.y, w, wraps_v),
+			)
 		else:
 			_display[id] = target
 	queue_redraw()
+
+## Smooth one normalized axis toward its target. On a wrapping axis the dot
+## takes the short path across the seam: when the target is more than half the
+## map away it heads for the wrapped target (target +/- 1) and re-enters from
+## the opposite edge, so a seam crossing reads as a quick edge hop instead of a
+## sweep across the whole map (and repeated crossings stop flickering). A
+## non-wrapping axis lerps directly. Static so it can be unit-tested headless.
+static func _smooth_axis(current: float, target: float, w: float, wraps: bool) -> float:
+	if not wraps:
+		return lerpf(current, target, w)
+	var diff := target - current
+	if diff > 0.5:
+		target -= 1.0
+	elif diff < -0.5:
+		target += 1.0
+	return fposmod(lerpf(current, target, w), 1.0)
 
 func _draw() -> void:
 	var map_side := minf(size.x, size.y - TALLY_HEIGHT - TALLY_GAP)
@@ -119,20 +160,56 @@ func _draw() -> void:
 	var map_rect := Rect2(map_origin, Vector2(map_side, map_side))
 	draw_rect(map_rect, MAP_BG, true)
 	draw_rect(map_rect, MAP_BORDER, false, 1.0)
+	# Folding topologies show a single copy of the surface in the viewer's frame.
+	var folding := _is_folding()
+	var local_copy := _copy_of(_display.get(_local_id, Vector2(0.5, 0.5)).x) if folding else false
 	# Plot the map dots: teammates always, enemies only under active Radar.
 	for row in _rows:
 		if row["is_enemy"] and not row["radar"]:
 			continue
 		var norm: Vector2 = _display.get(row["id"], row["target"])
-		var at := map_origin + norm * map_side
 		var color := _dot_color(row)
+		var opposite := false
+		if folding:
+			var fold := _fold_to_local(norm, local_copy)
+			norm = fold["pos"]
+			opposite = fold["opposite"]
+			if opposite:
+				color.a *= FAR_SIDE_ALPHA
+		var at := map_origin + norm * map_side
 		if row["is_local"]:
-			draw_circle(at, LOCAL_DOT_RADIUS + 3.0, Color(color.r, color.g, color.b, 0.25))
+			draw_circle(at, LOCAL_DOT_RADIUS + 3.0, Color(color.r, color.g, color.b, 0.25 * color.a))
 			draw_circle(at, LOCAL_DOT_RADIUS, color)
 			_draw_facing(at, row["yaw"], color)
 		else:
 			draw_circle(at, DOT_RADIUS, color)
 	_draw_tally(map_rect)
+
+## True for topologies drawn as a double cover (Mobius, Klein), where the
+## playfield is two mirrored copies of the surface and the minimap fades the
+## copy opposite the viewer. Plane/torus are a single copy.
+func _is_folding() -> bool:
+	if _topology == null:
+		return false
+	var k = _topology.kind()
+	return k == TopologyScript.Kind.MOBIUS or k == TopologyScript.Kind.KLEIN
+
+## Which double-cover copy a normalized u falls on. The two copies split the
+## map at u = 0.5 (the mirror seam); the wrap edge at u = 0/1 is the same seam,
+## so a dot changes copy whether it crosses the middle or wraps an edge.
+static func _copy_of(u: float) -> bool:
+	return u >= 0.5
+
+## Fold a full-cover normalized point onto a single copy of the surface, in the
+## local viewer's reference frame. Both copies collapse onto u in [0,1] (a point
+## and its deck partner u+0.5 land on the same column); a point on the copy
+## opposite the viewer mirrors in v so it sits on its partner, and is flagged
+## `opposite` so the caller can dim it. Static for headless unit tests.
+static func _fold_to_local(norm: Vector2, local_copy: bool) -> Dictionary:
+	var opposite := _copy_of(norm.x) != local_copy
+	var u := fposmod(norm.x, 0.5) * 2.0
+	var v := (1.0 - norm.y) if opposite else norm.y
+	return {"pos": Vector2(u, v), "opposite": opposite}
 
 func _dot_color(row: Dictionary) -> Color:
 	if row["frozen"]:
@@ -140,10 +217,12 @@ func _dot_color(row: Dictionary) -> Color:
 	return Hud.CLOWN_COLOR if row["team"] == "clown" else Hud.MIME_COLOR
 
 func _draw_facing(at: Vector2, yaw: float, color: Color) -> void:
-	# Small triangle pointing along the player's yaw. World +z maps to map
-	# down, so a forward (-z) heading points up: screen dir is (sin, -cos)
-	# of the yaw, matching the position projection's z-down convention.
-	var dir := Vector2(sin(yaw), -cos(yaw))
+	# Small triangle pointing along the player's yaw. player.gd derives yaw from
+	# heading as atan2(-x, -z), so forward in world XZ is (-sin(yaw), -cos(yaw));
+	# screen-right is world +x and screen-down is world +z, so that same vector
+	# is the screen direction. Only the local dot draws a facing, and the viewer's
+	# own copy never folds, so no mirror here.
+	var dir := Vector2(-sin(yaw), -cos(yaw))
 	var tip := at + dir * (LOCAL_DOT_RADIUS + 5.0)
 	var side := dir.orthogonal() * 3.0
 	draw_colored_polygon(

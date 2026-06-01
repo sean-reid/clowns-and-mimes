@@ -1,7 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import type { PlayerState } from '@cm/shared';
 import type { WallSegment } from '@cm/shared/labyrinth';
-import { botCanSee, isCloaked, nearestFrozenAlly, nearestVisibleEnemy } from './botPerception.ts';
+import {
+  botCanSee,
+  isCloaked,
+  nearestEnemy,
+  nearestFrozenAlly,
+  nearestVisibleEnemy,
+} from './botPerception.ts';
 
 function player(over: Partial<PlayerState> & Pick<PlayerState, 'id' | 'team'>): PlayerState {
   return {
@@ -70,6 +76,49 @@ describe('nearestVisibleEnemy', () => {
     const walls: WallSegment[] = [{ ax: 5, az: -5, bx: 5, bz: 5 }];
     const behind = player({ id: 'behind', team: 'clown', position: { x: 10, y: 0.5, z: 0 } });
     expect(nearestVisibleEnemy(bot, [bot, behind], walls, 'plane', 80, 0)).toBeNull();
+  });
+});
+
+describe('nearestEnemy', () => {
+  const bot = player({ id: 'bot', team: 'mime', position: { x: 0, y: 0.5, z: 0 } });
+
+  it('picks the nearest enemy ignoring walls, range, and cloak', () => {
+    const walls: WallSegment[] = [{ ax: 5, az: -5, bx: 5, bz: 5 }];
+    // Cloaked + occluded + far: all invisible to nearestVisibleEnemy, but radar
+    // sees through every filter, so this is still the nearest enemy.
+    const cloakedBehind = player({
+      id: 'ck',
+      team: 'clown',
+      position: { x: 10, y: 0.5, z: 0 },
+      cloakUntil: 1000,
+    });
+    const farther = player({ id: 'far', team: 'clown', position: { x: 30, y: 0.5, z: 0 } });
+    expect(
+      nearestVisibleEnemy(bot, [bot, cloakedBehind, farther], walls, 'plane', 80, 0),
+    ).toBeNull();
+    const r = nearestEnemy(bot, [bot, cloakedBehind, farther], 'plane', 80);
+    expect(r.target?.id).toBe('ck');
+    expect(r.dist).toBeCloseTo(10, 6);
+  });
+
+  it('skips same-team and frozen players', () => {
+    const ally = player({ id: 'ally', team: 'mime', position: { x: 1, y: 0.5, z: 0 } });
+    const frozen = player({
+      id: 'fz',
+      team: 'clown',
+      position: { x: 2, y: 0.5, z: 0 },
+      frozen: true,
+    });
+    const real = player({ id: 'real', team: 'clown', position: { x: 8, y: 0.5, z: 0 } });
+    const r = nearestEnemy(bot, [bot, ally, frozen, real], 'plane', 80);
+    expect(r.target?.id).toBe('real');
+  });
+
+  it('returns null when no enemy qualifies', () => {
+    const ally = player({ id: 'ally', team: 'mime', position: { x: 1, y: 0.5, z: 0 } });
+    const r = nearestEnemy(bot, [bot, ally], 'plane', 80);
+    expect(r.target).toBeNull();
+    expect(r.dist).toBe(Infinity);
   });
 });
 

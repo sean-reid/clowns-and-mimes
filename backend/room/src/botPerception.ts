@@ -52,6 +52,33 @@ export function nearestVisibleEnemy(
   return best;
 }
 
+// Nearest enemy anywhere on the field: no line-of-sight, range, or cloak
+// filter. This is the radar power-up's view of the world (it reveals the whole
+// enemy team on the minimap, seeing through walls and cloak), as opposed to
+// nearestVisibleEnemy which is what the bot can act on directly. Skips
+// same-team and frozen players. Returns the target and its distance, or
+// null/Infinity when none qualifies.
+export function nearestEnemy(
+  bot: PlayerState,
+  players: Iterable<PlayerState>,
+  topology: Topology,
+  worldWidth: number,
+): { target: PlayerState | null; dist: number } {
+  let target: PlayerState | null = null;
+  let dist = Infinity;
+  for (const other of players) {
+    if (other.id === bot.id) continue;
+    if (other.team === bot.team) continue;
+    if (other.frozen) continue;
+    const d = topologyDistance(bot.position, other.position, topology, worldWidth);
+    if (d < dist) {
+      dist = d;
+      target = other;
+    }
+  }
+  return { target, dist };
+}
+
 // Nearest frozen ally within visionRadius (no line-of-sight requirement,
 // matching the original rescue scan). Returns the target and its distance,
 // or null/Infinity when none qualifies.

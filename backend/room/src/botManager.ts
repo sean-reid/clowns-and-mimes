@@ -22,6 +22,8 @@ import {
 import type { BotPathfinder } from './botPathfinder.ts';
 import { smoothDir, stepWithSlide, turnToward } from './botSteering.ts';
 import { decideBotAction } from './botDecision.ts';
+import { decideItemUse } from './botItems.ts';
+import { nearestEnemy } from './botPerception.ts';
 
 // World half-extent (kept private here; Room owns the canonical constant).
 const WORLD_WIDTH = 80;
@@ -409,19 +411,42 @@ export class BotManager {
         }
       }
       // Power-up use is decided before the jump applies so a Leap arms the
-      // very jump this tick. Other effects (surge / overcharge / cloak /
-      // clone / portal) take hold immediately; radar is dumped as dead weight.
-      if (
-        bot.activeItem !== undefined &&
-        this.botShouldUseItem(bot, {
-          chasing,
-          fleeing: fleeing === true,
-          wantJump,
-          canShoot,
-          enemyDist,
-        })
-      ) {
-        this.host.useBotItem(bot);
+      // very jump this tick. Other effects (surge / overcharge / cloak / clone
+      // / portal) take hold immediately; radar, instead of being dumped, is
+      // held until the bot is blind to every actionable enemy and then spent to
+      // seed investigate memory toward the nearest one (applied next tick).
+      if (bot.activeItem !== undefined) {
+        const hasActionableEnemy = target !== null && enemyDist < BOT_VISION_RADIUS;
+        const ping = hasActionableEnemy
+          ? null
+          : (nearestEnemy(bot, this.host.players.values(), topology, WORLD_WIDTH).target
+              ?.position ?? null);
+        const itemDecision = decideItemUse(
+          bot.activeItem,
+          {
+            chasing,
+            fleeing: fleeing === true,
+            wantJump,
+            canShoot,
+            enemyDist,
+            sprintEnergy: bot.sprintEnergy,
+            hasActionableEnemy,
+            nearestEnemyPos: ping ? { x: ping.x, z: ping.z } : null,
+          },
+          {
+            sprintTriggerRadius: BOT_SPRINT_TRIGGER_RADIUS,
+            maxSprint: MAX_SPRINT,
+            tagRadius: TAG_RADIUS_BOT,
+            jumpEvadeBuffer: BOT_JUMP_EVADE_BUFFER,
+          },
+        );
+        if (itemDecision.use) {
+          this.host.useBotItem(bot);
+          if (itemDecision.memorySeed) {
+            mind.lastKnownPos = itemDecision.memorySeed;
+            mind.investigateUntil = now + BOT_INVESTIGATE_MS;
+          }
+        }
       }
 
       if (wantJump) {
@@ -592,47 +617,6 @@ export class BotManager {
         0,
         MAX_SPRINT,
       );
-    }
-  }
-
-  /**
-   * Strategic power-up use, one held item at a time (no stacking). Each type
-   * fires only when its effect helps the bot's current intent; radar is dead
-   * weight for an AI that perceives players directly, so it's dumped to free
-   * the slot for something actionable.
-   */
-  private botShouldUseItem(
-    bot: PlayerState,
-    opts: {
-      chasing: boolean;
-      fleeing: boolean;
-      wantJump: boolean;
-      canShoot: boolean;
-      enemyDist: number;
-    },
-  ): boolean {
-    const { chasing, fleeing, wantJump, canShoot, enemyDist } = opts;
-    switch (bot.activeItem) {
-      case 'radar':
-        return true;
-      case 'leap':
-        return wantJump;
-      case 'surge':
-        return (
-          (chasing || fleeing) &&
-          enemyDist < BOT_SPRINT_TRIGGER_RADIUS &&
-          bot.sprintEnergy < MAX_SPRINT * 0.5
-        );
-      case 'overcharge':
-        return canShoot;
-      case 'cloak':
-        return fleeing && enemyDist <= BOT_SPRINT_TRIGGER_RADIUS;
-      case 'clone':
-        return chasing || fleeing;
-      case 'portal':
-        return fleeing && enemyDist <= TAG_RADIUS_BOT + BOT_JUMP_EVADE_BUFFER * 2;
-      default:
-        return false;
     }
   }
 

@@ -362,12 +362,25 @@ describe('Room.simulate', () => {
     expect(harness.projectiles.getProjectiles()).toHaveLength(0);
   });
 
-  it('dumps a radar power-up immediately to free the slot', () => {
+  it('holds a radar power-up when there is no enemy to relocate', () => {
     const room = makeRoom();
     setPhase(room, 'free_roam');
     const bot = placeHuman(room, 'b1', 'mime', 0, 0);
     bot.bot = true;
     bot.activeItem = 'radar';
+    (room as unknown as { bots: { simulate: (dt: number) => void } }).bots.simulate(1 / 60);
+    expect(bot.activeItem).toBe('radar');
+  });
+
+  it('spends radar to relocate an enemy it cannot currently act on', () => {
+    const room = makeRoom();
+    setPhase(room, 'free_roam');
+    const bot = placeHuman(room, 'b1', 'mime', 0, 0);
+    bot.bot = true;
+    bot.activeItem = 'radar';
+    // Enemy well beyond BOT_VISION_RADIUS (22): visible in a straight line but
+    // not actionable, so radar is worth spending to seed investigate memory.
+    placeHuman(room, 'c1', 'clown', 40, 0);
     (room as unknown as { bots: { simulate: (dt: number) => void } }).bots.simulate(1 / 60);
     expect(bot.activeItem).toBeUndefined();
     expect(bot.radarUntil).toBeGreaterThan(Date.now());

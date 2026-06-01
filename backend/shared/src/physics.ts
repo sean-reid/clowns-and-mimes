@@ -12,6 +12,21 @@ import type { Vec3 } from './protocol.ts';
 // written relative to it.
 export const HOVER_HEIGHT = 0.5;
 
+// Vertical offset from a player's authoritative position (the body base
+// the wire carries) to the first-person camera, matching the Camera3D
+// local Y in game/scenes/player.tscn. Projectiles spawn from this eye
+// height so a shot traces the shooter's crosshair ray instead of
+// launching from the feet (where it visibly emitted below the reticle).
+export const EYE_HEIGHT = 1.6;
+
+// The visible avatar is a single floating head sphere (game/scenes/player.tscn:
+// SphereMesh radius 0.35, mesh centered at local Y 1.5 above the body base).
+// There is no rendered torso, so a projectile only counts as a hit when it
+// touches that sphere — a shot at foot height passes harmlessly under a
+// standing player. These two constants define the sphere the hit test uses.
+export const HEAD_CENTER_HEIGHT = 1.5;
+export const HEAD_RADIUS = 0.35;
+
 // Peak rise above HOVER_HEIGHT during a jump. At 2.0 m the body's
 // center reaches ~2.5 m at apex, giving a comfortable 0.6 m vertical
 // clearance over a grounded body (separation 2.0 m vs the 1.4 m tag

@@ -695,6 +695,11 @@ func _drive_online_hud() -> void:
 	var now_ms: float = Time.get_unix_time_from_system() * 1000.0
 	var remaining_s: float = max(0.0, (turn_ends_at_ms - now_ms) / 1000.0)
 	hud.set_countdown_seconds(remaining_s)
+	# Feed the minimap the live body yaw so its facing arrow tracks the mouse
+	# without the 10 Hz delta lag, and keeps turning while frozen (the server
+	# stops applying input then, so the snapshot yaw would be stuck).
+	if local_player != null:
+		hud.set_local_facing_yaw(local_player.rotation.y)
 
 # Collect XZ positions of every non-local rendered body. Used by the
 # predictor's collision-resolve step so the local body bounces off
@@ -730,6 +735,10 @@ func _stream_input(delta: float) -> void:
 	# does not need to know the player's yaw at each historical tick.
 	var wasd: Vector2 = _sample_move_intent()
 	var yaw: float = local_player.rotation.y
+	# Camera pitch rides the input so remote viewers can tilt this body's head.
+	# Mouse look (including pitch) stays live while frozen, so this is always
+	# the current value even when movement is gated.
+	var pitch: float = local_player.camera.rotation.x if local_player.camera != null else 0.0
 	var world_move: Vector2 = _rotate_wasd_to_world(wasd, yaw)
 	var sprinting: bool = (
 		Input.is_action_pressed("sprint") and _input_active() and wasd.length() > 0.0
@@ -806,6 +815,7 @@ func _stream_input(delta: float) -> void:
 		INPUT_TICK_PERIOD,
 		effective_move,
 		yaw,
+		pitch,
 		sprinting,
 		jump_pressed,
 	)
@@ -862,6 +872,7 @@ func _apply_player_state(entry: Dictionary) -> void:
 		float(pos.get("z", 0.0)),
 	)
 	var yaw: float = float(entry.get("yaw", 0.0))
+	var pitch: float = float(entry.get("pitch", 0.0))
 	var is_frozen: bool = bool(entry.get("frozen", false))
 	var sprint: float = float(entry.get("sprintEnergy", 100.0))
 	# Server-authoritative jumpStartedAt. Drives the squash-and-stretch
@@ -887,7 +898,7 @@ func _apply_player_state(entry: Dictionary) -> void:
 		# in sync via the reconcile replay. Setting it here would lag
 		# the squash animation behind the body's actual Y.
 	else:
-		node.apply_remote_state(pos_vec, yaw, is_frozen, sprint)
+		node.apply_remote_state(pos_vec, yaw, pitch, is_frozen, sprint)
 		node.jump_started_at_ms = jump_started_at_ms
 		# Server-authoritative leap flag so the remote body's render-rate
 		# arc Y uses the boosted amplitude that clears walls.

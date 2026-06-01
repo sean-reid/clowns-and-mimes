@@ -50,6 +50,7 @@ function validateInput(input: unknown): PlayerInput | null {
   if (!isBounded(input.move.x, -1.5, 1.5)) return null;
   if (!isBounded(input.move.z, -1.5, 1.5)) return null;
   if (!isFinite(input.lookYaw)) return null;
+  if (input.lookPitch !== undefined && !isFinite(input.lookPitch)) return null;
   if (!isBool(input.sprint)) return null;
   if (!isSafeInt(input.nowMs)) return null;
   if (input.jump !== undefined && !isBool(input.jump)) return null;
@@ -60,6 +61,7 @@ function validateInput(input: unknown): PlayerInput | null {
     dt: input.dt,
     move: { x: input.move.x, z: input.move.z },
     lookYaw: input.lookYaw,
+    lookPitch: input.lookPitch as number | undefined,
     sprint: input.sprint,
     nowMs: input.nowMs,
     jump: input.jump as boolean | undefined,

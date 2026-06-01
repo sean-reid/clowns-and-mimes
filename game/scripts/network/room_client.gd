@@ -87,6 +87,7 @@ func send_input(
 	dt: float,
 	move: Vector2,
 	look_yaw: float,
+	look_pitch: float,
 	sprint: bool,
 	jump: bool,
 ) -> void:
@@ -98,6 +99,9 @@ func send_input(
 				"dt": dt,
 				"move": {"x": move.x, "z": move.y},
 				"lookYaw": look_yaw,
+				# Vertical look angle (radians, positive up). The server stores it
+				# on PlayerState so remote viewers pitch this body's head mesh.
+				"lookPitch": look_pitch,
 				"sprint": sprint,
 				"jump": jump,
 				# nowMs anchors the jumpStartedAt timestamp on the server so the

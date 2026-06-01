@@ -1,0 +1,88 @@
+import { describe, expect, it } from 'vitest';
+import type { Vec2 } from '@cm/shared';
+import { pathCrossesWall, type WallSegment } from '@cm/shared/labyrinth';
+import { BotPathfinder } from './botPathfinder.ts';
+
+// Plane grid: 10x10 cells over an 80-wide world, so each cell is 8 units and
+// the half-extent is 40. Cell (c, r) center = ((c+0.5)*8 - 40, (r+0.5)*8 - 40).
+const CELL = 8;
+const HALF = 40;
+function center(c: number, r: number): Vec2 {
+  return { x: (c + 0.5) * CELL - HALF, z: (r + 0.5) * CELL - HALF };
+}
+
+describe('BotPathfinder string-pulling', () => {
+  it('collapses a clear straight corridor to the real target (no stair-stepping)', () => {
+    const pf = new BotPathfinder([], 'plane');
+    const from = center(1, 5);
+    const to = center(8, 5); // same row, many cells away, full line of sight
+    const wp = pf.nextWaypoint(from, to);
+    // With nothing blocking, the funnel sees all the way to `to` and returns
+    // it verbatim rather than the next cell center.
+    expect(wp.x).toBeCloseTo(to.x, 6);
+    expect(wp.z).toBeCloseTo(to.z, 6);
+  });
+
+  it('returns the destination unchanged when both points share a cell', () => {
+    const pf = new BotPathfinder([], 'plane');
+    const from = { x: 0.1, z: 0.2 };
+    const to = { x: 0.5, z: -0.3 };
+    expect(pf.nextWaypoint(from, to)).toBe(to);
+  });
+
+  it('routes around a wall and returns a waypoint it actually has sight of', () => {
+    // A vertical wall on the x = 0 cell boundary spanning most of the field,
+    // with a gap at the top so a path exists around it. The wall sits exactly
+    // on a grid column boundary so it severs cell edges.
+    const walls: WallSegment[] = [{ ax: 0, az: -HALF, bx: 0, bz: HALF - 2 * CELL }];
+    const pf = new BotPathfinder(walls, 'plane');
+    const from = center(2, 2); // left of the wall
+    const to = center(7, 2); // right of the wall, directly across (blocked)
+    expect(pathCrossesWall(walls, from.x, from.z, to.x, to.z)).toBe(true);
+    const wp = pf.nextWaypoint(from, to);
+    // The funnel must hand back a waypoint the bot can see in a straight line;
+    // otherwise it would aim through the wall.
+    expect(wp).not.toBe(to);
+    expect(pathCrossesWall(walls, from.x, from.z, wp.x, wp.z)).toBe(false);
+  });
+
+  it('falls back to the target when it is walled off entirely', () => {
+    // Box cell (5,5) in on all four boundaries: unreachable from outside.
+    const x0 = 5 * CELL - HALF; // left boundary of col 5
+    const x1 = 6 * CELL - HALF;
+    const z0 = 5 * CELL - HALF;
+    const z1 = 6 * CELL - HALF;
+    const walls: WallSegment[] = [
+      { ax: x0, az: z0, bx: x1, bz: z0 },
+      { ax: x0, az: z1, bx: x1, bz: z1 },
+      { ax: x0, az: z0, bx: x0, bz: z1 },
+      { ax: x1, az: z0, bx: x1, bz: z1 },
+    ];
+    const pf = new BotPathfinder(walls, 'plane');
+    const from = center(1, 1);
+    const to = center(5, 5);
+    expect(pf.nextWaypoint(from, to)).toBe(to);
+  });
+
+  it('cellCenterOf snaps a position to its cell center', () => {
+    const pf = new BotPathfinder([], 'plane');
+    const c = pf.cellCenterOf({ x: -35.5, z: -35.2 }); // inside cell (0,0)
+    expect(c.x).toBeCloseTo(center(0, 0).x, 6);
+    expect(c.z).toBeCloseTo(center(0, 0).z, 6);
+  });
+});
+
+describe('BotPathfinder avoidance', () => {
+  it('routes around a cell in the avoid set', () => {
+    const pf = new BotPathfinder([], 'plane');
+    const from = center(1, 5);
+    const to = center(4, 5);
+    // Block the straight-line cells (2,5) and (3,5); the detour must leave row 5.
+    const avoid = new Set<number>([2 + 5 * 10, 3 + 5 * 10]);
+    const wp = pf.nextWaypointAvoiding(from, to, avoid);
+    const wpCell = pf.cellAt(wp);
+    expect(avoid.has(wpCell)).toBe(false);
+    // The waypoint should not be the straight-ahead next cell (2,5).
+    expect(wpCell).not.toBe(2 + 5 * 10);
+  });
+});

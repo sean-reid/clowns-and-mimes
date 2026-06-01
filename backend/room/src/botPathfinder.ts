@@ -35,56 +35,59 @@ export class BotPathfinder {
   // the k-th neighbor entry is reachable. The neighbor lookup is by direction
   // index (east, north, west, south), so adjacency stores 4 bits per cell.
   private readonly adjacency: Uint8Array;
-  // BFS cache: key is fromCell*total + toCell. Value is the first cell to walk
-  // toward (-1 if none / unreachable / same cell). The map is cleared whenever
-  // a new pathfinder is constructed; bots typically query a handful of cell
-  // pairs per tick so the map stays small.
-  private readonly nextStepCache = new Map<number, number>();
+  // BFS cache: key is fromCell*total + toCell. Value is the cell chain from the
+  // step after fromCell through toCell ([] if unreachable / same cell). The map
+  // is fresh per pathfinder; bots typically query a handful of cell pairs per
+  // tick so it stays small. The avoiding variant skips the cache (its forbidden
+  // set varies per tick).
+  private readonly chainCache = new Map<number, number[]>();
+  // Walls kept for the line-of-sight funnel that smooths the cell path. A
+  // segment between two points spanning more than this threshold has wrapped
+  // around a seam, so the straight world line is meaningless and must not be
+  // shortcut across (mirrors the seam handling in buildAdjacency).
+  private readonly walls: readonly WallSegment[];
+  private readonly seamThreshold: number;
 
   constructor(walls: readonly WallSegment[], topology: Topology) {
     this.shape = gridShapeFor(topology);
     const total = this.shape.cols * this.shape.rows;
     this.adjacency = new Uint8Array(total);
+    this.walls = walls;
+    this.seamThreshold = 2 * Math.max(this.shape.cellX, this.shape.cellZ);
     this.buildAdjacency(walls);
   }
 
   /**
-   * World-space center of the next cell to walk toward, given current position
-   * `from` and the desired destination `to`. Returns `to` unchanged when the
-   * two endpoints are in the same cell or in adjacent reachable cells (no
-   * detour needed). Returns `to` unchanged when no path exists - the caller
-   * still gets the original target so the existing slide-fallback in
-   * simulateBots can take a stab at it.
+   * World-space point to walk toward, given current position `from` and the
+   * desired destination `to`. Runs BFS over the cell grid, then string-pulls
+   * the resulting cell path against line of sight so the bot aims at the
+   * farthest waypoint it can see in a straight line instead of stair-stepping
+   * cell center to cell center. Returns `to` unchanged when the endpoints
+   * share a cell or no path exists (the caller's slide-fallback then takes a
+   * stab at it).
    */
   nextWaypoint(from: Vec2, to: Vec2): Vec2 {
     const fromCell = this.worldToCell(from);
     const toCell = this.worldToCell(to);
     if (fromCell === toCell) return to;
-    // If the destination cell is a direct neighbor of the start, no BFS is
-    // needed: just head straight there. The caller's slide-fallback handles
-    // the final approach into the target's actual position.
+    // Adjacent and reachable: head straight there, no BFS or funnel needed.
     if (this.directlyReachable(fromCell, toCell)) return to;
-    const nextCell = this.nextStepOnPath(fromCell, toCell);
-    if (nextCell < 0) return to;
-    return this.cellCenter(nextCell);
+    return this.funnel(from, this.cachedChain(fromCell, toCell), to);
   }
 
   /**
    * Like nextWaypoint but treats the given cells as solid for this query.
    * Used by the chase / rescue path so a frozen enemy parked in the corridor
    * routes around instead of pinning the bot against the body. The avoid set
-   * must not include the destination cell (toCell is allowed) or the bot's
-   * own current cell (those are short-circuited above). Skips the BFS cache
-   * because the avoid set varies per tick.
+   * must not include the destination cell (toCell is allowed). Skips the BFS
+   * cache because the avoid set varies per tick.
    */
   nextWaypointAvoiding(from: Vec2, to: Vec2, avoidCells: ReadonlySet<number>): Vec2 {
     if (avoidCells.size === 0) return this.nextWaypoint(from, to);
     const fromCell = this.worldToCell(from);
     const toCell = this.worldToCell(to);
     if (fromCell === toCell) return to;
-    const nextCell = this.nextStepOnPathAvoiding(fromCell, toCell, avoidCells);
-    if (nextCell < 0) return to;
-    return this.cellCenter(nextCell);
+    return this.funnel(from, this.bfsChain(fromCell, toCell, avoidCells), to);
   }
 
   /** Public cell index for a world-space position; callers building an avoid
@@ -93,11 +96,29 @@ export class BotPathfinder {
     return this.worldToCell(position);
   }
 
-  private nextStepOnPathAvoiding(
-    fromCell: number,
-    toCell: number,
-    avoid: ReadonlySet<number>,
-  ): number {
+  /** World-space center of the cell containing `position`. Used as a gentle
+   * unstuck target (snap toward the open cell center) in place of a teleport. */
+  cellCenterOf(position: Vec2): Vec2 {
+    return this.cellCenter(this.worldToCell(position));
+  }
+
+  // Cell chain from the step after fromCell through toCell, cached per
+  // (from, to) pair for the no-avoid common case (a swarm chasing one target
+  // pays the search once). Empty when unreachable.
+  private cachedChain(fromCell: number, toCell: number): number[] {
+    const total = this.shape.cols * this.shape.rows;
+    const key = fromCell * total + toCell;
+    const cached = this.chainCache.get(key);
+    if (cached !== undefined) return cached;
+    const chain = this.bfsChain(fromCell, toCell);
+    this.chainCache.set(key, chain);
+    return chain;
+  }
+
+  // BFS shortest path over the cell grid. Returns the cells from the step
+  // after fromCell through toCell inclusive, or [] when unreachable. `avoid`
+  // cells are solid for this query unless they are the destination.
+  private bfsChain(fromCell: number, toCell: number, avoid?: ReadonlySet<number>): number[] {
     const total = this.shape.cols * this.shape.rows;
     const parent = new Int32Array(total);
     parent.fill(-1);
@@ -118,19 +139,51 @@ export class BotPathfinder {
         const nb = this.neighborCell(cc, cr, dir);
         if (nb < 0) continue;
         if (parent[nb] !== -1) continue;
-        // Forbidden cells are walkable destinations only when they ARE the
-        // destination; otherwise the BFS treats them as solid.
-        if (nb !== toCell && avoid.has(nb)) continue;
+        if (avoid && nb !== toCell && avoid.has(nb)) continue;
         parent[nb] = cur;
         queue.push(nb);
       }
     }
-    if (!found) return -1;
+    if (!found) return [];
+    const rev: number[] = [];
     let cur = toCell;
-    while (parent[cur] !== fromCell && parent[cur] !== cur) {
+    while (cur !== fromCell) {
+      rev.push(cur);
       cur = parent[cur]!;
     }
-    return cur;
+    rev.reverse();
+    return rev;
+  }
+
+  // String-pull the cell chain against line of sight: walk the cell centers
+  // (with the final cell replaced by the real `to`) and advance to the
+  // farthest one reachable in a straight, wall-free line from `from`. Stop at
+  // the first occluded waypoint, or at a seam crossing (a segment longer than
+  // seamThreshold has wrapped, so its straight world line is meaningless - the
+  // caller's wrap-aware aim still steers toward the near cell, then recomputes
+  // after the bot crosses). Returns `to` when the chain is empty.
+  private funnel(from: Vec2, chain: number[], to: Vec2): Vec2 {
+    if (chain.length === 0) return to;
+    const pts: Vec2[] = chain.map((c) => this.cellCenter(c));
+    pts[pts.length - 1] = { x: to.x, z: to.z };
+    let best = pts[0]!;
+    let prev: Vec2 = from;
+    for (let i = 0; i < pts.length; i += 1) {
+      const c = pts[i]!;
+      // A step between consecutive path points longer than seamThreshold has
+      // wrapped a seam; raw line-of-sight past it is meaningless, so stop the
+      // funnel here. The caller's wrap-aware aim steers toward the near cell,
+      // then recomputes once the bot has crossed.
+      if (
+        Math.abs(c.x - prev.x) > this.seamThreshold ||
+        Math.abs(c.z - prev.z) > this.seamThreshold
+      )
+        break;
+      if (this.walls.length > 0 && pathCrossesWall(this.walls, from.x, from.z, c.x, c.z)) break;
+      best = c;
+      prev = c;
+    }
+    return best;
   }
 
   private buildAdjacency(walls: readonly WallSegment[]): void {
@@ -175,55 +228,6 @@ export class BotPathfinder {
       if (this.neighborCell(cc, cr, dir) === toCell) return true;
     }
     return false;
-  }
-
-  /**
-   * BFS from `fromCell` to `toCell`, returning the first cell on the shortest
-   * path (i.e. the immediate next step after `fromCell`). -1 if unreachable.
-   * Cached per (from, to) pair.
-   */
-  private nextStepOnPath(fromCell: number, toCell: number): number {
-    const total = this.shape.cols * this.shape.rows;
-    const key = fromCell * total + toCell;
-    const cached = this.nextStepCache.get(key);
-    if (cached !== undefined) return cached;
-
-    const parent = new Int32Array(total);
-    parent.fill(-1);
-    parent[fromCell] = fromCell;
-    const queue: number[] = [fromCell];
-    let found = false;
-    while (queue.length > 0) {
-      const cur = queue.shift()!;
-      if (cur === toCell) {
-        found = true;
-        break;
-      }
-      const cc = cur % this.shape.cols;
-      const cr = Math.floor(cur / this.shape.cols);
-      const mask = this.adjacency[cur]!;
-      for (let dir = 0; dir < 4; dir += 1) {
-        if ((mask & (1 << dir)) === 0) continue;
-        const nb = this.neighborCell(cc, cr, dir);
-        if (nb < 0) continue;
-        if (parent[nb] !== -1) continue;
-        parent[nb] = cur;
-        queue.push(nb);
-      }
-    }
-
-    let step = -1;
-    if (found) {
-      // Walk parent pointers back from `toCell` until the predecessor is the
-      // start; that predecessor's child is the first step on the path.
-      let cur = toCell;
-      while (parent[cur] !== fromCell && parent[cur] !== cur) {
-        cur = parent[cur]!;
-      }
-      step = cur;
-    }
-    this.nextStepCache.set(key, step);
-    return step;
   }
 
   /**

@@ -20,8 +20,8 @@ import {
   WALK_SPEED,
 } from '@cm/shared/movement';
 import type { BotPathfinder } from './botPathfinder.ts';
-import { botCanSee, isCloaked, nearestFrozenAlly, nearestVisibleEnemy } from './botPerception.ts';
 import { smoothDir, stepWithSlide, turnToward } from './botSteering.ts';
+import { decideBotAction } from './botDecision.ts';
 
 // World half-extent (kept private here; Room owns the canonical constant).
 const WORLD_WIDTH = 80;
@@ -361,95 +361,24 @@ export class BotManager {
       };
       this.botMinds.set(bot.id, mind);
 
-      const candidate = nearestVisibleEnemy(
+      const decision = decideBotAction(
         bot,
         this.host.players.values(),
         walls,
         topology,
         WORLD_WIDTH,
         now,
+        active,
+        mind,
+        {
+          visionRadius: BOT_VISION_RADIUS,
+          shootRange: BOT_SHOOT_RANGE,
+          retargetHysteresis: RETARGET_HYSTERESIS,
+          investigateMs: BOT_INVESTIGATE_MS,
+        },
       );
-      const candidateDist = candidate
-        ? topologyDistance(bot.position, candidate.position, topology, WORLD_WIDTH)
-        : Infinity;
-      let target: PlayerState | null = candidate;
-      let enemyDist = candidateDist;
-      if (mind.engagedTargetId) {
-        const existing = this.host.players.get(mind.engagedTargetId);
-        // A target that activates Cloak vanishes from bot perception entirely:
-        // engagement is dropped (the `else` below), with no investigate-the-
-        // last-known-position reaction a wall occlusion would trigger.
-        if (
-          existing &&
-          !existing.frozen &&
-          existing.team !== bot.team &&
-          !isCloaked(existing, now)
-        ) {
-          const existingVisible = botCanSee(walls, bot.position, existing.position);
-          const existingDist = topologyDistance(
-            bot.position,
-            existing.position,
-            topology,
-            WORLD_WIDTH,
-          );
-          if (
-            existingVisible &&
-            existingDist < BOT_VISION_RADIUS &&
-            candidateDist >= existingDist * RETARGET_HYSTERESIS
-          ) {
-            target = existing;
-            enemyDist = existingDist;
-          } else if (!existingVisible && existingDist < BOT_VISION_RADIUS) {
-            if (active === bot.team) {
-              if (!mind.lastKnownPos) {
-                mind.lastKnownPos = { x: existing.position.x, z: existing.position.z };
-                mind.investigateUntil = now + BOT_INVESTIGATE_MS;
-              }
-            } else {
-              mind.engagedTargetId = null;
-              mind.lastKnownPos = null;
-              mind.investigateUntil = 0;
-            }
-          }
-        } else {
-          mind.engagedTargetId = null;
-          mind.lastKnownPos = null;
-          mind.investigateUntil = 0;
-        }
-      }
-      if (target) {
-        mind.engagedTargetId = target.id;
-        mind.lastKnownPos = { x: target.position.x, z: target.position.z };
-        mind.investigateUntil = 0;
-      } else if (mind.investigateUntil > 0 && now >= mind.investigateUntil) {
-        mind.engagedTargetId = null;
-        mind.lastKnownPos = null;
-        mind.investigateUntil = 0;
-      }
-      const investigating =
-        target === null && mind.lastKnownPos !== null && now < mind.investigateUntil;
-
-      const rescue = nearestFrozenAlly(
-        bot,
-        this.host.players.values(),
-        topology,
-        WORLD_WIDTH,
-        BOT_VISION_RADIUS,
-      );
-      const rescueTarget = rescue.target;
-      const rescueDist = rescue.dist;
-
-      const chasing = target !== null && enemyDist < BOT_VISION_RADIUS && active === bot.team;
-      const fleeing =
-        target !== null && enemyDist < BOT_VISION_RADIUS && active && active !== bot.team;
-      const rescuing = rescueTarget !== null;
-      // Fire only on the bot's own turn, at a visible enemy in range. botShoot
-      // re-validates phase + cooldown, so this is the AI gate, not the rule.
-      const canShoot =
-        chasing &&
-        target !== null &&
-        enemyDist <= BOT_SHOOT_RANGE &&
-        botCanSee(walls, bot.position, target.position);
+      const { target, enemyDist, rescueTarget, rescueDist, chasing, fleeing, rescuing, canShoot } =
+        decision;
 
       const sinceLastJump = now - mind.lastJumpedAt;
       const jumpEligible = bot.jumpStartedAt === null && sinceLastJump >= BOT_JUMP_REFRACTORY_MS;
@@ -507,7 +436,7 @@ export class BotManager {
       }
 
       let dir = { x: 0, z: 0 };
-      if (fleeing && target) {
+      if (decision.mode === 'flee' && target) {
         const away = wrappedUnitDelta(target.position, bot.position, topology, WORLD_WIDTH);
         const fleeTarget = wrapPosition(
           {
@@ -522,19 +451,19 @@ export class BotManager {
           ? pathfinder.nextWaypointAvoiding(bot.position, fleeTarget, avoid)
           : fleeTarget;
         dir = wrappedUnitDelta(bot.position, waypoint, topology, WORLD_WIDTH);
-      } else if (rescuing && rescueTarget) {
+      } else if (decision.mode === 'rescue' && rescueTarget) {
         const avoid = this.avoidCellsForBot(bot, rescueTarget);
         const waypoint = pathfinder
           ? pathfinder.nextWaypointAvoiding(bot.position, rescueTarget.position, avoid)
           : rescueTarget.position;
         dir = wrappedUnitDelta(bot.position, waypoint, topology, WORLD_WIDTH);
-      } else if (chasing && target) {
+      } else if (decision.mode === 'chase' && target) {
         const avoid = this.avoidCellsForBot(bot, target);
         const waypoint = pathfinder
           ? pathfinder.nextWaypointAvoiding(bot.position, target.position, avoid)
           : target.position;
         dir = wrappedUnitDelta(bot.position, waypoint, topology, WORLD_WIDTH);
-      } else if (investigating && mind.lastKnownPos) {
+      } else if (decision.mode === 'investigate' && mind.lastKnownPos) {
         const avoid = this.avoidCellsForBot(bot, null);
         const waypoint = pathfinder
           ? pathfinder.nextWaypointAvoiding(bot.position, mind.lastKnownPos, avoid)

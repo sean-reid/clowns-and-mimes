@@ -25,6 +25,10 @@ func _ready() -> void:
 	line3.text = ""
 	enter_button.disabled = true
 	enter_button.modulate.a = 0.0
+	# A disabled Button still captures the mouse and emits mouse_entered, so the
+	# wired hover SFX would fire while the button is still invisible. Ignore the
+	# mouse entirely until the fade-in completes (restored in _animate).
+	enter_button.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	background.modulate.a = 0.0
 	enter_button.pressed.connect(_on_enter)
 	AudioBus.wire_button_sfx(self)
@@ -41,8 +45,13 @@ func _animate() -> void:
 	t.tween_callback(func(): line3.text = PHASE_3_TEXT)
 	t.tween_interval(0.7)
 	t.tween_property(background, "modulate:a", 1.0, 0.6)
-	t.tween_callback(func(): enter_button.disabled = false)
 	t.tween_property(enter_button, "modulate:a", 1.0, 0.5)
+	# Only make the button live once it's fully visible: enable input and restore
+	# the mouse filter so hover/click SFX (and the click itself) start together.
+	t.tween_callback(func():
+		enter_button.disabled = false
+		enter_button.mouse_filter = Control.MOUSE_FILTER_STOP
+	)
 
 func _on_enter() -> void:
 	requested_screen.emit("menu")

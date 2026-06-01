@@ -52,6 +52,12 @@ var _topology = null
 # Id of the local viewer, kept so _draw can work out which double-cover copy
 # the viewer is on and fade the dots sitting on the opposite copy.
 var _local_id: String = ""
+# Live body yaw of the local player, pushed every render frame by the arena.
+# The local facing arrow uses this instead of the snapshot yaw so it tracks
+# the mouse with zero lag - and keeps moving while frozen, where the server
+# stops applying input and the snapshot yaw would otherwise be stuck.
+var _local_live_yaw: float = 0.0
+var _has_live_yaw: bool = false
 
 ## Normalized [0,1]^2 projection of a world XZ position for the given topology
 ## adapter. Static so it can be unit-tested without a scene tree. The full
@@ -112,6 +118,14 @@ func update_state(players: Array, local_id: String, local_team: String, topology
 	for id in _display.keys():
 		if not seen.has(id):
 			_display.erase(id)
+	queue_redraw()
+
+## Live body yaw of the local player, pushed every render frame by the arena so
+## the local facing arrow tracks the mouse with zero lag and keeps moving while
+## frozen (where the snapshot yaw is stuck). See _draw for how it's preferred.
+func set_local_yaw(yaw: float) -> void:
+	_local_live_yaw = yaw
+	_has_live_yaw = true
 	queue_redraw()
 
 func _process(delta: float) -> void:
@@ -180,7 +194,11 @@ func _draw() -> void:
 		if row["is_local"]:
 			draw_circle(at, LOCAL_DOT_RADIUS + 3.0, Color(color.r, color.g, color.b, 0.25 * color.a))
 			draw_circle(at, LOCAL_DOT_RADIUS, color)
-			_draw_facing(at, row["yaw"], color)
+			# The snapshot yaw stalls while frozen (the server skips applying input
+			# for frozen players), so prefer the live body yaw the arena pushes each
+			# frame - it keeps tracking the mouse even while frozen.
+			var facing_yaw: float = _local_live_yaw if _has_live_yaw else float(row["yaw"])
+			_draw_facing(at, facing_yaw, color)
 		else:
 			draw_circle(at, DOT_RADIUS, color)
 	_draw_tally(map_rect)

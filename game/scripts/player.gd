@@ -397,7 +397,7 @@ func _update_footsteps(planar_speed: float, sprinting: bool) -> void:
 			planar_speed / WALK_SPEED, FOOTSTEP_SPRINT_PITCH_MIN, FOOTSTEP_SPRINT_PITCH_MAX
 		)
 
-func apply_remote_state(pos: Vector3, yaw: float, is_frozen: bool, sprint: float) -> void:
+func apply_remote_state(pos: Vector3, yaw: float, pitch: float, is_frozen: bool, sprint: float) -> void:
 	# Derive an effective planar speed from the delta between snapshots so the
 	# footstep audio has something to drive its volume curve. The first call
 	# initialises the trackers without producing a phantom speed value.
@@ -417,13 +417,14 @@ func apply_remote_state(pos: Vector3, yaw: float, is_frozen: bool, sprint: float
 	if not _remote_armed:
 		global_position = _to_camera_nearest_copy(pos)
 		rotation.y = yaw
+		_apply_head_pitch(pitch)
 		_remote_armed = true
 	# Append the SERVER-authoritative position to the buffer. The lerp /
 	# snap in _drive_remote_interp will translate it into the camera-near
 	# copy before writing global_position, so the buffer always stores
 	# the canonical wrapped position (no need to refresh entries as the
 	# local camera moves).
-	_remote_buffer.append({"t": now_s, "pos": pos, "yaw": yaw})
+	_remote_buffer.append({"t": now_s, "pos": pos, "yaw": yaw, "pitch": pitch})
 	# Drop entries older than the buffer window. Always keep at least two so
 	# _drive_remote_interp has a bracketing pair even when the player has not
 	# moved for a while.
@@ -470,6 +471,7 @@ func _drive_remote_interp() -> void:
 		var oldest: Dictionary = _remote_buffer[0]
 		global_position = _to_camera_nearest_copy(oldest["pos"])
 		rotation.y = float(oldest["yaw"])
+		_apply_head_pitch(float(oldest.get("pitch", 0.0)))
 		return
 	if older_index >= _remote_buffer.size() - 1:
 		# render_t is past the latest snapshot - hold rather than extrapolating
@@ -478,6 +480,7 @@ func _drive_remote_interp() -> void:
 		var latest: Dictionary = _remote_buffer[_remote_buffer.size() - 1]
 		global_position = _to_camera_nearest_copy(latest["pos"])
 		rotation.y = float(latest["yaw"])
+		_apply_head_pitch(float(latest.get("pitch", 0.0)))
 		return
 	var a: Dictionary = _remote_buffer[older_index]
 	var b: Dictionary = _remote_buffer[older_index + 1]
@@ -491,11 +494,22 @@ func _drive_remote_interp() -> void:
 		# instead of teleporting across the world.
 		global_position = _to_camera_nearest_copy(b_pos)
 		rotation.y = float(b["yaw"])
+		_apply_head_pitch(float(b.get("pitch", 0.0)))
 		return
 	var span: float = float(b["t"]) - float(a["t"])
 	var alpha: float = 0.0 if span <= 1e-6 else clampf((render_t - float(a["t"])) / span, 0.0, 1.0)
 	global_position = _to_camera_nearest_copy(a_pos.lerp(b_pos, alpha))
 	rotation.y = lerp_angle(float(a["yaw"]), float(b["yaw"]), alpha)
+	_apply_head_pitch(lerp_angle(float(a.get("pitch", 0.0)), float(b.get("pitch", 0.0)), alpha))
+
+# Tilt the head mesh up/down to match the remote player's camera pitch. Body
+# yaw already rotates the whole body (head included); pitch is local to the
+# head so the face texture pans vertically without leaning the body. Local
+# bodies skip this (first person - the camera is the head).
+func _apply_head_pitch(pitch: float) -> void:
+	if head == null or is_local:
+		return
+	head.rotation.x = pitch
 
 # Translate a server-authoritative canonical position into the
 # wrap-equivalent copy nearest the local player's camera. On the plane

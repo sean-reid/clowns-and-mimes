@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { Projectile, Team } from './protocol.ts';
-import { HOVER_HEIGHT, BODY_VERTICAL_EXTENT } from './physics.ts';
+import { HOVER_HEIGHT, EYE_HEIGHT, HEAD_CENTER_HEIGHT } from './physics.ts';
 import { PLAYER_RADIUS, type WallSegment } from './labyrinth.ts';
 import {
   spawnProjectile,
@@ -34,7 +34,8 @@ function proj(over: Partial<Projectile> = {}): Projectile {
     id: 'p1',
     ownerId: 'owner',
     team: 'mime',
-    position: { x: 0, y: HOVER_HEIGHT, z: 0 },
+    // Default shot is aimed dead-on a grounded head: foot base + head center.
+    position: { x: 0, y: HOVER_HEIGHT + HEAD_CENTER_HEIGHT, z: 0 },
     velocity: { x: PROJECTILE_SPEED, y: 0, z: 0 },
     spawnedAt: NOW,
     expiresAt: NOW + PROJECTILE_LIFETIME_MS,
@@ -70,6 +71,11 @@ describe('spawnProjectile', () => {
     const p = spawnProjectile(owner, { x: 0, y: 0, z: 1 }, 'p', NOW, NOW)!;
     expect(p.position.z).toBeCloseTo(2 + PROJECTILE_SPAWN_OFFSET, 6);
     expect(p.position.x).toBeCloseTo(1, 6);
+  });
+
+  it('launches from eye height above the owner base', () => {
+    const p = spawnProjectile(owner, { x: 0, y: 0, z: 1 }, 'p', NOW, NOW)!;
+    expect(p.position.y).toBeCloseTo(HOVER_HEIGHT + EYE_HEIGHT, 6);
   });
 
   it('stamps client spawn time but server-driven expiry', () => {
@@ -146,11 +152,44 @@ describe('stepProjectiles', () => {
     expect(r.survivors).toHaveLength(1);
   });
 
-  it('misses an enemy separated vertically beyond the body extent', () => {
+  it('hits a grounded enemy with a level shot fired at eye height', () => {
     const candidateX = PROJECTILE_SPEED * (1 / 60);
     const r = stepProjectiles(
-      [proj()],
-      [target({ position: { x: candidateX, y: HOVER_HEIGHT + BODY_VERTICAL_EXTENT, z: 0 } })],
+      [proj({ position: { x: 0, y: HOVER_HEIGHT + EYE_HEIGHT, z: 0 } })],
+      [target({ position: { x: candidateX, y: HOVER_HEIGHT, z: 0 } })],
+      ctx(),
+    );
+    expect(r.hits[0]).toMatchObject({ projectileId: 'p1', victimId: 'enemy' });
+  });
+
+  it('passes under a standing player at foot height (the head floats)', () => {
+    const candidateX = PROJECTILE_SPEED * (1 / 60);
+    const r = stepProjectiles(
+      [proj({ position: { x: 0, y: HOVER_HEIGHT, z: 0 } })],
+      [target({ position: { x: candidateX, y: HOVER_HEIGHT, z: 0 } })],
+      ctx(),
+    );
+    expect(r.hits).toHaveLength(0);
+    expect(r.survivors).toHaveLength(1);
+  });
+
+  it('misses when the shot passes over the head', () => {
+    const candidateX = PROJECTILE_SPEED * (1 / 60);
+    const r = stepProjectiles(
+      [proj({ position: { x: 0, y: HOVER_HEIGHT + HEAD_CENTER_HEIGHT + 1, z: 0 } })],
+      [target({ position: { x: candidateX, y: HOVER_HEIGHT, z: 0 } })],
+      ctx(),
+    );
+    expect(r.hits).toHaveLength(0);
+    expect(r.survivors).toHaveLength(1);
+  });
+
+  it('misses a jumping enemy whose head has risen above a level shot', () => {
+    const candidateX = PROJECTILE_SPEED * (1 / 60);
+    const r = stepProjectiles(
+      [proj({ position: { x: 0, y: HOVER_HEIGHT + EYE_HEIGHT, z: 0 } })],
+      // Jumper near peak: the head sphere sits well above the level shot.
+      [target({ position: { x: candidateX, y: HOVER_HEIGHT + 2.0, z: 0 } })],
       ctx(),
     );
     expect(r.hits).toHaveLength(0);

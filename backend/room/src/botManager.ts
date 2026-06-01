@@ -8,7 +8,7 @@
 // Phase A1 simulate fixture regression-tests the human side, and new
 // tests in this file cover the bot-specific paths.
 
-import type { PlayerState, ServerToClient, Team, Topology, Vec2, Vec3 } from '@cm/shared';
+import type { PlayerState, ServerToClient, Team, Topology, Vec3 } from '@cm/shared';
 import { topologyDistance, wrapPosition, wrappedUnitDelta } from '@cm/shared/topology';
 import { pathCrossesWall, pointBlockedByWall, type WallSegment } from '@cm/shared/labyrinth';
 import { generateRandomName } from '@cm/shared/names';
@@ -20,16 +20,11 @@ import {
   WALK_SPEED,
 } from '@cm/shared/movement';
 import type { BotPathfinder } from './botPathfinder.ts';
+import { botCanSee, isCloaked, nearestFrozenAlly, nearestVisibleEnemy } from './botPerception.ts';
+import { smoothDir, stepWithSlide, turnToward } from './botSteering.ts';
 
 // World half-extent (kept private here; Room owns the canonical constant).
 const WORLD_WIDTH = 80;
-
-// A player is hidden from bot perception while a Cloak power-up is active.
-// Mirrors the client's visual hide so bots can't see or react to a cloaked
-// enemy, matching what the cloaked player's opponents observe on screen.
-function isCloaked(p: PlayerState, now: number): boolean {
-  return p.cloakUntil !== undefined && p.cloakUntil > now;
-}
 
 // Bot AI constants. All bot tuning lives here so a single read explains
 // the AI's behavior.
@@ -332,31 +327,6 @@ export class BotManager {
     return out;
   }
 
-  private nearestVisibleEnemy(bot: PlayerState, now: number): PlayerState | null {
-    let best: PlayerState | null = null;
-    let bestDist = Infinity;
-    const topology = this.host.getTopology();
-    for (const other of this.host.players.values()) {
-      if (other.id === bot.id) continue;
-      if (other.team === bot.team) continue;
-      if (other.frozen) continue;
-      if (isCloaked(other, now)) continue;
-      if (!this.botCanSee(bot.position, other.position)) continue;
-      const d = topologyDistance(bot.position, other.position, topology, WORLD_WIDTH);
-      if (d < bestDist) {
-        bestDist = d;
-        best = other;
-      }
-    }
-    return best;
-  }
-
-  private botCanSee(from: Vec2, to: Vec2): boolean {
-    const walls = this.host.getWalls();
-    if (walls.length === 0) return true;
-    return !pathCrossesWall(walls, from.x, from.z, to.x, to.z);
-  }
-
   /**
    * One bot-AI tick. Drives chase / flee / rescue / patrol decisions,
    * applies movement with slide fallback, fires jumps when one of the
@@ -391,7 +361,14 @@ export class BotManager {
       };
       this.botMinds.set(bot.id, mind);
 
-      const candidate = this.nearestVisibleEnemy(bot, now);
+      const candidate = nearestVisibleEnemy(
+        bot,
+        this.host.players.values(),
+        walls,
+        topology,
+        WORLD_WIDTH,
+        now,
+      );
       const candidateDist = candidate
         ? topologyDistance(bot.position, candidate.position, topology, WORLD_WIDTH)
         : Infinity;
@@ -408,7 +385,7 @@ export class BotManager {
           existing.team !== bot.team &&
           !isCloaked(existing, now)
         ) {
-          const existingVisible = this.botCanSee(bot.position, existing.position);
+          const existingVisible = botCanSee(walls, bot.position, existing.position);
           const existingDist = topologyDistance(
             bot.position,
             existing.position,
@@ -452,18 +429,15 @@ export class BotManager {
       const investigating =
         target === null && mind.lastKnownPos !== null && now < mind.investigateUntil;
 
-      let rescueTarget: PlayerState | null = null;
-      let rescueDist = Infinity;
-      for (const other of this.host.players.values()) {
-        if (other.id === bot.id) continue;
-        if (other.team !== bot.team) continue;
-        if (!other.frozen) continue;
-        const d = topologyDistance(bot.position, other.position, topology, WORLD_WIDTH);
-        if (d < BOT_VISION_RADIUS && d < rescueDist) {
-          rescueDist = d;
-          rescueTarget = other;
-        }
-      }
+      const rescue = nearestFrozenAlly(
+        bot,
+        this.host.players.values(),
+        topology,
+        WORLD_WIDTH,
+        BOT_VISION_RADIUS,
+      );
+      const rescueTarget = rescue.target;
+      const rescueDist = rescue.dist;
 
       const chasing = target !== null && enemyDist < BOT_VISION_RADIUS && active === bot.team;
       const fleeing =
@@ -475,7 +449,7 @@ export class BotManager {
         chasing &&
         target !== null &&
         enemyDist <= BOT_SHOOT_RANGE &&
-        this.botCanSee(bot.position, target.position);
+        botCanSee(walls, bot.position, target.position);
 
       const sinceLastJump = now - mind.lastJumpedAt;
       const jumpEligible = bot.jumpStartedAt === null && sinceLastJump >= BOT_JUMP_REFRACTORY_MS;
@@ -577,16 +551,7 @@ export class BotManager {
           : mind.patrolTarget;
         dir = wrappedUnitDelta(bot.position, waypoint, topology, WORLD_WIDTH);
       }
-      dir = {
-        x: mind.lastDir.x * DIR_SMOOTHING + dir.x * (1 - DIR_SMOOTHING),
-        z: mind.lastDir.z * DIR_SMOOTHING + dir.z * (1 - DIR_SMOOTHING),
-      };
-      const dirLen = Math.hypot(dir.x, dir.z);
-      if (dirLen > 1e-3) {
-        dir = { x: dir.x / dirLen, z: dir.z / dirLen };
-      } else {
-        dir = { x: 0, z: 0 };
-      }
+      dir = smoothDir(mind.lastDir, dir, DIR_SMOOTHING);
       mind.lastDir = dir;
 
       const closeEnemyOrRescue =
@@ -596,42 +561,14 @@ export class BotManager {
       const wantSprint = closeEnemyOrRescue && bot.sprintEnergy > MAX_SPRINT * 0.15;
       const speed = wantSprint ? SPRINT_SPEED : WALK_SPEED;
       const step = speed * dt;
-      const candidates: Array<{ x: number; z: number; chosen: { x: number; z: number } }> = [
-        {
-          x: bot.position.x + dir.x * step,
-          z: bot.position.z + dir.z * step,
-          chosen: dir,
-        },
-        {
-          x: bot.position.x + Math.sign(dir.x) * step,
-          z: bot.position.z,
-          chosen: { x: Math.sign(dir.x), z: 0 },
-        },
-        {
-          x: bot.position.x,
-          z: bot.position.z + Math.sign(dir.z) * step,
-          chosen: { x: 0, z: Math.sign(dir.z) },
-        },
-      ];
-      let moved = false;
-      for (const c of candidates) {
-        if (c.chosen.x === 0 && c.chosen.z === 0) continue;
-        const wallBlocked =
-          walls.length > 0 && pathCrossesWall(walls, bot.position.x, bot.position.z, c.x, c.z);
-        if (wallBlocked) continue;
-        const wrapped = wrapPosition({ x: c.x, z: c.z }, topology, WORLD_WIDTH);
-        bot.position = { x: wrapped.x, y: bot.position.y, z: wrapped.z };
-        moved = true;
-        break;
+      const slid = stepWithSlide(bot.position, dir, step, walls, topology, WORLD_WIDTH);
+      const moved = slid.moved;
+      if (moved) {
+        bot.position = { x: slid.x, y: bot.position.y, z: slid.z };
       }
       if (dir.x !== 0 || dir.z !== 0) {
         const desiredYaw = Math.atan2(-dir.x, -dir.z);
-        let yawDelta = desiredYaw - mind.lastYaw;
-        while (yawDelta > Math.PI) yawDelta -= 2 * Math.PI;
-        while (yawDelta < -Math.PI) yawDelta += 2 * Math.PI;
-        const maxStep = MAX_YAW_RATE * dt;
-        const clamped = Math.max(-maxStep, Math.min(maxStep, yawDelta));
-        mind.lastYaw += clamped;
+        mind.lastYaw = turnToward(mind.lastYaw, desiredYaw, MAX_YAW_RATE, dt);
         bot.yaw = mind.lastYaw;
       } else {
         mind.lastYaw = bot.yaw;

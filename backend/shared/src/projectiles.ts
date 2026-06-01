@@ -13,7 +13,7 @@
 import type { Projectile, Team, Topology, Vec3 } from './protocol.ts';
 import { pathCrossesWall, type WallSegment } from './labyrinth.ts';
 import { topologyDistance, wrapPositionFromStep } from './topology.ts';
-import { BODY_VERTICAL_EXTENT } from './physics.ts';
+import { EYE_HEIGHT, HEAD_CENTER_HEIGHT, HEAD_RADIUS } from './physics.ts';
 import { PLAYER_RADIUS } from './labyrinth.ts';
 
 // Travel speed in world units per second. Fast enough to land at moderate
@@ -23,9 +23,10 @@ export const PROJECTILE_SPEED = 16;
 // Collision half-extent of the projectile itself, added to the player
 // radius for the hit test.
 export const PROJECTILE_RADIUS = 0.2;
-// Center-to-center XZ distance under which a projectile freezes an enemy.
-// Sum of the two radii plus a small feel margin.
-export const PROJECTILE_HIT_RADIUS = PLAYER_RADIUS + PROJECTILE_RADIUS + 0.2;
+// Center-to-center distance (3D) under which a projectile freezes an enemy:
+// the two spheres touch. The body is the floating head sphere, so this is the
+// head radius plus the projectile radius — not the wider capsule PLAYER_RADIUS.
+export const PROJECTILE_HIT_RADIUS = HEAD_RADIUS + PROJECTILE_RADIUS;
 // Flight time before a projectile dissipates if it hits nothing. At
 // PROJECTILE_SPEED this is ~40 units of travel — roughly the arena's
 // half-width — so a clean miss expires rather than orbiting a torus.
@@ -68,9 +69,12 @@ export function spawnProjectile(
     id,
     ownerId: owner.id,
     team: owner.team,
+    // Launch from the shooter's eye, not the body base: the aim direction is
+    // the camera's forward ray, so spawning on that ray (eye + forward*offset)
+    // makes the projectile track the crosshair at every range.
     position: {
       x: owner.position.x + nx * PROJECTILE_SPAWN_OFFSET,
-      y: owner.position.y + ny * PROJECTILE_SPAWN_OFFSET,
+      y: owner.position.y + EYE_HEIGHT + ny * PROJECTILE_SPAWN_OFFSET,
       z: owner.position.z + nz * PROJECTILE_SPAWN_OFFSET,
     },
     velocity: { x: nx * PROJECTILE_SPEED, y: ny * PROJECTILE_SPEED, z: nz * PROJECTILE_SPEED },
@@ -185,14 +189,20 @@ function findVictim(
     if (t.frozen) continue;
     const savedAt = ctx.savedAt(t.id);
     if (savedAt !== undefined && ctx.nowMs - savedAt < ctx.unfreezeGraceMs) continue;
-    if (Math.abs(at.y - t.position.y) >= BODY_VERTICAL_EXTENT) continue;
-    const d = topologyDistance(
+    // Sphere-vs-sphere intersection against the floating head. The head's
+    // center sits HEAD_CENTER_HEIGHT above the body base; combine the planar
+    // (topology-aware) distance with the vertical gap and compare against the
+    // touch radius. A shot below the head — e.g. at foot height past a
+    // standing player, or a level shot under a jumper whose head has risen —
+    // has too large a vertical gap and misses.
+    const dxz = topologyDistance(
       { x: at.x, z: at.z },
       { x: t.position.x, z: t.position.z },
       ctx.topology,
       ctx.worldWidth,
     );
-    if (d <= ctx.hitRadius) return t.id;
+    const dy = at.y - (t.position.y + HEAD_CENTER_HEIGHT);
+    if (dxz * dxz + dy * dy <= ctx.hitRadius * ctx.hitRadius) return t.id;
   }
   return null;
 }

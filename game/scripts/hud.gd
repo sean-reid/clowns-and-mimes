@@ -176,6 +176,12 @@ func set_countdown_seconds(seconds: float) -> void:
 func render_team_status(players: Array) -> void:
 	minimap.update_state(players, _local_player_id, _local_team, _topology_name)
 
+## Pushed every render frame by the arena with the local player's live body yaw,
+## so the minimap facing arrow tracks the mouse without the 10 Hz delta lag and
+## keeps moving while frozen (where the snapshot yaw is stuck).
+func set_local_facing_yaw(yaw: float) -> void:
+	minimap.set_local_yaw(yaw)
+
 func append_log(message: String) -> void:
 	# Shift each text up one slot and drop the new line into the bottom
 	# (newest) slot. No node allocation or freeing per event, so a burst of

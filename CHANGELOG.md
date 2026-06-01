@@ -6,6 +6,24 @@ When cutting a release: rename the `[Unreleased]` heading below to the version b
 
 ## [Unreleased]
 
+## [0.6.2] - 2026-05-31
+
+Patch release for aiming and a few rough edges. Freeze shots now leave from eye level and fly straight to your crosshair instead of arcing up from the waist, and a shot only lands when it actually touches a player's head — so you can fire under someone who is standing still, and a well-timed jump can duck a level shot. Other players' heads also tilt up and down to match where they are looking. Online play needs an updated client on both ends (protocol v4).
+
+### Added
+
+- Players' heads now pitch up and down to match where they are looking, not just left and right.
+
+### Changed
+
+- Freeze shots launch from eye level along your crosshair and only freeze an opponent when the shot touches their head, so a level shot passes under a standing player and a jump can dodge it.
+- Network protocol bumped to v4. Clients older than v4 are turned away from online play; update on both ends.
+
+### Fixed
+
+- The minimap facing arrow keeps tracking your aim while you are frozen instead of freezing in place.
+- The title screen's ENTER button no longer plays a hover sound or accepts a click before it has finished fading in.
+
 ## [0.6.1] - 2026-05-31
 
 Patch release. The carnival main menu, lobby, and party screens shared their backdrop through an instanced scene, which renders in the editor but comes up blank in exported builds — so the released menu showed a flat dark background with no clown/mime mascots and no harlequin pattern. The backdrop nodes are now inlined into each screen, matching the title screen.

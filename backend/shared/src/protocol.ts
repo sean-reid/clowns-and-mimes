@@ -3,7 +3,7 @@
  * Bump PROTOCOL_VERSION on every breaking change. The room rejects mismatches.
  */
 
-export const PROTOCOL_VERSION = 3 as const;
+export const PROTOCOL_VERSION = 4 as const;
 
 export type Team = 'mime' | 'clown';
 
@@ -28,6 +28,11 @@ export interface PlayerInput {
   dt: number;
   move: Vec2;
   lookYaw: number;
+  // Vertical look angle in radians: positive tilts the head up, negative
+  // down. Replicated to remote viewers so a player's head pitches with
+  // their aim. Optional on the wire for forward-compat with inputs that
+  // predate the field; the server treats a missing value as 0 (level).
+  lookPitch?: number;
   sprint: boolean;
   // Rising-edge jump request. Set true on the input frame where the
   // player pressed Space; false otherwise. The server triggers a new
@@ -104,6 +109,11 @@ export interface PlayerState {
   bot: boolean;
   position: Vec3;
   yaw: number;
+  // Vertical look angle in radians (positive up). Mirrors the shooter's
+  // camera pitch so remote clients tilt the body's head mesh up/down.
+  // Optional: absent means level (0); only updated for unfrozen players
+  // (the server skips input for frozen bodies).
+  pitch?: number;
   frozen: boolean;
   sprintEnergy: number;
   // Sprint hysteresis: once energy depletes to 0 mid-sprint the player

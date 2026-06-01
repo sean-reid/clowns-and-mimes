@@ -326,6 +326,7 @@ export class GameSimulation {
         p.sprintEnergy = next.sprintEnergy;
         p.sprinting = next.sprinting;
         p.yaw = input.lookYaw;
+        p.pitch = input.lookPitch ?? 0;
         this.host.lastAppliedSeq.set(id, input.seq);
         applied++;
       }

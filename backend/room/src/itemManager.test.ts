@@ -307,6 +307,27 @@ describe('ItemManager portal', () => {
     vi.useRealTimers();
   });
 
+  it('exposes the opener their own entry/exit mouths via portalFor', () => {
+    const h = openPortalFor(-2);
+    const mouths = h.im.portalFor('p');
+    expect(mouths).not.toBeNull();
+    expect(mouths!.a.z).toBeCloseTo(-3, 6); // entry on the faced wall
+    expect(mouths!.b.z).toBeCloseTo(10, 6); // exit on the other wall
+    // A non-opener has no portal of their own.
+    expect(h.im.portalFor('someone-else')).toBeNull();
+  });
+
+  it('stops reporting a portal via portalFor once it closes', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(0);
+    const h = openPortalFor(-2);
+    expect(h.im.portalFor('p')).not.toBeNull();
+    vi.setSystemTime(PORTAL_DURATION_MS + 1);
+    h.im.step(1 / 60);
+    expect(h.im.portalFor('p')).toBeNull();
+    vi.useRealTimers();
+  });
+
   it('closes the pair after PORTAL_DURATION_MS and broadcasts portal_close', () => {
     vi.useFakeTimers();
     vi.setSystemTime(0);

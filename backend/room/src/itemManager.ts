@@ -55,6 +55,9 @@ interface PortalRecord {
   aExitYaw: number;
   bExitYaw: number;
   expiresAt: number;
+  // Player who opened the pair. Mouth `a` is on their entry side, so a bot
+  // opener can find it again to follow through on its own portal.
+  openerId: string;
 }
 
 export interface ItemManagerHost {
@@ -215,7 +218,12 @@ export class ItemManager {
     if (geom === null) return;
     const id = `p-${this.portalSeq}`;
     this.portalSeq += 1;
-    const portal: PortalRecord = { id, ...geom, expiresAt: Date.now() + PORTAL_DURATION_MS };
+    const portal: PortalRecord = {
+      id,
+      ...geom,
+      expiresAt: Date.now() + PORTAL_DURATION_MS,
+      openerId: player.id,
+    };
     this.portals.set(id, portal);
     this.portalBlocked.add(player.id);
     this.host.broadcast({
@@ -287,6 +295,18 @@ export class ItemManager {
   /** Live portal pairs, for the snapshot. */
   activePortals(): Portal[] {
     return [...this.portals.values()].map(toWirePortal);
+  }
+
+  /**
+   * The entry/exit mouths of a live portal `playerId` opened, or null if they
+   * have none. Lets a bot opener path back to its own entry mouth (`a`) to take
+   * the portal rather than wander off and waste it.
+   */
+  portalFor(playerId: string): { a: Vec3; b: Vec3 } | null {
+    for (const portal of this.portals.values()) {
+      if (portal.openerId === playerId) return { a: portal.a, b: portal.b };
+    }
+    return null;
   }
 
   /** Items currently on the floor, for the snapshot. */

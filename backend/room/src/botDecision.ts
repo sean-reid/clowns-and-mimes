@@ -16,12 +16,12 @@
 // mutates the passed Engagement in place - the same object the caller stores
 // on the bot's mind. Everything else it reads is a pure snapshot.
 
-import type { PlayerState, Team, Topology } from '@cm/shared';
+import type { PlayerState, Team, Topology, Vec2 } from '@cm/shared';
 import { topologyDistance } from '@cm/shared/topology';
 import type { WallSegment } from '@cm/shared/labyrinth';
 import { botCanSee, isCloaked, nearestFrozenAlly, nearestVisibleEnemy } from './botPerception.ts';
 
-export type MovementMode = 'flee' | 'rescue' | 'chase' | 'investigate' | 'patrol';
+export type MovementMode = 'flee' | 'rescue' | 'chase' | 'investigate' | 'collect' | 'patrol';
 
 // The slice of a bot's mind this layer owns and mutates across ticks.
 export interface Engagement {
@@ -44,6 +44,9 @@ export interface BotDecision {
   enemyDist: number;
   rescueTarget: PlayerState | null;
   rescueDist: number;
+  // Floor item to walk onto when mode is 'collect' (echoed back from the
+  // caller-supplied candidate), else null.
+  collectTarget: Vec2 | null;
   // Independent action flags. They can overlap (a bot can flee for movement
   // yet still be close enough to rescue a frozen ally), so the caller reads
   // them separately from `mode`.
@@ -70,6 +73,7 @@ export function decideBotAction(
   activeTurnTeam: Team | null,
   engagement: Engagement,
   params: DecisionParams,
+  collectTarget: Vec2 | null = null,
 ): BotDecision {
   const roster = [...players];
   const candidate = nearestVisibleEnemy(bot, roster, walls, topology, worldWidth, now);
@@ -139,12 +143,18 @@ export function decideBotAction(
     enemyDist <= params.shootRange &&
     botCanSee(walls, bot.position, target.position);
 
+  // Only collect while not engaged: a held item blocks pickup, so the caller
+  // passes null when the bot already holds one; here it stays a candidate that
+  // simply loses to any combat/rescue/investigate goal in the scoring.
+  const collecting = collectTarget !== null;
+
   return {
-    mode: chooseMovementMode({ fleeing, rescuing, chasing, investigating }),
+    mode: chooseMovementMode({ fleeing, rescuing, chasing, investigating, collecting }),
     target,
     enemyDist,
     rescueTarget: rescue.target,
     rescueDist: rescue.dist,
+    collectTarget,
     chasing,
     fleeing,
     rescuing,
@@ -168,12 +178,16 @@ function chooseMovementMode(flags: {
   rescuing: boolean;
   chasing: boolean;
   investigating: boolean;
+  collecting: boolean;
 }): MovementMode {
   const scores: Array<{ mode: MovementMode; score: number }> = [
     { mode: 'flee', score: flags.fleeing ? 100 : -Infinity },
     { mode: 'rescue', score: flags.rescuing ? 80 : -Infinity },
     { mode: 'chase', score: flags.chasing ? 60 : -Infinity },
     { mode: 'investigate', score: flags.investigating ? 40 : -Infinity },
+    // Grabbing an item is opportunistic: it beats aimless patrol but yields to
+    // any combat, rescue, or investigate goal.
+    { mode: 'collect', score: flags.collecting ? 20 : -Infinity },
     { mode: 'patrol', score: 1 },
   ];
   let best = scores[0]!;

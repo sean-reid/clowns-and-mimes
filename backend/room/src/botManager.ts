@@ -8,7 +8,7 @@
 // Phase A1 simulate fixture regression-tests the human side, and new
 // tests in this file cover the bot-specific paths.
 
-import type { PlayerState, ServerToClient, Team, Topology, Vec3 } from '@cm/shared';
+import type { ItemType, PlayerState, ServerToClient, Team, Topology, Vec3 } from '@cm/shared';
 import { topologyDistance, wrapPosition, wrappedUnitDelta } from '@cm/shared/topology';
 import { pathCrossesWall, pointBlockedByWall, type WallSegment } from '@cm/shared/labyrinth';
 import { generateRandomName } from '@cm/shared/names';
@@ -24,6 +24,7 @@ import { smoothDir, stepWithSlide, turnToward } from './botSteering.ts';
 import { decideBotAction } from './botDecision.ts';
 import { decideItemUse } from './botItems.ts';
 import { nearestEnemy } from './botPerception.ts';
+import { nearestItemTarget, portalEscapeTarget } from './botGoals.ts';
 
 // World half-extent (kept private here; Room owns the canonical constant).
 const WORLD_WIDTH = 80;
@@ -37,6 +38,9 @@ const UNFREEZE_RADIUS_BOT = 1.4;
 const BOT_VISION_RADIUS = 22;
 const BOT_PATROL_RETARGET_MS = 4_000;
 const BOT_SPRINT_TRIGGER_RADIUS = 10;
+// A bot holding no item will detour to grab a floor item within this range.
+// Inside vision (22) so it only chases items it can plausibly reach.
+const BOT_ITEM_SEEK_RADIUS = 16;
 const BOT_NO_PROGRESS_WINDOW_MS = 800;
 const BOT_NO_PROGRESS_MIN_DIST = 0.5;
 const BOT_FLEE_PROJECTION = 12;
@@ -114,6 +118,10 @@ export interface BotManagerHost {
   botShoot(attacker: PlayerState, dir: Vec3): boolean;
   // Activate the bot's held power-up (clears the slot, applies the effect).
   useBotItem(player: PlayerState): void;
+  // Floor items currently available to pick up.
+  availableItems(): readonly { type: ItemType; position: Vec3 }[];
+  // Entry/exit mouths of a live portal this player opened, or null.
+  botPortalEntry(playerId: string): { a: Vec3; b: Vec3 } | null;
 }
 
 export class BotManager {
@@ -363,6 +371,18 @@ export class BotManager {
       };
       this.botMinds.set(bot.id, mind);
 
+      // A held item blocks pickup, so only seek floor items when empty-handed.
+      const collectTarget =
+        bot.activeItem === undefined
+          ? nearestItemTarget(
+              bot.position,
+              this.host.availableItems(),
+              topology,
+              WORLD_WIDTH,
+              BOT_ITEM_SEEK_RADIUS,
+            )
+          : null;
+
       const decision = decideBotAction(
         bot,
         this.host.players.values(),
@@ -378,6 +398,7 @@ export class BotManager {
           retargetHysteresis: RETARGET_HYSTERESIS,
           investigateMs: BOT_INVESTIGATE_MS,
         },
+        collectTarget,
       );
       const { target, enemyDist, rescueTarget, rescueDist, chasing, fleeing, rescuing, canShoot } =
         decision;
@@ -463,14 +484,22 @@ export class BotManager {
       let dir = { x: 0, z: 0 };
       if (decision.mode === 'flee' && target) {
         const away = wrappedUnitDelta(target.position, bot.position, topology, WORLD_WIDTH);
-        const fleeTarget = wrapPosition(
-          {
-            x: bot.position.x + away.x * BOT_FLEE_PROJECTION,
-            z: bot.position.z + away.z * BOT_FLEE_PROJECTION,
-          },
-          topology,
-          WORLD_WIDTH,
-        );
+        // If this bot opened a portal, head into its own entry mouth instead of
+        // the open-field flee point - that's the whole reason it spent the item.
+        const portal = this.host.botPortalEntry(bot.id);
+        const portalTarget = portal
+          ? portalEscapeTarget(bot.position, away, portal.a, portal.b, topology, WORLD_WIDTH)
+          : null;
+        const fleeTarget =
+          portalTarget ??
+          wrapPosition(
+            {
+              x: bot.position.x + away.x * BOT_FLEE_PROJECTION,
+              z: bot.position.z + away.z * BOT_FLEE_PROJECTION,
+            },
+            topology,
+            WORLD_WIDTH,
+          );
         const avoid = this.avoidCellsForBot(bot, null);
         const waypoint = pathfinder
           ? pathfinder.nextWaypointAvoiding(bot.position, fleeTarget, avoid)
@@ -493,6 +522,12 @@ export class BotManager {
         const waypoint = pathfinder
           ? pathfinder.nextWaypointAvoiding(bot.position, mind.lastKnownPos, avoid)
           : mind.lastKnownPos;
+        dir = wrappedUnitDelta(bot.position, waypoint, topology, WORLD_WIDTH);
+      } else if (decision.mode === 'collect' && decision.collectTarget) {
+        const avoid = this.avoidCellsForBot(bot, null);
+        const waypoint = pathfinder
+          ? pathfinder.nextWaypointAvoiding(bot.position, decision.collectTarget, avoid)
+          : decision.collectTarget;
         dir = wrappedUnitDelta(bot.position, waypoint, topology, WORLD_WIDTH);
       } else {
         if (now >= mind.patrolUntil || nearTarget(bot.position, mind.patrolTarget)) {

@@ -35,8 +35,9 @@ function decide(
   eng: Engagement,
   walls: WallSegment[] = [],
   now = 1000,
+  collectTarget: { x: number; z: number } | null = null,
 ) {
-  return decideBotAction(bot, roster, walls, 'plane', 80, now, active, eng, PARAMS);
+  return decideBotAction(bot, roster, walls, 'plane', 80, now, active, eng, PARAMS, collectTarget);
 }
 
 const bot = () => player({ id: 'bot', team: 'mime', position: { x: 0, y: 0.5, z: 0 } });
@@ -87,6 +88,30 @@ describe('decideBotAction movement mode', () => {
     const d = decide(b, [b, enemy, ally], 'clown', freshEngagement());
     expect(d.mode).toBe('flee');
     expect(d.rescuing).toBe(true); // still true so the unfreeze action can fire
+  });
+});
+
+describe('decideBotAction collect mode', () => {
+  it('collects a nearby item when idle, beating patrol', () => {
+    const b = bot();
+    const d = decide(b, [b], 'mime', freshEngagement(), [], 1000, { x: 6, z: 0 });
+    expect(d.mode).toBe('collect');
+    expect(d.collectTarget).toEqual({ x: 6, z: 0 });
+  });
+
+  it('patrols when there is no item to collect', () => {
+    const b = bot();
+    const d = decide(b, [b], 'mime', freshEngagement());
+    expect(d.mode).toBe('patrol');
+    expect(d.collectTarget).toBeNull();
+  });
+
+  it('yields collecting to chasing a visible enemy on our turn', () => {
+    const b = bot();
+    const enemy = player({ id: 'e', team: 'clown', position: { x: 5, y: 0.5, z: 0 } });
+    const d = decide(b, [b, enemy], 'mime', freshEngagement(), [], 1000, { x: 6, z: 0 });
+    expect(d.mode).toBe('chase');
+    expect(d.collectTarget).toEqual({ x: 6, z: 0 }); // still echoed for the caller
   });
 });
 

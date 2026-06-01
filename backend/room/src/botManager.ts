@@ -574,11 +574,21 @@ export class BotManager {
         mind.lastYaw = bot.yaw;
       }
       if (!moved) {
-        if (
+        const embedded =
           walls.length > 0 &&
-          pathCrossesWall(walls, bot.position.x, bot.position.z, bot.position.x, bot.position.z)
-        ) {
-          bot.position = this.host.pickSpawnPosition(bot.team);
+          pathCrossesWall(walls, bot.position.x, bot.position.z, bot.position.x, bot.position.z);
+        if (embedded) {
+          // Recover toward the open center of the bot's own cell rather than
+          // teleporting across the map to spawn (the old band-aid, which
+          // yanked a bot mid-chase to the far side of the arena). Fall back to
+          // spawn only if even the cell center sits inside a wall.
+          const center = pathfinder ? pathfinder.cellCenterOf(bot.position) : null;
+          if (center && !pathCrossesWall(walls, center.x, center.z, center.x, center.z)) {
+            const wrapped = wrapPosition(center, topology, WORLD_WIDTH);
+            bot.position = { x: wrapped.x, y: bot.position.y, z: wrapped.z };
+          } else {
+            bot.position = this.host.pickSpawnPosition(bot.team);
+          }
         }
         this.commitPatrolTarget(mind);
         mind.patrolUntil = now + BOT_PATROL_RETARGET_MS;

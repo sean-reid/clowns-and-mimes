@@ -88,8 +88,27 @@ func _physics_process(delta: float) -> void:
 		accumulated = 0.0
 		_choose_state()
 		_choose_target()
+		_maybe_shoot()
 	_drive()
 	_maybe_jump(delta)
+
+# Fire when the decision says we have a clear shot (own turn, visible enemy in
+# range). offline_mode gates turn/cooldown; here we just aim. Mirrors the
+# server's botShoot: planar aim at the target plus a little random spread.
+func _maybe_shoot() -> void:
+	if not _decision.get("can_shoot", false):
+		return
+	var target: Dictionary = _decision.get("target", {})
+	if target.is_empty() or player == null or player.arena == null or player.arena.offline == null:
+		return
+	var aim: Vector3 = topology.delta(player.global_position, target.position)
+	aim.y = 0.0
+	if aim.length() < 0.001:
+		return
+	var jitter := rng.randf_range(
+		-SharedConstants.BOT_SHOOT_AIM_JITTER, SharedConstants.BOT_SHOOT_AIM_JITTER
+	)
+	player.arena.offline.bot_shoot(player_id, aim.normalized().rotated(Vector3.UP, jitter))
 
 func _update_stuck(delta: float) -> void:
 	var moved: float = (player.global_position - last_position).length()

@@ -82,24 +82,19 @@ func _astar_chain(from_cell: int, to_cell: int, occupied: Dictionary) -> Array:
 	var g := PackedFloat32Array()
 	g.resize(total)
 	g.fill(INF)
-	var f := PackedFloat32Array()
-	f.resize(total)
-	f.fill(INF)
 	var came := PackedInt32Array()
 	came.resize(total)
 	came.fill(-1)
 	var closed := PackedByteArray()
 	closed.resize(total)
 	g[from_cell] = 0.0
-	f[from_cell] = _cell_heuristic(from_cell, to_cell)
-	var open: Array[int] = [from_cell]
+	# A binary min-heap (not a linear-scan open set) so equal-cost ties pop in
+	# the exact same order as the server's heap - otherwise the two A*s pick
+	# different (equally optimal) routes through the same maze.
+	var open := _MinHeap.new()
+	open.push(from_cell, _cell_heuristic(from_cell, to_cell))
 	while not open.is_empty():
-		var bi := 0
-		for i in range(1, open.size()):
-			if f[open[i]] < f[open[bi]]:
-				bi = i
-		var cur: int = open[bi]
-		open.remove_at(bi)
+		var cur := open.pop()
 		if cur == to_cell:
 			break
 		if closed[cur] == 1:
@@ -122,8 +117,7 @@ func _astar_chain(from_cell: int, to_cell: int, occupied: Dictionary) -> Array:
 			if tentative < g[nb]:
 				g[nb] = tentative
 				came[nb] = cur
-				f[nb] = tentative + _cell_heuristic(nb, to_cell)
-				open.append(nb)
+				open.push(nb, tentative + _cell_heuristic(nb, to_cell))
 	if is_inf(g[to_cell]):
 		return []
 	var rev: Array[int] = []
@@ -287,3 +281,60 @@ func _apply_shape(topology_name: String) -> void:
 	_wrap_x = topology_name != "plane"
 	_wrap_z = topology_name != "plane"
 	_flip_row_on_x_wrap = false
+
+
+# Binary min-heap over (cell, priority), a faithful port of the TS MinHeap in
+# botPathfinder.ts so the A* open set pops in identical order (push sift-up
+# stops on <=, sift-down prefers <). Lazy: a cell can be pushed more than once
+# as its g-score improves; the search skips already-closed pops.
+class _MinHeap:
+	var _cells: Array[int] = []
+	var _prio: Array[float] = []
+
+	func is_empty() -> bool:
+		return _cells.is_empty()
+
+	func push(cell: int, priority: float) -> void:
+		_cells.append(cell)
+		_prio.append(priority)
+		var i := _cells.size() - 1
+		while i > 0:
+			var parent := (i - 1) >> 1
+			if _prio[parent] <= _prio[i]:
+				break
+			_swap(i, parent)
+			i = parent
+
+	func pop() -> int:
+		var top: int = _cells[0]
+		var last_cell: int = _cells.pop_back()
+		var last_prio: float = _prio.pop_back()
+		if not _cells.is_empty():
+			_cells[0] = last_cell
+			_prio[0] = last_prio
+			_sift_down(0)
+		return top
+
+	func _sift_down(start: int) -> void:
+		var i := start
+		var n := _cells.size()
+		while true:
+			var l := 2 * i + 1
+			var r := 2 * i + 2
+			var smallest := i
+			if l < n and _prio[l] < _prio[smallest]:
+				smallest = l
+			if r < n and _prio[r] < _prio[smallest]:
+				smallest = r
+			if smallest == i:
+				break
+			_swap(i, smallest)
+			i = smallest
+
+	func _swap(a: int, b: int) -> void:
+		var c := _cells[a]
+		_cells[a] = _cells[b]
+		_cells[b] = c
+		var p := _prio[a]
+		_prio[a] = _prio[b]
+		_prio[b] = p

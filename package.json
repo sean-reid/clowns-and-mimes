@@ -27,7 +27,8 @@
     "gen:topology-fixture": "tsx scripts/gen-topology-fixture.ts",
     "gen:physics-fixture": "tsx scripts/gen-physics-fixture.ts",
     "gen:mobius-fixture": "tsx scripts/gen-mobius-fixture.ts",
-    "gen:items-fixture": "tsx scripts/gen-items-fixture.ts"
+    "gen:items-fixture": "tsx scripts/gen-items-fixture.ts",
+    "gen:bot-pathfinder-fixture": "tsx scripts/gen-bot-pathfinder-fixture.ts"
   },
   "devDependencies": {
     "prettier": "3.8.3",

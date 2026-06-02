@@ -6,6 +6,28 @@ When cutting a release: rename the `[Unreleased]` heading below to the version b
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-06-01
+
+The offline-and-smarter-bots release. Playing against bots is now a full match — bots use every power-up, fire freeze shots, take portals, coordinate who rescues whom, and spread across the arena instead of trailing each other in a clump. The bot brain was rebuilt on weighted pathfinding that hugs open lanes and rounds corners without grinding on them, so bots feel less stuck both offline and online. The main menu makes offline play a first-class choice with its own topology picker and recovers cleanly when the connection returns, and the game window fills your screen the first time and remembers its size after. Online play is unchanged on the wire (protocol v4).
+
+### Added
+
+- A dedicated "Play offline vs bots" menu path with its own topology picker (including Random). The menu shows whether you're online or offline, makes offline play the available option when there's no connection, and re-checks so a restored connection flips you back to online.
+- The game window fills the screen on first launch and reopens at the size and position you last left it; "Reset settings" returns it to fill-screen.
+- Offline matches now include the full floor power-up set, freeze-shot projectiles, and portals against bots.
+
+### Changed
+
+- Bots navigate with weighted pathfinding that prefers open lanes and keeps clearance from walls and from each other, so they round corners instead of pinning on them and fan out across the arena instead of following one another (online and offline).
+- Bots spend power-ups, fire freeze shots, follow through on the portals they open, and coordinate rescues so they no longer all swarm a single frozen teammate (online and offline).
+
+### Fixed
+
+- Bots no longer get stuck on wall corners or take off jumping in unison.
+- Offline bots stay visible when they cross a topology seam (torus / Möbius / Klein) instead of disappearing until you cross it too.
+- Offline tags and freeze shots no longer reach through a wall, and a just-rescued teammate gets a brief grace window before they can be re-frozen.
+- The Clone power-up is disabled in offline play, preventing the frame-rate slide that came from clones spawning more clones.
+
 ## [0.6.2] - 2026-05-31
 
 Patch release for aiming and a few rough edges. Freeze shots now leave from eye level and fly straight to your crosshair instead of arcing up from the waist, and a shot only lands when it actually touches a player's head — so you can fire under someone who is standing still, and a well-timed jump can duck a level shot. Other players' heads also tilt up and down to match where they are looking. Online play needs an updated client on both ends (protocol v4).

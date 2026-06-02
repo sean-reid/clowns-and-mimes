@@ -311,6 +311,8 @@ export class Room implements DurableObject {
       startMatch: () => this.startMatch(),
       botShoot: (attacker, dir) => this.projectiles.botShoot(attacker, dir),
       useBotItem: (player) => this.items.useItemForBot(player),
+      availableItems: () => this.items.available(),
+      botPortalEntry: (playerId) => this.items.portalFor(playerId),
     };
     this.bots = new BotManager(botsHost);
     const simHost: GameSimulationHost = {

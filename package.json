@@ -26,7 +26,16 @@
     "gen:gridmaze-fixture": "tsx scripts/gen-gridmaze-fixture.ts",
     "gen:topology-fixture": "tsx scripts/gen-topology-fixture.ts",
     "gen:physics-fixture": "tsx scripts/gen-physics-fixture.ts",
-    "gen:mobius-fixture": "tsx scripts/gen-mobius-fixture.ts"
+    "gen:mobius-fixture": "tsx scripts/gen-mobius-fixture.ts",
+    "gen:items-fixture": "tsx scripts/gen-items-fixture.ts",
+    "gen:bot-pathfinder-fixture": "tsx scripts/gen-bot-pathfinder-fixture.ts",
+    "gen:bot-decision-fixture": "tsx scripts/gen-bot-decision-fixture.ts",
+    "gen:bot-goals-fixture": "tsx scripts/gen-bot-goals-fixture.ts",
+    "gen:bot-items-fixture": "tsx scripts/gen-bot-items-fixture.ts",
+    "gen:bot-coordination-fixture": "tsx scripts/gen-bot-coordination-fixture.ts",
+    "gen:projectiles-fixture": "tsx scripts/gen-projectiles-fixture.ts",
+    "gen:portals-fixture": "tsx scripts/gen-portals-fixture.ts",
+    "gen:all": "node scripts/gen-all.mjs"
   },
   "devDependencies": {
     "prettier": "3.8.3",

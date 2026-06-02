@@ -73,6 +73,32 @@ func test_win_emits_when_one_team_fully_frozen() -> void:
 	assert_eq(winner.size(), 1, "single win emitted")
 	assert_eq(winner[0], "clown", "clown wins")
 
+func test_tag_blocked_by_wall() -> void:
+	# A wall crossing the line between attacker and victim blocks the tag even
+	# though they're in range and vertically overlapping (server wall_in_way).
+	var rules: Node = _make_rules()
+	rules.register_player("a", "mime", Vector3(0.0, 0.0, 0.0), "A", false)
+	rules.register_player("b", "clown", Vector3(1.0, 0.0, 0.0), "B", false)
+	rules.phase = GameRulesScript.Phase.TURN_MIME
+	rules.walls = [{"ax": 0.5, "az": -2.0, "bx": 0.5, "bz": 2.0}]
+	assert_false(rules.try_tag("a", "b"), "tag blocked by wall in the way")
+	assert_false(rules.players["b"]["frozen"], "victim not frozen through a wall")
+	# Same geometry with a clear line tags successfully.
+	rules.walls = []
+	assert_true(rules.try_tag("a", "b"), "tag succeeds with clear line of sight")
+
+func test_retag_blocked_during_save_grace() -> void:
+	# A just-unfrozen ally can't be re-tagged within the grace window.
+	var rules: Node = _make_rules()
+	rules.register_player("a", "mime", Vector3(0.0, 0.0, 0.0), "A", false)
+	rules.register_player("v", "mime", Vector3(0.4, 0.0, 0.0), "V", false)
+	rules.register_player("c", "clown", Vector3(0.4, 0.0, 0.0), "C", false)
+	rules.players["v"]["frozen"] = true
+	assert_true(rules.try_unfreeze("a", "v"), "ally unfrozen (starts grace)")
+	rules.phase = GameRulesScript.Phase.TURN_CLOWN
+	assert_false(rules.try_tag("c", "v"), "re-tag blocked during save grace")
+	assert_false(rules.players["v"]["frozen"], "victim stays free during grace")
+
 func test_turn_progression_advances_phase() -> void:
 	var rules: Node = _make_rules()
 	rules.start(PlaneTopology.new())

@@ -1,0 +1,169 @@
+{
+  "schemaVersion": 1,
+  "scenarios": [
+    {
+      "name": "none",
+      "topology": "plane",
+      "botX": 0,
+      "botZ": 0,
+      "items": [],
+      "seekRadius": 12,
+      "expected": null
+    },
+    {
+      "name": "out_of_range",
+      "topology": "plane",
+      "botX": 0,
+      "botZ": 0,
+      "items": [
+        {
+          "x": 20,
+          "z": 0
+        }
+      ],
+      "seekRadius": 12,
+      "expected": null
+    },
+    {
+      "name": "single_in_range",
+      "topology": "plane",
+      "botX": 0,
+      "botZ": 0,
+      "items": [
+        {
+          "x": 5,
+          "z": 0
+        }
+      ],
+      "seekRadius": 12,
+      "expected": {
+        "x": 5,
+        "z": 0
+      }
+    },
+    {
+      "name": "nearest_of_three",
+      "topology": "plane",
+      "botX": 0,
+      "botZ": 0,
+      "items": [
+        {
+          "x": 9,
+          "z": 0
+        },
+        {
+          "x": 3,
+          "z": 4
+        },
+        {
+          "x": -8,
+          "z": 2
+        }
+      ],
+      "seekRadius": 12,
+      "expected": {
+        "x": 3,
+        "z": 4
+      }
+    },
+    {
+      "name": "boundary_inclusive",
+      "topology": "plane",
+      "botX": 0,
+      "botZ": 0,
+      "items": [
+        {
+          "x": 12,
+          "z": 0
+        }
+      ],
+      "seekRadius": 12,
+      "expected": {
+        "x": 12,
+        "z": 0
+      }
+    },
+    {
+      "name": "first_wins_on_tie",
+      "topology": "plane",
+      "botX": 0,
+      "botZ": 0,
+      "items": [
+        {
+          "x": 5,
+          "z": 0
+        },
+        {
+          "x": 0,
+          "z": 5
+        }
+      ],
+      "seekRadius": 12,
+      "expected": {
+        "x": 5,
+        "z": 0
+      }
+    },
+    {
+      "name": "torus_wrap_nearer",
+      "topology": "torus",
+      "botX": -38,
+      "botZ": 0,
+      "items": [
+        {
+          "x": 38,
+          "z": 0
+        }
+      ],
+      "seekRadius": 12,
+      "expected": {
+        "x": 38,
+        "z": 0
+      }
+    }
+  ],
+  "portalScenarios": [
+    {
+      "name": "entry_side_in_hemisphere",
+      "topology": "plane",
+      "botX": 3,
+      "botZ": 0,
+      "awayX": 1,
+      "awayZ": 0,
+      "entryX": 5,
+      "entryZ": 0,
+      "exitX": -5,
+      "exitZ": 0,
+      "expected": {
+        "x": 5,
+        "z": 0
+      }
+    },
+    {
+      "name": "exit_side",
+      "topology": "plane",
+      "botX": -3,
+      "botZ": 0,
+      "awayX": 1,
+      "awayZ": 0,
+      "entryX": 5,
+      "entryZ": 0,
+      "exitX": -5,
+      "exitZ": 0,
+      "expected": null
+    },
+    {
+      "name": "wrong_hemisphere",
+      "topology": "plane",
+      "botX": 3,
+      "botZ": 0,
+      "awayX": -1,
+      "awayZ": 0,
+      "entryX": 5,
+      "entryZ": 0,
+      "exitX": -5,
+      "exitZ": 0,
+      "expected": null
+    }
+  ]
+}

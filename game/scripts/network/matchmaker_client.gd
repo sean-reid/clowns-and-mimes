@@ -75,6 +75,29 @@ func _post(
 		request_failed.emit("Could not reach the lobby server.")
 		http.queue_free()
 
+## Reachability probe for the menu's online/offline state. GETs /healthz (which
+## skips the version check, so this is a pure "can I reach the matchmaker" test)
+## on a short timeout. Emits health_result(online, reason): reason is "" online,
+## "no_connection" otherwise. Version-mismatch stays a separate on-action state.
+signal health_result(online: bool, reason: String)
+
+const HEALTH_TIMEOUT := 3.0
+
+func probe_health() -> void:
+	var http := HTTPRequest.new()
+	add_child(http)
+	http.timeout = HEALTH_TIMEOUT
+	http.request_completed.connect(
+		func(result: int, code: int, _h: PackedStringArray, _b: PackedByteArray) -> void:
+			http.queue_free()
+			var ok: bool = result == HTTPRequest.RESULT_SUCCESS and code >= 200 and code < 300
+			health_result.emit(ok, "" if ok else "no_connection")
+	)
+	var err: int = http.request(ServerConfig.matchmaker_url() + "/healthz", _headers(), HTTPClient.METHOD_GET)
+	if err != OK:
+		http.queue_free()
+		health_result.emit(false, "no_connection")
+
 func _http_get(path: String, on_response: Callable, on_failure: Callable = Callable()) -> void:
 	var http := HTTPRequest.new()
 	add_child(http)

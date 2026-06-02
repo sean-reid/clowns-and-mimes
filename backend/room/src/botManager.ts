@@ -8,7 +8,7 @@
 // Phase A1 simulate fixture regression-tests the human side, and new
 // tests in this file cover the bot-specific paths.
 
-import type { PlayerState, ServerToClient, Team, Topology, Vec2, Vec3 } from '@cm/shared';
+import type { ItemType, PlayerState, ServerToClient, Team, Topology, Vec2, Vec3 } from '@cm/shared';
 import { topologyDistance, wrapPosition, wrappedUnitDelta } from '@cm/shared/topology';
 import { pathCrossesWall, pointBlockedByWall, type WallSegment } from '@cm/shared/labyrinth';
 import { generateRandomName } from '@cm/shared/names';
@@ -19,49 +19,47 @@ import {
   SPRINT_SPEED,
   WALK_SPEED,
 } from '@cm/shared/movement';
+import {
+  BOT_FLEE_PROJECTION,
+  BOT_INVESTIGATE_MS,
+  BOT_ITEM_SEEK_RADIUS,
+  BOT_JUMP_CORNER_THREAT_RADIUS,
+  BOT_JUMP_EVADE_BUFFER,
+  BOT_JUMP_NOISE_PER_SECOND,
+  BOT_JUMP_REFRACTORY_MS,
+  BOT_NO_PROGRESS_MIN_DIST,
+  BOT_NO_PROGRESS_WINDOW_MS,
+  BOT_PATROL_CANDIDATE_ATTEMPTS,
+  BOT_PATROL_RETARGET_MS,
+  BOT_RECENT_TARGET_RADIUS,
+  BOT_RECENT_TARGETS_KEEP,
+  BOT_SHOOT_AIM_JITTER,
+  BOT_SHOOT_RANGE,
+  BOT_SPRINT_TRIGGER_RADIUS,
+  BOT_VISION_RADIUS,
+  CLONE_DURATION_MS,
+  CLONE_SPAWN_OFFSET,
+  DIR_SMOOTHING,
+  MAX_YAW_RATE,
+  RETARGET_HYSTERESIS,
+  TAG_RADIUS_BOT,
+  UNFREEZE_RADIUS_BOT,
+} from '@cm/shared/botTuning';
 import type { BotPathfinder } from './botPathfinder.ts';
+import { smoothDir, stepWithSlide, turnToward } from './botSteering.ts';
+import { decideBotAction } from './botDecision.ts';
+import { decideItemUse } from './botItems.ts';
+import { nearestEnemy } from './botPerception.ts';
+import { nearestItemTarget, portalEscapeTarget } from './botGoals.ts';
+import { assignRescues } from './botCoordination.ts';
 
 // World half-extent (kept private here; Room owns the canonical constant).
 const WORLD_WIDTH = 80;
 
-// A player is hidden from bot perception while a Cloak power-up is active.
-// Mirrors the client's visual hide so bots can't see or react to a cloaked
-// enemy, matching what the cloaked player's opponents observe on screen.
-function isCloaked(p: PlayerState, now: number): boolean {
-  return p.cloakUntil !== undefined && p.cloakUntil > now;
-}
-
-// Bot AI constants. All bot tuning lives here so a single read explains
-// the AI's behavior.
+// Server-only bot orchestration (slot fill). The behavioral tuning lives in
+// @cm/shared/botTuning so the offline GDScript brain reads the same values.
 const TEAM_TARGET = 4;
 const BOT_FILL_DELAY_MS = 3_000;
-const TAG_RADIUS_BOT = 1.4;
-const UNFREEZE_RADIUS_BOT = 1.4;
-const BOT_VISION_RADIUS = 22;
-const BOT_PATROL_RETARGET_MS = 4_000;
-const BOT_SPRINT_TRIGGER_RADIUS = 10;
-const BOT_NO_PROGRESS_WINDOW_MS = 800;
-const BOT_NO_PROGRESS_MIN_DIST = 0.5;
-const BOT_FLEE_PROJECTION = 12;
-const BOT_INVESTIGATE_MS = 3_000;
-const BOT_RECENT_TARGETS_KEEP = 6;
-const BOT_RECENT_TARGET_RADIUS = 10;
-const BOT_PATROL_CANDIDATE_ATTEMPTS = 8;
-const BOT_JUMP_REFRACTORY_MS = 1500;
-const BOT_JUMP_NOISE_PER_SECOND = 0.05;
-const BOT_JUMP_EVADE_BUFFER = 0.5;
-const BOT_JUMP_CORNER_THREAT_RADIUS = 4.0;
-// Bots fire at a visible enemy within this range during their turn. Inside
-// BOT_VISION_RADIUS but tighter, so shots have a realistic chance to connect
-// before the projectile expires.
-const BOT_SHOOT_RANGE = 18;
-// Random angular spread (radians) added to each bot shot so aim isn't pixel
-// perfect; keeps bots beatable and shots from feeling robotic.
-const BOT_SHOOT_AIM_JITTER = 0.09;
-// Clone power-up: a temporary ally bot lives this long, then despawns.
-const CLONE_DURATION_MS = 30_000;
-// Clone spawns this far from its owner, on the first unobstructed bearing.
-const CLONE_SPAWN_OFFSET = 2.0;
 
 interface BotMind {
   patrolTarget: { x: number; z: number };
@@ -75,6 +73,11 @@ interface BotMind {
   investigateUntil: number;
   recentTargets: Array<{ x: number; z: number }>;
   lastJumpedAt: number;
+  // Fixed per-bot jitter in [0,1) that staggers the deterministic jump
+  // triggers, so two bots in the same situation don't take off on the exact
+  // same tick (the reactive evade / no-progress jumps would otherwise fire
+  // simultaneously across a cluster).
+  jumpPhase: number;
 }
 
 function clamp(v: number, lo: number, hi: number): number {
@@ -117,6 +120,10 @@ export interface BotManagerHost {
   botShoot(attacker: PlayerState, dir: Vec3): boolean;
   // Activate the bot's held power-up (clears the slot, applies the effect).
   useBotItem(player: PlayerState): void;
+  // Floor items currently available to pick up.
+  availableItems(): readonly { type: ItemType; position: Vec3 }[];
+  // Entry/exit mouths of a live portal this player opened, or null.
+  botPortalEntry(playerId: string): { a: Vec3; b: Vec3 } | null;
 }
 
 export class BotManager {
@@ -209,6 +216,7 @@ export class BotManager {
       investigateUntil: 0,
       recentTargets: [],
       lastJumpedAt: 0,
+      jumpPhase: Math.random(),
     };
   }
 
@@ -319,42 +327,17 @@ export class BotManager {
     }
   }
 
-  private avoidCellsForBot(self: PlayerState, preserve: PlayerState | null): Set<number> {
-    const out = new Set<number>();
-    const pathfinder = this.host.getPathfinder();
-    if (!pathfinder) return out;
-    const preserveId = preserve ? preserve.id : null;
+  // Positions of every other player (both teams) for the pathfinder's dynamic
+  // player-repulsion field, so a bot routes around teammates and enemies alike.
+  // No target is excluded here: the pathfinder never penalizes the destination
+  // cell, so a chase / rescue target staying reachable is handled there.
+  private avoidPositionsForBot(self: PlayerState): Vec2[] {
+    const out: Vec2[] = [];
     for (const other of this.host.players.values()) {
       if (other.id === self.id) continue;
-      if (other.id === preserveId) continue;
-      out.add(pathfinder.cellAt(other.position));
+      out.push({ x: other.position.x, z: other.position.z });
     }
     return out;
-  }
-
-  private nearestVisibleEnemy(bot: PlayerState, now: number): PlayerState | null {
-    let best: PlayerState | null = null;
-    let bestDist = Infinity;
-    const topology = this.host.getTopology();
-    for (const other of this.host.players.values()) {
-      if (other.id === bot.id) continue;
-      if (other.team === bot.team) continue;
-      if (other.frozen) continue;
-      if (isCloaked(other, now)) continue;
-      if (!this.botCanSee(bot.position, other.position)) continue;
-      const d = topologyDistance(bot.position, other.position, topology, WORLD_WIDTH);
-      if (d < bestDist) {
-        bestDist = d;
-        best = other;
-      }
-    }
-    return best;
-  }
-
-  private botCanSee(from: Vec2, to: Vec2): boolean {
-    const walls = this.host.getWalls();
-    if (walls.length === 0) return true;
-    return !pathCrossesWall(walls, from.x, from.z, to.x, to.z);
   }
 
   /**
@@ -370,9 +353,14 @@ export class BotManager {
     const topology = this.host.getTopology();
     const walls = this.host.getWalls();
     const pathfinder = this.host.getPathfinder();
-    const DIR_SMOOTHING = 0.5;
-    const MAX_YAW_RATE = 9.0;
-    const RETARGET_HYSTERESIS = 0.75;
+    // One rescue claim per frozen teammate, so bots spread across distinct
+    // allies instead of swarming the nearest one. Computed once per tick.
+    const rescueClaims = assignRescues(
+      this.host.players.values(),
+      topology,
+      WORLD_WIDTH,
+      BOT_VISION_RADIUS,
+    );
 
     for (const bot of this.botPlayers()) {
       if (bot.frozen) continue;
@@ -388,114 +376,64 @@ export class BotManager {
         investigateUntil: 0,
         recentTargets: [],
         lastJumpedAt: 0,
+        jumpPhase: Math.random(),
       };
       this.botMinds.set(bot.id, mind);
 
-      const candidate = this.nearestVisibleEnemy(bot, now);
-      const candidateDist = candidate
-        ? topologyDistance(bot.position, candidate.position, topology, WORLD_WIDTH)
-        : Infinity;
-      let target: PlayerState | null = candidate;
-      let enemyDist = candidateDist;
-      if (mind.engagedTargetId) {
-        const existing = this.host.players.get(mind.engagedTargetId);
-        // A target that activates Cloak vanishes from bot perception entirely:
-        // engagement is dropped (the `else` below), with no investigate-the-
-        // last-known-position reaction a wall occlusion would trigger.
-        if (
-          existing &&
-          !existing.frozen &&
-          existing.team !== bot.team &&
-          !isCloaked(existing, now)
-        ) {
-          const existingVisible = this.botCanSee(bot.position, existing.position);
-          const existingDist = topologyDistance(
-            bot.position,
-            existing.position,
-            topology,
-            WORLD_WIDTH,
-          );
-          if (
-            existingVisible &&
-            existingDist < BOT_VISION_RADIUS &&
-            candidateDist >= existingDist * RETARGET_HYSTERESIS
-          ) {
-            target = existing;
-            enemyDist = existingDist;
-          } else if (!existingVisible && existingDist < BOT_VISION_RADIUS) {
-            if (active === bot.team) {
-              if (!mind.lastKnownPos) {
-                mind.lastKnownPos = { x: existing.position.x, z: existing.position.z };
-                mind.investigateUntil = now + BOT_INVESTIGATE_MS;
-              }
-            } else {
-              mind.engagedTargetId = null;
-              mind.lastKnownPos = null;
-              mind.investigateUntil = 0;
-            }
-          }
-        } else {
-          mind.engagedTargetId = null;
-          mind.lastKnownPos = null;
-          mind.investigateUntil = 0;
-        }
-      }
-      if (target) {
-        mind.engagedTargetId = target.id;
-        mind.lastKnownPos = { x: target.position.x, z: target.position.z };
-        mind.investigateUntil = 0;
-      } else if (mind.investigateUntil > 0 && now >= mind.investigateUntil) {
-        mind.engagedTargetId = null;
-        mind.lastKnownPos = null;
-        mind.investigateUntil = 0;
-      }
-      const investigating =
-        target === null && mind.lastKnownPos !== null && now < mind.investigateUntil;
+      // A held item blocks pickup, so only seek floor items when empty-handed.
+      const collectTarget =
+        bot.activeItem === undefined
+          ? nearestItemTarget(
+              bot.position,
+              this.host.availableItems(),
+              topology,
+              WORLD_WIDTH,
+              BOT_ITEM_SEEK_RADIUS,
+            )
+          : null;
 
-      let rescueTarget: PlayerState | null = null;
-      let rescueDist = Infinity;
-      for (const other of this.host.players.values()) {
-        if (other.id === bot.id) continue;
-        if (other.team !== bot.team) continue;
-        if (!other.frozen) continue;
-        const d = topologyDistance(bot.position, other.position, topology, WORLD_WIDTH);
-        if (d < BOT_VISION_RADIUS && d < rescueDist) {
-          rescueDist = d;
-          rescueTarget = other;
-        }
-      }
-
-      const chasing = target !== null && enemyDist < BOT_VISION_RADIUS && active === bot.team;
-      const fleeing =
-        target !== null && enemyDist < BOT_VISION_RADIUS && active && active !== bot.team;
-      const rescuing = rescueTarget !== null;
-      // Fire only on the bot's own turn, at a visible enemy in range. botShoot
-      // re-validates phase + cooldown, so this is the AI gate, not the rule.
-      const canShoot =
-        chasing &&
-        target !== null &&
-        enemyDist <= BOT_SHOOT_RANGE &&
-        this.botCanSee(bot.position, target.position);
+      const decision = decideBotAction(
+        bot,
+        this.host.players.values(),
+        walls,
+        topology,
+        WORLD_WIDTH,
+        now,
+        active,
+        mind,
+        {
+          visionRadius: BOT_VISION_RADIUS,
+          shootRange: BOT_SHOOT_RANGE,
+          retargetHysteresis: RETARGET_HYSTERESIS,
+          investigateMs: BOT_INVESTIGATE_MS,
+        },
+        collectTarget,
+        rescueClaims.get(bot.id) ?? null,
+      );
+      const { target, enemyDist, rescueTarget, rescueDist, chasing, fleeing, rescuing, canShoot } =
+        decision;
 
       const sinceLastJump = now - mind.lastJumpedAt;
       const jumpEligible = bot.jumpStartedAt === null && sinceLastJump >= BOT_JUMP_REFRACTORY_MS;
       let wantJump = false;
       if (jumpEligible) {
+        // Per-bot jitter so a cluster reacting to the same threat doesn't take
+        // off on one tick: the evade range and the no-progress window each vary
+        // a little per bot (jumpPhase in [0,1)).
+        const evadeBuffer = BOT_JUMP_EVADE_BUFFER * (0.5 + mind.jumpPhase);
+        const noProgressWindow = BOT_NO_PROGRESS_WINDOW_MS * (0.75 + 0.5 * mind.jumpPhase);
         if (
           fleeing &&
           target !== null &&
           !target.frozen &&
           target.jumpStartedAt === null &&
-          enemyDist <= TAG_RADIUS_BOT + BOT_JUMP_EVADE_BUFFER
+          enemyDist <= TAG_RADIUS_BOT + evadeBuffer
         ) {
           wantJump = true;
         }
         if (!wantJump) {
           const noProgressDur = now - mind.progressSampleAt;
-          if (
-            noProgressDur >= BOT_NO_PROGRESS_WINDOW_MS &&
-            enemyDist <= BOT_JUMP_CORNER_THREAT_RADIUS
-          ) {
+          if (noProgressDur >= noProgressWindow && enemyDist <= BOT_JUMP_CORNER_THREAT_RADIUS) {
             wantJump = true;
           }
         }
@@ -506,19 +444,42 @@ export class BotManager {
         }
       }
       // Power-up use is decided before the jump applies so a Leap arms the
-      // very jump this tick. Other effects (surge / overcharge / cloak /
-      // clone / portal) take hold immediately; radar is dumped as dead weight.
-      if (
-        bot.activeItem !== undefined &&
-        this.botShouldUseItem(bot, {
-          chasing,
-          fleeing: fleeing === true,
-          wantJump,
-          canShoot,
-          enemyDist,
-        })
-      ) {
-        this.host.useBotItem(bot);
+      // very jump this tick. Other effects (surge / overcharge / cloak / clone
+      // / portal) take hold immediately; radar, instead of being dumped, is
+      // held until the bot is blind to every actionable enemy and then spent to
+      // seed investigate memory toward the nearest one (applied next tick).
+      if (bot.activeItem !== undefined) {
+        const hasActionableEnemy = target !== null && enemyDist < BOT_VISION_RADIUS;
+        const ping = hasActionableEnemy
+          ? null
+          : (nearestEnemy(bot, this.host.players.values(), topology, WORLD_WIDTH).target
+              ?.position ?? null);
+        const itemDecision = decideItemUse(
+          bot.activeItem,
+          {
+            chasing,
+            fleeing: fleeing === true,
+            wantJump,
+            canShoot,
+            enemyDist,
+            sprintEnergy: bot.sprintEnergy,
+            hasActionableEnemy,
+            nearestEnemyPos: ping ? { x: ping.x, z: ping.z } : null,
+          },
+          {
+            sprintTriggerRadius: BOT_SPRINT_TRIGGER_RADIUS,
+            maxSprint: MAX_SPRINT,
+            tagRadius: TAG_RADIUS_BOT,
+            jumpEvadeBuffer: BOT_JUMP_EVADE_BUFFER,
+          },
+        );
+        if (itemDecision.use) {
+          this.host.useBotItem(bot);
+          if (itemDecision.memorySeed) {
+            mind.lastKnownPos = itemDecision.memorySeed;
+            mind.investigateUntil = now + BOT_INVESTIGATE_MS;
+          }
+        }
       }
 
       if (wantJump) {
@@ -533,60 +494,65 @@ export class BotManager {
       }
 
       let dir = { x: 0, z: 0 };
-      if (fleeing && target) {
+      if (decision.mode === 'flee' && target) {
         const away = wrappedUnitDelta(target.position, bot.position, topology, WORLD_WIDTH);
-        const fleeTarget = wrapPosition(
-          {
-            x: bot.position.x + away.x * BOT_FLEE_PROJECTION,
-            z: bot.position.z + away.z * BOT_FLEE_PROJECTION,
-          },
-          topology,
-          WORLD_WIDTH,
-        );
-        const avoid = this.avoidCellsForBot(bot, null);
+        // If this bot opened a portal, head into its own entry mouth instead of
+        // the open-field flee point - that's the whole reason it spent the item.
+        const portal = this.host.botPortalEntry(bot.id);
+        const portalTarget = portal
+          ? portalEscapeTarget(bot.position, away, portal.a, portal.b, topology, WORLD_WIDTH)
+          : null;
+        const fleeTarget =
+          portalTarget ??
+          wrapPosition(
+            {
+              x: bot.position.x + away.x * BOT_FLEE_PROJECTION,
+              z: bot.position.z + away.z * BOT_FLEE_PROJECTION,
+            },
+            topology,
+            WORLD_WIDTH,
+          );
+        const avoid = this.avoidPositionsForBot(bot);
         const waypoint = pathfinder
           ? pathfinder.nextWaypointAvoiding(bot.position, fleeTarget, avoid)
           : fleeTarget;
         dir = wrappedUnitDelta(bot.position, waypoint, topology, WORLD_WIDTH);
-      } else if (rescuing && rescueTarget) {
-        const avoid = this.avoidCellsForBot(bot, rescueTarget);
+      } else if (decision.mode === 'rescue' && rescueTarget) {
+        const avoid = this.avoidPositionsForBot(bot);
         const waypoint = pathfinder
           ? pathfinder.nextWaypointAvoiding(bot.position, rescueTarget.position, avoid)
           : rescueTarget.position;
         dir = wrappedUnitDelta(bot.position, waypoint, topology, WORLD_WIDTH);
-      } else if (chasing && target) {
-        const avoid = this.avoidCellsForBot(bot, target);
+      } else if (decision.mode === 'chase' && target) {
+        const avoid = this.avoidPositionsForBot(bot);
         const waypoint = pathfinder
           ? pathfinder.nextWaypointAvoiding(bot.position, target.position, avoid)
           : target.position;
         dir = wrappedUnitDelta(bot.position, waypoint, topology, WORLD_WIDTH);
-      } else if (investigating && mind.lastKnownPos) {
-        const avoid = this.avoidCellsForBot(bot, null);
+      } else if (decision.mode === 'investigate' && mind.lastKnownPos) {
+        const avoid = this.avoidPositionsForBot(bot);
         const waypoint = pathfinder
           ? pathfinder.nextWaypointAvoiding(bot.position, mind.lastKnownPos, avoid)
           : mind.lastKnownPos;
+        dir = wrappedUnitDelta(bot.position, waypoint, topology, WORLD_WIDTH);
+      } else if (decision.mode === 'collect' && decision.collectTarget) {
+        const avoid = this.avoidPositionsForBot(bot);
+        const waypoint = pathfinder
+          ? pathfinder.nextWaypointAvoiding(bot.position, decision.collectTarget, avoid)
+          : decision.collectTarget;
         dir = wrappedUnitDelta(bot.position, waypoint, topology, WORLD_WIDTH);
       } else {
         if (now >= mind.patrolUntil || nearTarget(bot.position, mind.patrolTarget)) {
           this.commitPatrolTarget(mind);
           mind.patrolUntil = now + BOT_PATROL_RETARGET_MS;
         }
-        const avoid = this.avoidCellsForBot(bot, null);
+        const avoid = this.avoidPositionsForBot(bot);
         const waypoint = pathfinder
           ? pathfinder.nextWaypointAvoiding(bot.position, mind.patrolTarget, avoid)
           : mind.patrolTarget;
         dir = wrappedUnitDelta(bot.position, waypoint, topology, WORLD_WIDTH);
       }
-      dir = {
-        x: mind.lastDir.x * DIR_SMOOTHING + dir.x * (1 - DIR_SMOOTHING),
-        z: mind.lastDir.z * DIR_SMOOTHING + dir.z * (1 - DIR_SMOOTHING),
-      };
-      const dirLen = Math.hypot(dir.x, dir.z);
-      if (dirLen > 1e-3) {
-        dir = { x: dir.x / dirLen, z: dir.z / dirLen };
-      } else {
-        dir = { x: 0, z: 0 };
-      }
+      dir = smoothDir(mind.lastDir, dir, DIR_SMOOTHING);
       mind.lastDir = dir;
 
       const closeEnemyOrRescue =
@@ -596,52 +562,34 @@ export class BotManager {
       const wantSprint = closeEnemyOrRescue && bot.sprintEnergy > MAX_SPRINT * 0.15;
       const speed = wantSprint ? SPRINT_SPEED : WALK_SPEED;
       const step = speed * dt;
-      const candidates: Array<{ x: number; z: number; chosen: { x: number; z: number } }> = [
-        {
-          x: bot.position.x + dir.x * step,
-          z: bot.position.z + dir.z * step,
-          chosen: dir,
-        },
-        {
-          x: bot.position.x + Math.sign(dir.x) * step,
-          z: bot.position.z,
-          chosen: { x: Math.sign(dir.x), z: 0 },
-        },
-        {
-          x: bot.position.x,
-          z: bot.position.z + Math.sign(dir.z) * step,
-          chosen: { x: 0, z: Math.sign(dir.z) },
-        },
-      ];
-      let moved = false;
-      for (const c of candidates) {
-        if (c.chosen.x === 0 && c.chosen.z === 0) continue;
-        const wallBlocked =
-          walls.length > 0 && pathCrossesWall(walls, bot.position.x, bot.position.z, c.x, c.z);
-        if (wallBlocked) continue;
-        const wrapped = wrapPosition({ x: c.x, z: c.z }, topology, WORLD_WIDTH);
-        bot.position = { x: wrapped.x, y: bot.position.y, z: wrapped.z };
-        moved = true;
-        break;
+      const slid = stepWithSlide(bot.position, dir, step, walls, topology, WORLD_WIDTH);
+      const moved = slid.moved;
+      if (moved) {
+        bot.position = { x: slid.x, y: bot.position.y, z: slid.z };
       }
       if (dir.x !== 0 || dir.z !== 0) {
         const desiredYaw = Math.atan2(-dir.x, -dir.z);
-        let yawDelta = desiredYaw - mind.lastYaw;
-        while (yawDelta > Math.PI) yawDelta -= 2 * Math.PI;
-        while (yawDelta < -Math.PI) yawDelta += 2 * Math.PI;
-        const maxStep = MAX_YAW_RATE * dt;
-        const clamped = Math.max(-maxStep, Math.min(maxStep, yawDelta));
-        mind.lastYaw += clamped;
+        mind.lastYaw = turnToward(mind.lastYaw, desiredYaw, MAX_YAW_RATE, dt);
         bot.yaw = mind.lastYaw;
       } else {
         mind.lastYaw = bot.yaw;
       }
       if (!moved) {
-        if (
+        const embedded =
           walls.length > 0 &&
-          pathCrossesWall(walls, bot.position.x, bot.position.z, bot.position.x, bot.position.z)
-        ) {
-          bot.position = this.host.pickSpawnPosition(bot.team);
+          pathCrossesWall(walls, bot.position.x, bot.position.z, bot.position.x, bot.position.z);
+        if (embedded) {
+          // Recover toward the open center of the bot's own cell rather than
+          // teleporting across the map to spawn (the old band-aid, which
+          // yanked a bot mid-chase to the far side of the arena). Fall back to
+          // spawn only if even the cell center sits inside a wall.
+          const center = pathfinder ? pathfinder.cellCenterOf(bot.position) : null;
+          if (center && !pathCrossesWall(walls, center.x, center.z, center.x, center.z)) {
+            const wrapped = wrapPosition(center, topology, WORLD_WIDTH);
+            bot.position = { x: wrapped.x, y: bot.position.y, z: wrapped.z };
+          } else {
+            bot.position = this.host.pickSpawnPosition(bot.team);
+          }
         }
         this.commitPatrolTarget(mind);
         mind.patrolUntil = now + BOT_PATROL_RETARGET_MS;
@@ -716,47 +664,6 @@ export class BotManager {
         0,
         MAX_SPRINT,
       );
-    }
-  }
-
-  /**
-   * Strategic power-up use, one held item at a time (no stacking). Each type
-   * fires only when its effect helps the bot's current intent; radar is dead
-   * weight for an AI that perceives players directly, so it's dumped to free
-   * the slot for something actionable.
-   */
-  private botShouldUseItem(
-    bot: PlayerState,
-    opts: {
-      chasing: boolean;
-      fleeing: boolean;
-      wantJump: boolean;
-      canShoot: boolean;
-      enemyDist: number;
-    },
-  ): boolean {
-    const { chasing, fleeing, wantJump, canShoot, enemyDist } = opts;
-    switch (bot.activeItem) {
-      case 'radar':
-        return true;
-      case 'leap':
-        return wantJump;
-      case 'surge':
-        return (
-          (chasing || fleeing) &&
-          enemyDist < BOT_SPRINT_TRIGGER_RADIUS &&
-          bot.sprintEnergy < MAX_SPRINT * 0.5
-        );
-      case 'overcharge':
-        return canShoot;
-      case 'cloak':
-        return fleeing && enemyDist <= BOT_SPRINT_TRIGGER_RADIUS;
-      case 'clone':
-        return chasing || fleeing;
-      case 'portal':
-        return fleeing && enemyDist <= TAG_RADIUS_BOT + BOT_JUMP_EVADE_BUFFER * 2;
-      default:
-        return false;
     }
   }
 

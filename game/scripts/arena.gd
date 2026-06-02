@@ -334,7 +334,7 @@ func _process(delta: float) -> void:
 		if portal_renderer != null:
 			portal_renderer.tick(delta)
 	else:
-		offline.drive_hud()
+		offline.drive_hud(delta)
 
 func _physics_process(delta: float) -> void:
 	if local_player == null or topology == null:

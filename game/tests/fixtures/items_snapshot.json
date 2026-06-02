@@ -1,0 +1,2375 @@
+{
+  "schemaVersion": 1,
+  "scenarios": [
+    {
+      "name": "plane_seed_0",
+      "seed": 0,
+      "topology": "plane",
+      "rotation": ["surge", "radar", "cloak", "leap"],
+      "items": [
+        {
+          "id": "i-1",
+          "type": "cloak",
+          "position": {
+            "x": -28,
+            "y": 0,
+            "z": -36
+          }
+        },
+        {
+          "id": "i-9",
+          "type": "radar",
+          "position": {
+            "x": 36,
+            "y": 0,
+            "z": -36
+          }
+        },
+        {
+          "id": "i-14",
+          "type": "leap",
+          "position": {
+            "x": -4,
+            "y": 0,
+            "z": -28
+          }
+        },
+        {
+          "id": "i-15",
+          "type": "radar",
+          "position": {
+            "x": 4,
+            "y": 0,
+            "z": -28
+          }
+        },
+        {
+          "id": "i-17",
+          "type": "cloak",
+          "position": {
+            "x": 20,
+            "y": 0,
+            "z": -28
+          }
+        },
+        {
+          "id": "i-21",
+          "type": "radar",
+          "position": {
+            "x": -28,
+            "y": 0,
+            "z": -20
+          }
+        },
+        {
+          "id": "i-23",
+          "type": "cloak",
+          "position": {
+            "x": -12,
+            "y": 0,
+            "z": -20
+          }
+        },
+        {
+          "id": "i-25",
+          "type": "leap",
+          "position": {
+            "x": 4,
+            "y": 0,
+            "z": -20
+          }
+        },
+        {
+          "id": "i-28",
+          "type": "leap",
+          "position": {
+            "x": 28,
+            "y": 0,
+            "z": -20
+          }
+        },
+        {
+          "id": "i-30",
+          "type": "surge",
+          "position": {
+            "x": -36,
+            "y": 0,
+            "z": -12
+          }
+        },
+        {
+          "id": "i-33",
+          "type": "surge",
+          "position": {
+            "x": -12,
+            "y": 0,
+            "z": -12
+          }
+        },
+        {
+          "id": "i-38",
+          "type": "cloak",
+          "position": {
+            "x": 28,
+            "y": 0,
+            "z": -12
+          }
+        },
+        {
+          "id": "i-41",
+          "type": "cloak",
+          "position": {
+            "x": -28,
+            "y": 0,
+            "z": -4
+          }
+        },
+        {
+          "id": "i-44",
+          "type": "cloak",
+          "position": {
+            "x": -4,
+            "y": 0,
+            "z": -4
+          }
+        },
+        {
+          "id": "i-45",
+          "type": "surge",
+          "position": {
+            "x": 4,
+            "y": 0,
+            "z": -4
+          }
+        },
+        {
+          "id": "i-49",
+          "type": "leap",
+          "position": {
+            "x": 36,
+            "y": 0,
+            "z": -4
+          }
+        },
+        {
+          "id": "i-50",
+          "type": "radar",
+          "position": {
+            "x": -36,
+            "y": 0,
+            "z": 4
+          }
+        },
+        {
+          "id": "i-66",
+          "type": "leap",
+          "position": {
+            "x": 12,
+            "y": 0,
+            "z": 12
+          }
+        },
+        {
+          "id": "i-68",
+          "type": "surge",
+          "position": {
+            "x": 28,
+            "y": 0,
+            "z": 12
+          }
+        },
+        {
+          "id": "i-71",
+          "type": "surge",
+          "position": {
+            "x": -28,
+            "y": 0,
+            "z": 20
+          }
+        },
+        {
+          "id": "i-73",
+          "type": "radar",
+          "position": {
+            "x": -12,
+            "y": 0,
+            "z": 20
+          }
+        },
+        {
+          "id": "i-74",
+          "type": "leap",
+          "position": {
+            "x": -4,
+            "y": 0,
+            "z": 20
+          }
+        },
+        {
+          "id": "i-77",
+          "type": "leap",
+          "position": {
+            "x": 20,
+            "y": 0,
+            "z": 20
+          }
+        },
+        {
+          "id": "i-78",
+          "type": "radar",
+          "position": {
+            "x": 28,
+            "y": 0,
+            "z": 20
+          }
+        },
+        {
+          "id": "i-79",
+          "type": "leap",
+          "position": {
+            "x": 36,
+            "y": 0,
+            "z": 20
+          }
+        },
+        {
+          "id": "i-80",
+          "type": "radar",
+          "position": {
+            "x": -36,
+            "y": 0,
+            "z": 28
+          }
+        },
+        {
+          "id": "i-83",
+          "type": "radar",
+          "position": {
+            "x": -12,
+            "y": 0,
+            "z": 28
+          }
+        },
+        {
+          "id": "i-86",
+          "type": "radar",
+          "position": {
+            "x": 12,
+            "y": 0,
+            "z": 28
+          }
+        },
+        {
+          "id": "i-91",
+          "type": "leap",
+          "position": {
+            "x": -28,
+            "y": 0,
+            "z": 36
+          }
+        },
+        {
+          "id": "i-92",
+          "type": "radar",
+          "position": {
+            "x": -20,
+            "y": 0,
+            "z": 36
+          }
+        },
+        {
+          "id": "i-95",
+          "type": "radar",
+          "position": {
+            "x": 4,
+            "y": 0,
+            "z": 36
+          }
+        },
+        {
+          "id": "i-97",
+          "type": "cloak",
+          "position": {
+            "x": 20,
+            "y": 0,
+            "z": 36
+          }
+        },
+        {
+          "id": "i-98",
+          "type": "surge",
+          "position": {
+            "x": 28,
+            "y": 0,
+            "z": 36
+          }
+        },
+        {
+          "id": "i-99",
+          "type": "cloak",
+          "position": {
+            "x": 36,
+            "y": 0,
+            "z": 36
+          }
+        }
+      ]
+    },
+    {
+      "name": "plane_seed_1",
+      "seed": 1,
+      "topology": "plane",
+      "rotation": ["surge", "radar", "leap", "portal"],
+      "items": [
+        {
+          "id": "i-3",
+          "type": "portal",
+          "position": {
+            "x": -12,
+            "y": 0,
+            "z": -36
+          }
+        },
+        {
+          "id": "i-5",
+          "type": "surge",
+          "position": {
+            "x": 4,
+            "y": 0,
+            "z": -36
+          }
+        },
+        {
+          "id": "i-8",
+          "type": "surge",
+          "position": {
+            "x": 28,
+            "y": 0,
+            "z": -36
+          }
+        },
+        {
+          "id": "i-9",
+          "type": "leap",
+          "position": {
+            "x": 36,
+            "y": 0,
+            "z": -36
+          }
+        },
+        {
+          "id": "i-12",
+          "type": "leap",
+          "position": {
+            "x": -20,
+            "y": 0,
+            "z": -28
+          }
+        },
+        {
+          "id": "i-14",
+          "type": "portal",
+          "position": {
+            "x": -4,
+            "y": 0,
+            "z": -28
+          }
+        },
+        {
+          "id": "i-17",
+          "type": "portal",
+          "position": {
+            "x": 20,
+            "y": 0,
+            "z": -28
+          }
+        },
+        {
+          "id": "i-18",
+          "type": "radar",
+          "position": {
+            "x": 28,
+            "y": 0,
+            "z": -28
+          }
+        },
+        {
+          "id": "i-19",
+          "type": "portal",
+          "position": {
+            "x": 36,
+            "y": 0,
+            "z": -28
+          }
+        },
+        {
+          "id": "i-20",
+          "type": "radar",
+          "position": {
+            "x": -36,
+            "y": 0,
+            "z": -20
+          }
+        },
+        {
+          "id": "i-22",
+          "type": "leap",
+          "position": {
+            "x": -20,
+            "y": 0,
+            "z": -20
+          }
+        },
+        {
+          "id": "i-25",
+          "type": "leap",
+          "position": {
+            "x": 4,
+            "y": 0,
+            "z": -20
+          }
+        },
+        {
+          "id": "i-26",
+          "type": "surge",
+          "position": {
+            "x": 12,
+            "y": 0,
+            "z": -20
+          }
+        },
+        {
+          "id": "i-30",
+          "type": "portal",
+          "position": {
+            "x": -36,
+            "y": 0,
+            "z": -12
+          }
+        },
+        {
+          "id": "i-34",
+          "type": "leap",
+          "position": {
+            "x": -4,
+            "y": 0,
+            "z": -12
+          }
+        },
+        {
+          "id": "i-42",
+          "type": "radar",
+          "position": {
+            "x": -20,
+            "y": 0,
+            "z": -4
+          }
+        },
+        {
+          "id": "i-48",
+          "type": "leap",
+          "position": {
+            "x": 28,
+            "y": 0,
+            "z": -4
+          }
+        },
+        {
+          "id": "i-49",
+          "type": "surge",
+          "position": {
+            "x": 36,
+            "y": 0,
+            "z": -4
+          }
+        },
+        {
+          "id": "i-52",
+          "type": "surge",
+          "position": {
+            "x": -20,
+            "y": 0,
+            "z": 4
+          }
+        },
+        {
+          "id": "i-54",
+          "type": "leap",
+          "position": {
+            "x": -4,
+            "y": 0,
+            "z": 4
+          }
+        },
+        {
+          "id": "i-58",
+          "type": "portal",
+          "position": {
+            "x": 28,
+            "y": 0,
+            "z": 4
+          }
+        },
+        {
+          "id": "i-62",
+          "type": "leap",
+          "position": {
+            "x": -20,
+            "y": 0,
+            "z": 12
+          }
+        },
+        {
+          "id": "i-63",
+          "type": "surge",
+          "position": {
+            "x": -12,
+            "y": 0,
+            "z": 12
+          }
+        },
+        {
+          "id": "i-67",
+          "type": "portal",
+          "position": {
+            "x": 20,
+            "y": 0,
+            "z": 12
+          }
+        },
+        {
+          "id": "i-72",
+          "type": "radar",
+          "position": {
+            "x": -20,
+            "y": 0,
+            "z": 20
+          }
+        },
+        {
+          "id": "i-76",
+          "type": "surge",
+          "position": {
+            "x": 12,
+            "y": 0,
+            "z": 20
+          }
+        },
+        {
+          "id": "i-77",
+          "type": "leap",
+          "position": {
+            "x": 20,
+            "y": 0,
+            "z": 20
+          }
+        },
+        {
+          "id": "i-79",
+          "type": "portal",
+          "position": {
+            "x": 36,
+            "y": 0,
+            "z": 20
+          }
+        },
+        {
+          "id": "i-80",
+          "type": "radar",
+          "position": {
+            "x": -36,
+            "y": 0,
+            "z": 28
+          }
+        },
+        {
+          "id": "i-84",
+          "type": "surge",
+          "position": {
+            "x": -4,
+            "y": 0,
+            "z": 28
+          }
+        },
+        {
+          "id": "i-90",
+          "type": "radar",
+          "position": {
+            "x": -36,
+            "y": 0,
+            "z": 36
+          }
+        },
+        {
+          "id": "i-91",
+          "type": "portal",
+          "position": {
+            "x": -28,
+            "y": 0,
+            "z": 36
+          }
+        },
+        {
+          "id": "i-95",
+          "type": "leap",
+          "position": {
+            "x": 4,
+            "y": 0,
+            "z": 36
+          }
+        },
+        {
+          "id": "i-97",
+          "type": "portal",
+          "position": {
+            "x": 20,
+            "y": 0,
+            "z": 36
+          }
+        },
+        {
+          "id": "i-99",
+          "type": "surge",
+          "position": {
+            "x": 36,
+            "y": 0,
+            "z": 36
+          }
+        }
+      ]
+    },
+    {
+      "name": "plane_seed_12345",
+      "seed": 12345,
+      "topology": "plane",
+      "rotation": ["surge", "radar", "leap"],
+      "items": [
+        {
+          "id": "i-0",
+          "type": "surge",
+          "position": {
+            "x": -36,
+            "y": 0,
+            "z": -36
+          }
+        },
+        {
+          "id": "i-2",
+          "type": "leap",
+          "position": {
+            "x": -20,
+            "y": 0,
+            "z": -36
+          }
+        },
+        {
+          "id": "i-4",
+          "type": "radar",
+          "position": {
+            "x": -4,
+            "y": 0,
+            "z": -36
+          }
+        },
+        {
+          "id": "i-13",
+          "type": "radar",
+          "position": {
+            "x": -12,
+            "y": 0,
+            "z": -28
+          }
+        },
+        {
+          "id": "i-17",
+          "type": "surge",
+          "position": {
+            "x": 20,
+            "y": 0,
+            "z": -28
+          }
+        },
+        {
+          "id": "i-19",
+          "type": "radar",
+          "position": {
+            "x": 36,
+            "y": 0,
+            "z": -28
+          }
+        },
+        {
+          "id": "i-20",
+          "type": "leap",
+          "position": {
+            "x": -36,
+            "y": 0,
+            "z": -20
+          }
+        },
+        {
+          "id": "i-21",
+          "type": "radar",
+          "position": {
+            "x": -28,
+            "y": 0,
+            "z": -20
+          }
+        },
+        {
+          "id": "i-24",
+          "type": "leap",
+          "position": {
+            "x": -4,
+            "y": 0,
+            "z": -20
+          }
+        },
+        {
+          "id": "i-30",
+          "type": "radar",
+          "position": {
+            "x": -36,
+            "y": 0,
+            "z": -12
+          }
+        },
+        {
+          "id": "i-39",
+          "type": "leap",
+          "position": {
+            "x": 36,
+            "y": 0,
+            "z": -12
+          }
+        },
+        {
+          "id": "i-41",
+          "type": "radar",
+          "position": {
+            "x": -28,
+            "y": 0,
+            "z": -4
+          }
+        },
+        {
+          "id": "i-42",
+          "type": "radar",
+          "position": {
+            "x": -20,
+            "y": 0,
+            "z": -4
+          }
+        },
+        {
+          "id": "i-45",
+          "type": "leap",
+          "position": {
+            "x": 4,
+            "y": 0,
+            "z": -4
+          }
+        },
+        {
+          "id": "i-54",
+          "type": "radar",
+          "position": {
+            "x": -4,
+            "y": 0,
+            "z": 4
+          }
+        },
+        {
+          "id": "i-57",
+          "type": "radar",
+          "position": {
+            "x": 20,
+            "y": 0,
+            "z": 4
+          }
+        },
+        {
+          "id": "i-59",
+          "type": "leap",
+          "position": {
+            "x": 36,
+            "y": 0,
+            "z": 4
+          }
+        },
+        {
+          "id": "i-62",
+          "type": "surge",
+          "position": {
+            "x": -20,
+            "y": 0,
+            "z": 12
+          }
+        },
+        {
+          "id": "i-65",
+          "type": "surge",
+          "position": {
+            "x": 4,
+            "y": 0,
+            "z": 12
+          }
+        },
+        {
+          "id": "i-67",
+          "type": "surge",
+          "position": {
+            "x": 20,
+            "y": 0,
+            "z": 12
+          }
+        },
+        {
+          "id": "i-71",
+          "type": "leap",
+          "position": {
+            "x": -28,
+            "y": 0,
+            "z": 20
+          }
+        },
+        {
+          "id": "i-74",
+          "type": "surge",
+          "position": {
+            "x": -4,
+            "y": 0,
+            "z": 20
+          }
+        },
+        {
+          "id": "i-81",
+          "type": "leap",
+          "position": {
+            "x": -28,
+            "y": 0,
+            "z": 28
+          }
+        },
+        {
+          "id": "i-84",
+          "type": "surge",
+          "position": {
+            "x": -4,
+            "y": 0,
+            "z": 28
+          }
+        },
+        {
+          "id": "i-89",
+          "type": "radar",
+          "position": {
+            "x": 36,
+            "y": 0,
+            "z": 28
+          }
+        },
+        {
+          "id": "i-91",
+          "type": "surge",
+          "position": {
+            "x": -28,
+            "y": 0,
+            "z": 36
+          }
+        },
+        {
+          "id": "i-92",
+          "type": "radar",
+          "position": {
+            "x": -20,
+            "y": 0,
+            "z": 36
+          }
+        },
+        {
+          "id": "i-94",
+          "type": "leap",
+          "position": {
+            "x": -4,
+            "y": 0,
+            "z": 36
+          }
+        },
+        {
+          "id": "i-97",
+          "type": "radar",
+          "position": {
+            "x": 20,
+            "y": 0,
+            "z": 36
+          }
+        },
+        {
+          "id": "i-99",
+          "type": "surge",
+          "position": {
+            "x": 36,
+            "y": 0,
+            "z": 36
+          }
+        }
+      ]
+    },
+    {
+      "name": "torus_seed_42",
+      "seed": 42,
+      "topology": "torus",
+      "rotation": ["surge", "radar", "portal"],
+      "items": [
+        {
+          "id": "i-0",
+          "type": "radar",
+          "position": {
+            "x": -36,
+            "y": 0,
+            "z": -36
+          }
+        },
+        {
+          "id": "i-2",
+          "type": "surge",
+          "position": {
+            "x": -20,
+            "y": 0,
+            "z": -36
+          }
+        },
+        {
+          "id": "i-3",
+          "type": "surge",
+          "position": {
+            "x": -12,
+            "y": 0,
+            "z": -36
+          }
+        },
+        {
+          "id": "i-6",
+          "type": "radar",
+          "position": {
+            "x": 12,
+            "y": 0,
+            "z": -36
+          }
+        },
+        {
+          "id": "i-7",
+          "type": "surge",
+          "position": {
+            "x": 20,
+            "y": 0,
+            "z": -36
+          }
+        },
+        {
+          "id": "i-9",
+          "type": "portal",
+          "position": {
+            "x": 36,
+            "y": 0,
+            "z": -36
+          }
+        },
+        {
+          "id": "i-14",
+          "type": "portal",
+          "position": {
+            "x": -4,
+            "y": 0,
+            "z": -28
+          }
+        },
+        {
+          "id": "i-15",
+          "type": "radar",
+          "position": {
+            "x": 4,
+            "y": 0,
+            "z": -28
+          }
+        },
+        {
+          "id": "i-19",
+          "type": "radar",
+          "position": {
+            "x": 36,
+            "y": 0,
+            "z": -28
+          }
+        },
+        {
+          "id": "i-22",
+          "type": "portal",
+          "position": {
+            "x": -20,
+            "y": 0,
+            "z": -20
+          }
+        },
+        {
+          "id": "i-24",
+          "type": "portal",
+          "position": {
+            "x": -4,
+            "y": 0,
+            "z": -20
+          }
+        },
+        {
+          "id": "i-29",
+          "type": "surge",
+          "position": {
+            "x": 36,
+            "y": 0,
+            "z": -20
+          }
+        },
+        {
+          "id": "i-32",
+          "type": "radar",
+          "position": {
+            "x": -20,
+            "y": 0,
+            "z": -12
+          }
+        },
+        {
+          "id": "i-34",
+          "type": "surge",
+          "position": {
+            "x": -4,
+            "y": 0,
+            "z": -12
+          }
+        },
+        {
+          "id": "i-35",
+          "type": "portal",
+          "position": {
+            "x": 4,
+            "y": 0,
+            "z": -12
+          }
+        },
+        {
+          "id": "i-46",
+          "type": "surge",
+          "position": {
+            "x": 12,
+            "y": 0,
+            "z": -4
+          }
+        },
+        {
+          "id": "i-48",
+          "type": "radar",
+          "position": {
+            "x": 28,
+            "y": 0,
+            "z": -4
+          }
+        },
+        {
+          "id": "i-52",
+          "type": "radar",
+          "position": {
+            "x": -20,
+            "y": 0,
+            "z": 4
+          }
+        },
+        {
+          "id": "i-57",
+          "type": "surge",
+          "position": {
+            "x": 20,
+            "y": 0,
+            "z": 4
+          }
+        },
+        {
+          "id": "i-58",
+          "type": "portal",
+          "position": {
+            "x": 28,
+            "y": 0,
+            "z": 4
+          }
+        },
+        {
+          "id": "i-60",
+          "type": "portal",
+          "position": {
+            "x": -36,
+            "y": 0,
+            "z": 12
+          }
+        },
+        {
+          "id": "i-61",
+          "type": "surge",
+          "position": {
+            "x": -28,
+            "y": 0,
+            "z": 12
+          }
+        },
+        {
+          "id": "i-64",
+          "type": "portal",
+          "position": {
+            "x": -4,
+            "y": 0,
+            "z": 12
+          }
+        },
+        {
+          "id": "i-65",
+          "type": "surge",
+          "position": {
+            "x": 4,
+            "y": 0,
+            "z": 12
+          }
+        },
+        {
+          "id": "i-69",
+          "type": "portal",
+          "position": {
+            "x": 36,
+            "y": 0,
+            "z": 12
+          }
+        },
+        {
+          "id": "i-72",
+          "type": "radar",
+          "position": {
+            "x": -20,
+            "y": 0,
+            "z": 20
+          }
+        },
+        {
+          "id": "i-73",
+          "type": "portal",
+          "position": {
+            "x": -12,
+            "y": 0,
+            "z": 20
+          }
+        },
+        {
+          "id": "i-80",
+          "type": "portal",
+          "position": {
+            "x": -36,
+            "y": 0,
+            "z": 28
+          }
+        },
+        {
+          "id": "i-89",
+          "type": "surge",
+          "position": {
+            "x": 36,
+            "y": 0,
+            "z": 28
+          }
+        },
+        {
+          "id": "i-91",
+          "type": "surge",
+          "position": {
+            "x": -28,
+            "y": 0,
+            "z": 36
+          }
+        },
+        {
+          "id": "i-98",
+          "type": "portal",
+          "position": {
+            "x": 28,
+            "y": 0,
+            "z": 36
+          }
+        }
+      ]
+    },
+    {
+      "name": "klein_seed_7",
+      "seed": 7,
+      "topology": "klein",
+      "rotation": ["surge", "radar", "leap"],
+      "items": [
+        {
+          "id": "i-3",
+          "type": "leap",
+          "position": {
+            "x": -52,
+            "y": 0,
+            "z": -36
+          }
+        },
+        {
+          "id": "i-4",
+          "type": "radar",
+          "position": {
+            "x": -44,
+            "y": 0,
+            "z": -36
+          }
+        },
+        {
+          "id": "i-7",
+          "type": "surge",
+          "position": {
+            "x": -20,
+            "y": 0,
+            "z": -36
+          }
+        },
+        {
+          "id": "i-9",
+          "type": "surge",
+          "position": {
+            "x": -4,
+            "y": 0,
+            "z": -36
+          }
+        },
+        {
+          "id": "i-11",
+          "type": "leap",
+          "position": {
+            "x": 12,
+            "y": 0,
+            "z": -36
+          }
+        },
+        {
+          "id": "i-12",
+          "type": "leap",
+          "position": {
+            "x": 20,
+            "y": 0,
+            "z": -36
+          }
+        },
+        {
+          "id": "i-16",
+          "type": "leap",
+          "position": {
+            "x": 52,
+            "y": 0,
+            "z": -36
+          }
+        },
+        {
+          "id": "i-18",
+          "type": "leap",
+          "position": {
+            "x": 68,
+            "y": 0,
+            "z": -36
+          }
+        },
+        {
+          "id": "i-24",
+          "type": "leap",
+          "position": {
+            "x": -44,
+            "y": 0,
+            "z": -28
+          }
+        },
+        {
+          "id": "i-26",
+          "type": "radar",
+          "position": {
+            "x": -28,
+            "y": 0,
+            "z": -28
+          }
+        },
+        {
+          "id": "i-29",
+          "type": "radar",
+          "position": {
+            "x": -4,
+            "y": 0,
+            "z": -28
+          }
+        },
+        {
+          "id": "i-39",
+          "type": "surge",
+          "position": {
+            "x": 76,
+            "y": 0,
+            "z": -28
+          }
+        },
+        {
+          "id": "i-41",
+          "type": "leap",
+          "position": {
+            "x": -68,
+            "y": 0,
+            "z": -20
+          }
+        },
+        {
+          "id": "i-42",
+          "type": "radar",
+          "position": {
+            "x": -60,
+            "y": 0,
+            "z": -20
+          }
+        },
+        {
+          "id": "i-43",
+          "type": "radar",
+          "position": {
+            "x": -52,
+            "y": 0,
+            "z": -20
+          }
+        },
+        {
+          "id": "i-48",
+          "type": "radar",
+          "position": {
+            "x": -12,
+            "y": 0,
+            "z": -20
+          }
+        },
+        {
+          "id": "i-51",
+          "type": "surge",
+          "position": {
+            "x": 12,
+            "y": 0,
+            "z": -20
+          }
+        },
+        {
+          "id": "i-52",
+          "type": "leap",
+          "position": {
+            "x": 20,
+            "y": 0,
+            "z": -20
+          }
+        },
+        {
+          "id": "i-55",
+          "type": "surge",
+          "position": {
+            "x": 44,
+            "y": 0,
+            "z": -20
+          }
+        },
+        {
+          "id": "i-56",
+          "type": "surge",
+          "position": {
+            "x": 52,
+            "y": 0,
+            "z": -20
+          }
+        },
+        {
+          "id": "i-57",
+          "type": "leap",
+          "position": {
+            "x": 60,
+            "y": 0,
+            "z": -20
+          }
+        },
+        {
+          "id": "i-62",
+          "type": "surge",
+          "position": {
+            "x": -60,
+            "y": 0,
+            "z": -12
+          }
+        },
+        {
+          "id": "i-64",
+          "type": "leap",
+          "position": {
+            "x": -44,
+            "y": 0,
+            "z": -12
+          }
+        },
+        {
+          "id": "i-65",
+          "type": "surge",
+          "position": {
+            "x": -36,
+            "y": 0,
+            "z": -12
+          }
+        },
+        {
+          "id": "i-75",
+          "type": "radar",
+          "position": {
+            "x": 44,
+            "y": 0,
+            "z": -12
+          }
+        },
+        {
+          "id": "i-76",
+          "type": "radar",
+          "position": {
+            "x": 52,
+            "y": 0,
+            "z": -12
+          }
+        },
+        {
+          "id": "i-81",
+          "type": "leap",
+          "position": {
+            "x": -68,
+            "y": 0,
+            "z": -4
+          }
+        },
+        {
+          "id": "i-83",
+          "type": "surge",
+          "position": {
+            "x": -52,
+            "y": 0,
+            "z": -4
+          }
+        },
+        {
+          "id": "i-90",
+          "type": "radar",
+          "position": {
+            "x": 4,
+            "y": 0,
+            "z": -4
+          }
+        },
+        {
+          "id": "i-92",
+          "type": "leap",
+          "position": {
+            "x": 20,
+            "y": 0,
+            "z": -4
+          }
+        },
+        {
+          "id": "i-96",
+          "type": "surge",
+          "position": {
+            "x": 52,
+            "y": 0,
+            "z": -4
+          }
+        },
+        {
+          "id": "i-104",
+          "type": "leap",
+          "position": {
+            "x": -44,
+            "y": 0,
+            "z": 4
+          }
+        },
+        {
+          "id": "i-106",
+          "type": "leap",
+          "position": {
+            "x": -28,
+            "y": 0,
+            "z": 4
+          }
+        },
+        {
+          "id": "i-109",
+          "type": "leap",
+          "position": {
+            "x": -4,
+            "y": 0,
+            "z": 4
+          }
+        },
+        {
+          "id": "i-123",
+          "type": "surge",
+          "position": {
+            "x": -52,
+            "y": 0,
+            "z": 12
+          }
+        },
+        {
+          "id": "i-124",
+          "type": "leap",
+          "position": {
+            "x": -44,
+            "y": 0,
+            "z": 12
+          }
+        },
+        {
+          "id": "i-126",
+          "type": "leap",
+          "position": {
+            "x": -28,
+            "y": 0,
+            "z": 12
+          }
+        },
+        {
+          "id": "i-127",
+          "type": "leap",
+          "position": {
+            "x": -20,
+            "y": 0,
+            "z": 12
+          }
+        },
+        {
+          "id": "i-128",
+          "type": "surge",
+          "position": {
+            "x": -12,
+            "y": 0,
+            "z": 12
+          }
+        },
+        {
+          "id": "i-129",
+          "type": "leap",
+          "position": {
+            "x": -4,
+            "y": 0,
+            "z": 12
+          }
+        },
+        {
+          "id": "i-132",
+          "type": "surge",
+          "position": {
+            "x": 20,
+            "y": 0,
+            "z": 12
+          }
+        },
+        {
+          "id": "i-134",
+          "type": "leap",
+          "position": {
+            "x": 36,
+            "y": 0,
+            "z": 12
+          }
+        },
+        {
+          "id": "i-138",
+          "type": "surge",
+          "position": {
+            "x": 68,
+            "y": 0,
+            "z": 12
+          }
+        },
+        {
+          "id": "i-140",
+          "type": "leap",
+          "position": {
+            "x": -76,
+            "y": 0,
+            "z": 20
+          }
+        },
+        {
+          "id": "i-144",
+          "type": "surge",
+          "position": {
+            "x": -44,
+            "y": 0,
+            "z": 20
+          }
+        },
+        {
+          "id": "i-148",
+          "type": "surge",
+          "position": {
+            "x": -12,
+            "y": 0,
+            "z": 20
+          }
+        },
+        {
+          "id": "i-150",
+          "type": "surge",
+          "position": {
+            "x": 4,
+            "y": 0,
+            "z": 20
+          }
+        },
+        {
+          "id": "i-158",
+          "type": "radar",
+          "position": {
+            "x": 68,
+            "y": 0,
+            "z": 20
+          }
+        },
+        {
+          "id": "i-163",
+          "type": "leap",
+          "position": {
+            "x": -52,
+            "y": 0,
+            "z": 28
+          }
+        },
+        {
+          "id": "i-165",
+          "type": "radar",
+          "position": {
+            "x": -36,
+            "y": 0,
+            "z": 28
+          }
+        },
+        {
+          "id": "i-167",
+          "type": "leap",
+          "position": {
+            "x": -20,
+            "y": 0,
+            "z": 28
+          }
+        },
+        {
+          "id": "i-168",
+          "type": "surge",
+          "position": {
+            "x": -12,
+            "y": 0,
+            "z": 28
+          }
+        },
+        {
+          "id": "i-169",
+          "type": "radar",
+          "position": {
+            "x": -4,
+            "y": 0,
+            "z": 28
+          }
+        },
+        {
+          "id": "i-172",
+          "type": "surge",
+          "position": {
+            "x": 20,
+            "y": 0,
+            "z": 28
+          }
+        },
+        {
+          "id": "i-181",
+          "type": "leap",
+          "position": {
+            "x": -68,
+            "y": 0,
+            "z": 36
+          }
+        },
+        {
+          "id": "i-182",
+          "type": "radar",
+          "position": {
+            "x": -60,
+            "y": 0,
+            "z": 36
+          }
+        },
+        {
+          "id": "i-187",
+          "type": "surge",
+          "position": {
+            "x": -20,
+            "y": 0,
+            "z": 36
+          }
+        },
+        {
+          "id": "i-191",
+          "type": "radar",
+          "position": {
+            "x": 12,
+            "y": 0,
+            "z": 36
+          }
+        },
+        {
+          "id": "i-196",
+          "type": "leap",
+          "position": {
+            "x": 52,
+            "y": 0,
+            "z": 36
+          }
+        },
+        {
+          "id": "i-197",
+          "type": "surge",
+          "position": {
+            "x": 60,
+            "y": 0,
+            "z": 36
+          }
+        }
+      ]
+    },
+    {
+      "name": "mobius_seed_3",
+      "seed": 3,
+      "topology": "mobius",
+      "rotation": ["surge", "radar", "leap", "cloak", "clone"],
+      "items": [
+        {
+          "id": "i-0",
+          "type": "cloak",
+          "position": {
+            "x": -76,
+            "y": 0,
+            "z": -18
+          }
+        },
+        {
+          "id": "i-13",
+          "type": "cloak",
+          "position": {
+            "x": 28,
+            "y": 0,
+            "z": -18
+          }
+        },
+        {
+          "id": "i-17",
+          "type": "cloak",
+          "position": {
+            "x": 60,
+            "y": 0,
+            "z": -18
+          }
+        },
+        {
+          "id": "i-21",
+          "type": "leap",
+          "position": {
+            "x": -68,
+            "y": 0,
+            "z": -14
+          }
+        },
+        {
+          "id": "i-22",
+          "type": "cloak",
+          "position": {
+            "x": -60,
+            "y": 0,
+            "z": -14
+          }
+        },
+        {
+          "id": "i-23",
+          "type": "clone",
+          "position": {
+            "x": -52,
+            "y": 0,
+            "z": -14
+          }
+        },
+        {
+          "id": "i-24",
+          "type": "radar",
+          "position": {
+            "x": -44,
+            "y": 0,
+            "z": -14
+          }
+        },
+        {
+          "id": "i-25",
+          "type": "radar",
+          "position": {
+            "x": -36,
+            "y": 0,
+            "z": -14
+          }
+        },
+        {
+          "id": "i-28",
+          "type": "surge",
+          "position": {
+            "x": -12,
+            "y": 0,
+            "z": -14
+          }
+        },
+        {
+          "id": "i-39",
+          "type": "cloak",
+          "position": {
+            "x": 76,
+            "y": 0,
+            "z": -14
+          }
+        },
+        {
+          "id": "i-40",
+          "type": "clone",
+          "position": {
+            "x": -76,
+            "y": 0,
+            "z": -10
+          }
+        },
+        {
+          "id": "i-41",
+          "type": "clone",
+          "position": {
+            "x": -68,
+            "y": 0,
+            "z": -10
+          }
+        },
+        {
+          "id": "i-42",
+          "type": "surge",
+          "position": {
+            "x": -60,
+            "y": 0,
+            "z": -10
+          }
+        },
+        {
+          "id": "i-43",
+          "type": "leap",
+          "position": {
+            "x": -52,
+            "y": 0,
+            "z": -10
+          }
+        },
+        {
+          "id": "i-45",
+          "type": "surge",
+          "position": {
+            "x": -36,
+            "y": 0,
+            "z": -10
+          }
+        },
+        {
+          "id": "i-47",
+          "type": "surge",
+          "position": {
+            "x": -20,
+            "y": 0,
+            "z": -10
+          }
+        },
+        {
+          "id": "i-49",
+          "type": "radar",
+          "position": {
+            "x": -4,
+            "y": 0,
+            "z": -10
+          }
+        },
+        {
+          "id": "i-52",
+          "type": "surge",
+          "position": {
+            "x": 20,
+            "y": 0,
+            "z": -10
+          }
+        },
+        {
+          "id": "i-62",
+          "type": "surge",
+          "position": {
+            "x": -60,
+            "y": 0,
+            "z": -6
+          }
+        },
+        {
+          "id": "i-66",
+          "type": "surge",
+          "position": {
+            "x": -28,
+            "y": 0,
+            "z": -6
+          }
+        },
+        {
+          "id": "i-69",
+          "type": "clone",
+          "position": {
+            "x": -4,
+            "y": 0,
+            "z": -6
+          }
+        },
+        {
+          "id": "i-70",
+          "type": "radar",
+          "position": {
+            "x": 4,
+            "y": 0,
+            "z": -6
+          }
+        },
+        {
+          "id": "i-72",
+          "type": "radar",
+          "position": {
+            "x": 20,
+            "y": 0,
+            "z": -6
+          }
+        },
+        {
+          "id": "i-74",
+          "type": "surge",
+          "position": {
+            "x": 36,
+            "y": 0,
+            "z": -6
+          }
+        },
+        {
+          "id": "i-78",
+          "type": "surge",
+          "position": {
+            "x": 68,
+            "y": 0,
+            "z": -6
+          }
+        },
+        {
+          "id": "i-84",
+          "type": "leap",
+          "position": {
+            "x": -44,
+            "y": 0,
+            "z": -2
+          }
+        },
+        {
+          "id": "i-85",
+          "type": "clone",
+          "position": {
+            "x": -36,
+            "y": 0,
+            "z": -2
+          }
+        },
+        {
+          "id": "i-87",
+          "type": "cloak",
+          "position": {
+            "x": -20,
+            "y": 0,
+            "z": -2
+          }
+        },
+        {
+          "id": "i-88",
+          "type": "surge",
+          "position": {
+            "x": -12,
+            "y": 0,
+            "z": -2
+          }
+        },
+        {
+          "id": "i-89",
+          "type": "clone",
+          "position": {
+            "x": -4,
+            "y": 0,
+            "z": -2
+          }
+        },
+        {
+          "id": "i-92",
+          "type": "leap",
+          "position": {
+            "x": 20,
+            "y": 0,
+            "z": -2
+          }
+        },
+        {
+          "id": "i-93",
+          "type": "radar",
+          "position": {
+            "x": 28,
+            "y": 0,
+            "z": -2
+          }
+        },
+        {
+          "id": "i-98",
+          "type": "clone",
+          "position": {
+            "x": 68,
+            "y": 0,
+            "z": -2
+          }
+        },
+        {
+          "id": "i-100",
+          "type": "clone",
+          "position": {
+            "x": -76,
+            "y": 0,
+            "z": 2
+          }
+        },
+        {
+          "id": "i-103",
+          "type": "cloak",
+          "position": {
+            "x": -52,
+            "y": 0,
+            "z": 2
+          }
+        },
+        {
+          "id": "i-107",
+          "type": "leap",
+          "position": {
+            "x": -20,
+            "y": 0,
+            "z": 2
+          }
+        },
+        {
+          "id": "i-109",
+          "type": "radar",
+          "position": {
+            "x": -4,
+            "y": 0,
+            "z": 2
+          }
+        },
+        {
+          "id": "i-111",
+          "type": "cloak",
+          "position": {
+            "x": 12,
+            "y": 0,
+            "z": 2
+          }
+        },
+        {
+          "id": "i-112",
+          "type": "clone",
+          "position": {
+            "x": 20,
+            "y": 0,
+            "z": 2
+          }
+        },
+        {
+          "id": "i-122",
+          "type": "radar",
+          "position": {
+            "x": -60,
+            "y": 0,
+            "z": 6
+          }
+        },
+        {
+          "id": "i-126",
+          "type": "leap",
+          "position": {
+            "x": -28,
+            "y": 0,
+            "z": 6
+          }
+        },
+        {
+          "id": "i-129",
+          "type": "clone",
+          "position": {
+            "x": -4,
+            "y": 0,
+            "z": 6
+          }
+        },
+        {
+          "id": "i-132",
+          "type": "leap",
+          "position": {
+            "x": 20,
+            "y": 0,
+            "z": 6
+          }
+        },
+        {
+          "id": "i-138",
+          "type": "surge",
+          "position": {
+            "x": 68,
+            "y": 0,
+            "z": 6
+          }
+        },
+        {
+          "id": "i-145",
+          "type": "leap",
+          "position": {
+            "x": -36,
+            "y": 0,
+            "z": 10
+          }
+        },
+        {
+          "id": "i-150",
+          "type": "cloak",
+          "position": {
+            "x": 4,
+            "y": 0,
+            "z": 10
+          }
+        },
+        {
+          "id": "i-153",
+          "type": "leap",
+          "position": {
+            "x": 28,
+            "y": 0,
+            "z": 10
+          }
+        },
+        {
+          "id": "i-154",
+          "type": "cloak",
+          "position": {
+            "x": 36,
+            "y": 0,
+            "z": 10
+          }
+        },
+        {
+          "id": "i-156",
+          "type": "radar",
+          "position": {
+            "x": 52,
+            "y": 0,
+            "z": 10
+          }
+        },
+        {
+          "id": "i-158",
+          "type": "surge",
+          "position": {
+            "x": 68,
+            "y": 0,
+            "z": 10
+          }
+        },
+        {
+          "id": "i-159",
+          "type": "surge",
+          "position": {
+            "x": 76,
+            "y": 0,
+            "z": 10
+          }
+        },
+        {
+          "id": "i-160",
+          "type": "radar",
+          "position": {
+            "x": -76,
+            "y": 0,
+            "z": 14
+          }
+        },
+        {
+          "id": "i-161",
+          "type": "surge",
+          "position": {
+            "x": -68,
+            "y": 0,
+            "z": 14
+          }
+        },
+        {
+          "id": "i-165",
+          "type": "leap",
+          "position": {
+            "x": -36,
+            "y": 0,
+            "z": 14
+          }
+        },
+        {
+          "id": "i-166",
+          "type": "cloak",
+          "position": {
+            "x": -28,
+            "y": 0,
+            "z": 14
+          }
+        },
+        {
+          "id": "i-174",
+          "type": "leap",
+          "position": {
+            "x": 36,
+            "y": 0,
+            "z": 14
+          }
+        },
+        {
+          "id": "i-175",
+          "type": "surge",
+          "position": {
+            "x": 44,
+            "y": 0,
+            "z": 14
+          }
+        },
+        {
+          "id": "i-176",
+          "type": "surge",
+          "position": {
+            "x": 52,
+            "y": 0,
+            "z": 14
+          }
+        },
+        {
+          "id": "i-178",
+          "type": "cloak",
+          "position": {
+            "x": 68,
+            "y": 0,
+            "z": 14
+          }
+        },
+        {
+          "id": "i-182",
+          "type": "surge",
+          "position": {
+            "x": -60,
+            "y": 0,
+            "z": 18
+          }
+        },
+        {
+          "id": "i-183",
+          "type": "leap",
+          "position": {
+            "x": -52,
+            "y": 0,
+            "z": 18
+          }
+        },
+        {
+          "id": "i-186",
+          "type": "radar",
+          "position": {
+            "x": -28,
+            "y": 0,
+            "z": 18
+          }
+        },
+        {
+          "id": "i-190",
+          "type": "leap",
+          "position": {
+            "x": 4,
+            "y": 0,
+            "z": 18
+          }
+        },
+        {
+          "id": "i-192",
+          "type": "clone",
+          "position": {
+            "x": 20,
+            "y": 0,
+            "z": 18
+          }
+        },
+        {
+          "id": "i-193",
+          "type": "leap",
+          "position": {
+            "x": 28,
+            "y": 0,
+            "z": 18
+          }
+        },
+        {
+          "id": "i-194",
+          "type": "leap",
+          "position": {
+            "x": 36,
+            "y": 0,
+            "z": 18
+          }
+        },
+        {
+          "id": "i-196",
+          "type": "leap",
+          "position": {
+            "x": 52,
+            "y": 0,
+            "z": 18
+          }
+        },
+        {
+          "id": "i-197",
+          "type": "surge",
+          "position": {
+            "x": 60,
+            "y": 0,
+            "z": 18
+          }
+        }
+      ]
+    }
+  ]
+}

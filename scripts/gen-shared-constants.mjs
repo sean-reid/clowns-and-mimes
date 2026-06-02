@@ -36,6 +36,9 @@ const SOURCES = [
       'BOUNCE_E_GROUNDED',
       'BOUNCE_E_AERIAL',
       'BOUNCE_E_WALL',
+      'EYE_HEIGHT',
+      'HEAD_CENTER_HEIGHT',
+      'HEAD_RADIUS',
     ],
   },
   {
@@ -55,7 +58,75 @@ const SOURCES = [
   {
     file: 'backend/shared/src/projectiles.ts',
     sourceUrl: 'backend/shared/src/projectiles.ts',
-    consts: ['PROJECTILE_RADIUS', 'SHOOT_COOLDOWN_MS'],
+    consts: [
+      'PROJECTILE_RADIUS',
+      'SHOOT_COOLDOWN_MS',
+      'PROJECTILE_SPEED',
+      'PROJECTILE_LIFETIME_MS',
+    ],
+  },
+  {
+    file: 'backend/shared/src/botTuning.ts',
+    sourceUrl: 'backend/shared/src/botTuning.ts',
+    consts: [
+      'TAG_RADIUS_BOT',
+      'UNFREEZE_RADIUS_BOT',
+      'BOT_VISION_RADIUS',
+      'BOT_SHOOT_RANGE',
+      'BOT_SHOOT_AIM_JITTER',
+      'RETARGET_HYSTERESIS',
+      'BOT_INVESTIGATE_MS',
+      'BOT_SPRINT_TRIGGER_RADIUS',
+      'BOT_FLEE_PROJECTION',
+      'DIR_SMOOTHING',
+      'MAX_YAW_RATE',
+      'BOT_PATROL_RETARGET_MS',
+      'BOT_PATROL_CANDIDATE_ATTEMPTS',
+      'BOT_NO_PROGRESS_WINDOW_MS',
+      'BOT_NO_PROGRESS_MIN_DIST',
+      'BOT_RECENT_TARGETS_KEEP',
+      'BOT_RECENT_TARGET_RADIUS',
+      'BOT_ITEM_SEEK_RADIUS',
+      'BOT_JUMP_REFRACTORY_MS',
+      'BOT_JUMP_NOISE_PER_SECOND',
+      'BOT_JUMP_EVADE_BUFFER',
+      'BOT_JUMP_CORNER_THREAT_RADIUS',
+      'CLONE_DURATION_MS',
+      'CLONE_SPAWN_OFFSET',
+      'WALL_AVOID_WEIGHT',
+      'WALL_AVOID_RADIUS',
+      'OCCUPANCY_WEIGHT',
+      'OCCUPANCY_RADIUS',
+    ],
+  },
+  {
+    file: 'backend/shared/src/labyrinth.ts',
+    sourceUrl: 'backend/shared/src/labyrinth.ts',
+    // WALL_CLEARANCE itself is computed (not a literal), so share its literal
+    // parts; the GDScript side recombines them.
+    consts: ['WALL_THICKNESS', 'PLAYER_RADIUS'],
+  },
+  {
+    file: 'backend/shared/src/items.ts',
+    sourceUrl: 'backend/shared/src/items.ts',
+    consts: [
+      'ITEM_RESPAWN_MS',
+      'ITEM_PICKUP_RADIUS',
+      'ITEM_SPAWN_KEEP_DENOM',
+      'RADAR_DURATION_MS',
+      'CLOAK_DURATION_MS',
+    ],
+  },
+  {
+    file: 'backend/shared/src/portals.ts',
+    sourceUrl: 'backend/shared/src/portals.ts',
+    consts: [
+      'PORTAL_DURATION_MS',
+      'PORTAL_ENTER_RADIUS',
+      'PORTAL_EXIT_OFFSET',
+      'PORTAL_TELEPORT_COOLDOWN_MS',
+      'PORTAL_MOUTH_RADIUS',
+    ],
   },
 ];
 
@@ -67,15 +138,22 @@ const STRING_ARRAY_SOURCES = [
     sourceUrl: 'backend/shared/src/names.ts',
     consts: ['NAME_ADJECTIVES', 'NAME_NOUNS'],
   },
+  {
+    file: 'backend/shared/src/items.ts',
+    sourceUrl: 'backend/shared/src/items.ts',
+    consts: ['ITEM_TYPES_ALWAYS', 'ITEM_TYPES_ROTATING'],
+  },
 ];
 
 async function extract(file, name) {
   const text = await readFile(resolve(repoRoot, file), 'utf8');
-  const re = new RegExp(`^export const ${name}\\s*=\\s*([^;]+);`, 'm');
+  // Allow an optional `: Type` annotation between the name and `=`.
+  const re = new RegExp(`^export const ${name}\\s*(?::[^=]+)?=\\s*([^;]+);`, 'm');
   const m = text.match(re);
   if (!m) throw new Error(`${file}: missing const ${name}`);
   const expr = m[1].trim();
-  const value = parseFloat(expr);
+  // Strip numeric separators (30_000 -> 30000) so the literal parses.
+  const value = parseFloat(expr.replace(/_/g, ''));
   if (!Number.isFinite(value)) {
     throw new Error(
       `${file}: ${name} = "${expr}" is not a literal number; only literals can be shared`,
@@ -88,7 +166,7 @@ async function extract(file, name) {
 // list of string entries in source order.
 async function extractStringArray(file, name) {
   const text = await readFile(resolve(repoRoot, file), 'utf8');
-  const re = new RegExp(`^export const ${name}\\s*=\\s*\\[([\\s\\S]*?)\\];`, 'm');
+  const re = new RegExp(`^export const ${name}\\s*(?::[^=]+)?=\\s*\\[([\\s\\S]*?)\\];`, 'm');
   const m = text.match(re);
   if (!m) throw new Error(`${file}: missing string array ${name}`);
   const items = [...m[1].matchAll(/'((?:[^'\\]|\\.)*)'/g)].map((x) => x[1]);

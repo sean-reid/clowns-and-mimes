@@ -19,6 +19,9 @@ const JUMP_COOLDOWN_S := 0.1
 const BOUNCE_E_GROUNDED := 0.3
 const BOUNCE_E_AERIAL := 0.7
 const BOUNCE_E_WALL := 0.15
+const EYE_HEIGHT := 1.6
+const HEAD_CENTER_HEIGHT := 1.5
+const HEAD_RADIUS := 0.35
 
 # Mirrored from backend/shared/src/movement.ts
 const WALK_SPEED := 3.2
@@ -33,7 +36,61 @@ const SPRINT_ENGAGE_THRESHOLD := 20.0
 # Mirrored from backend/shared/src/projectiles.ts
 const PROJECTILE_RADIUS := 0.2
 const SHOOT_COOLDOWN_MS := 1500.0
+const PROJECTILE_SPEED := 16.0
+const PROJECTILE_LIFETIME_MS := 2500.0
+
+# Mirrored from backend/shared/src/botTuning.ts
+const TAG_RADIUS_BOT := 1.4
+const UNFREEZE_RADIUS_BOT := 1.4
+const BOT_VISION_RADIUS := 22.0
+const BOT_SHOOT_RANGE := 18.0
+const BOT_SHOOT_AIM_JITTER := 0.09
+const RETARGET_HYSTERESIS := 0.75
+const BOT_INVESTIGATE_MS := 3000.0
+const BOT_SPRINT_TRIGGER_RADIUS := 10.0
+const BOT_FLEE_PROJECTION := 12.0
+const DIR_SMOOTHING := 0.5
+const MAX_YAW_RATE := 9.0
+const BOT_PATROL_RETARGET_MS := 4000.0
+const BOT_PATROL_CANDIDATE_ATTEMPTS := 8.0
+const BOT_NO_PROGRESS_WINDOW_MS := 800.0
+const BOT_NO_PROGRESS_MIN_DIST := 0.5
+const BOT_RECENT_TARGETS_KEEP := 6.0
+const BOT_RECENT_TARGET_RADIUS := 10.0
+const BOT_ITEM_SEEK_RADIUS := 16.0
+const BOT_JUMP_REFRACTORY_MS := 1500.0
+const BOT_JUMP_NOISE_PER_SECOND := 0.05
+const BOT_JUMP_EVADE_BUFFER := 0.5
+const BOT_JUMP_CORNER_THREAT_RADIUS := 4.0
+const CLONE_DURATION_MS := 30000.0
+const CLONE_SPAWN_OFFSET := 2.0
+const WALL_AVOID_WEIGHT := 4.0
+const WALL_AVOID_RADIUS := 14.0
+const OCCUPANCY_WEIGHT := 6.0
+const OCCUPANCY_RADIUS := 6.0
+
+# Mirrored from backend/shared/src/labyrinth.ts
+const WALL_THICKNESS := 0.4
+const PLAYER_RADIUS := 0.4
+
+# Mirrored from backend/shared/src/items.ts
+const ITEM_RESPAWN_MS := 30000.0
+const ITEM_PICKUP_RADIUS := 1.6
+const ITEM_SPAWN_KEEP_DENOM := 3.0
+const RADAR_DURATION_MS := 5000.0
+const CLOAK_DURATION_MS := 4000.0
+
+# Mirrored from backend/shared/src/portals.ts
+const PORTAL_DURATION_MS := 6000.0
+const PORTAL_ENTER_RADIUS := 1.4
+const PORTAL_EXIT_OFFSET := 2.0
+const PORTAL_TELEPORT_COOLDOWN_MS := 900.0
+const PORTAL_MOUTH_RADIUS := 1.3
 
 # Mirrored from backend/shared/src/names.ts
 const NAME_ADJECTIVES := ["Silent", "Painted", "Loud", "Floppy", "Crooked", "Bashful", "Velvet", "Hushed", "Ruffled", "Striped", "Glossy", "Pale", "Sneaky", "Whiskered", "Brittle", "Tipsy", "Polka", "Wobbly", "Crinkled", "Powdered", "Squeaky", "Tufted", "Knobbly", "Frilly", "Wonky", "Boggled", "Plucky", "Drooping", "Frazzled", "Soggy", "Greasy", "Jaunty", "Saggy", "Lopsided", "Petite", "Stilted", "Drippy", "Mottled", "Googly", "Spangled", "Befuddled", "Twitchy", "Mournful", "Limpid", "Smudged", "Curdled", "Cracked", "Bumbling", "Threadbare", "Daffy", "Dusty", "Garish", "Hapless", "Wistful", "Brassy", "Maudlin", "Frumpy", "Yawning", "Stooped", "Vexed", "Spotty", "Lurching", "Foggy", "Crumbly", "Goofy", "Zany", "Wacky", "Kooky", "Loopy", "Nutty", "Bonkers", "Clumsy", "Giddy", "Madcap", "Cockeyed", "Harebrained", "Addled", "Ditzy", "Screwball", "Cuckoo", "Jumbled", "Galumphing", "Bamboozled", "Slapstick"]
 const NAME_NOUNS := ["Bozo", "Coulrophobe", "Pierrot", "Harlequin", "Buffoon", "Jester", "Marceau", "Tramp", "Auguste", "Carnie", "Pagliacci", "Punchinello", "Hopo", "Cake", "Honk", "Greasepaint", "Stripes", "Tear", "Glove", "Wig", "Nose", "Shoe", "Banana", "Pinwheel", "Smile", "Frown", "Lapel", "Pocket", "Hatband", "Cravat", "Suspender", "Bowtie", "Trumpet", "Kazoo", "Squirt", "Ladder", "Bucket", "Pratfall", "Cartwheel", "Tightrope", "Unicycle", "Confetti", "Crumpet", "Boutonniere", "Mistletoe", "Marionette", "Glissando", "Pantomime", "Vaudeville", "Curtain", "Footlight", "Spotlight", "Soliloquy", "Pirouette", "Maskmaker", "Topiary", "Sashay", "Gambol", "Tumbler", "Patter", "Whoopee", "Mime", "Clown", "Zanni", "Pulcinella", "Brighella", "Colombina", "Pantalone", "Scaramuccia", "Dottore", "Capitano", "Innamorato", "Lazzo", "Burla", "Maschera", "Carnevale", "Tarantella", "Saltarello", "Serenata", "Gondola", "Pizzicato", "Cannoli", "Biscotto"]
+
+# Mirrored from backend/shared/src/items.ts
+const ITEM_TYPES_ALWAYS := ["surge", "radar"]
+const ITEM_TYPES_ROTATING := ["leap", "portal", "clone", "overcharge", "cloak"]

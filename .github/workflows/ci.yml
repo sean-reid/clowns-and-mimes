@@ -26,9 +26,14 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm format:check
       - run: pnpm lint
-      - name: Regenerate shared_constants.gd and check for drift
+      - name: Regenerate cross-language fixtures + shared_constants and fail on drift
+        # Every game/tests/fixtures/*.json and game/scripts/shared_constants.gd is
+        # generated from canonical TS. Regenerate them all; any diff means the TS
+        # logic changed without the GDScript side being re-synced (offline would
+        # silently drift from online). The fix is to run `pnpm gen:all` and commit.
         run: |
-          node scripts/gen-shared-constants.mjs --check
+          pnpm gen:all
+          git diff --exit-code -- game/tests/fixtures game/scripts/shared_constants.gd
 
   typecheck:
     name: Type check

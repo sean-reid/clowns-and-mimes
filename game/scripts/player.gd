@@ -156,6 +156,18 @@ var cloak_until_ms: int = 0
 # own copy here so holding Space sends exactly one jump instead of one
 # per physics tick. Unused for online local + remote bodies.
 var _jump_was_held_offline: bool = false
+# Offline power-up state for the local body. Online drives equivalents
+# server-side (leaping/cloak ride the delta; surge is applied in the server
+# movement step), so these stay 0/false on the online path. offline_mode sets
+# them when the held item is used.
+var leap_armed: bool = false
+var surge_until_ms: int = 0
+# Rising-edge trackers for the offline-local use-item + shoot keys.
+var _use_item_was_held_offline: bool = false
+var _shoot_was_held_offline: bool = false
+# Sprint latch carried across offline movement ticks (Movement.step needs the
+# prior `sprinting` to apply its hysteresis). Offline-only.
+var _offline_sprinting: bool = false
 # Cached scale applied to the head mesh each frame. Lerped back to
 # Vector3.ONE over SQUASH_RECOVER_S when no jump is active so the
 # transition out of a jump doesn't pop. Stored on the node so the
@@ -163,6 +175,7 @@ var _jump_was_held_offline: bool = false
 var _head_squash_scale: Vector3 = Vector3.ONE
 const SQUASH_RECOVER_S := 0.15
 const PhysicsScript := preload("res://scripts/physics.gd")
+const MovementScript := preload("res://scripts/movement.gd")
 
 # Remote body's current Y while drifting down from a mid-jump freeze.
 # Seeded in the `frozen` setter on the false→true transition for non-local
@@ -320,58 +333,136 @@ func _physics_process(delta: float) -> void:
 	input_dir.x -= Input.get_action_strength("move_left")
 	input_dir.x += Input.get_action_strength("move_right")
 	input_dir = input_dir.normalized()
-	var sprinting := Input.is_action_pressed("sprint") and sprint_energy > 0.0 and input_dir.length() > 0.0
-	var speed := SPRINT_SPEED if sprinting else WALK_SPEED
-	var basis_dir := transform.basis * input_dir
-	velocity.x = basis_dir.x * speed
-	velocity.z = basis_dir.z * speed
-	# Rising-edge spacebar so a held key sends one jump, not 60. Online holds
-	# the same edge in arena.gd::_jump_was_held; the predictor builds its
-	# input frame from there. Offline-local runs Physics.step_jump itself
-	# so the arc behaves identically to the online server's authoritative path.
+	var now_ms: int = int(Time.get_unix_time_from_system() * 1000.0)
+	var surge_active := surge_until_ms > now_ms
+	# Use-item on the rising edge of E (offline-local; online sends a message
+	# from arena.gd instead). offline_mode clears the slot and applies the effect.
+	var use_pressed: bool = Input.is_action_pressed("use_item")
+	if use_pressed and not _use_item_was_held_offline and arena != null and arena.offline != null:
+		arena.offline.use_item_local()
+	_use_item_was_held_offline = use_pressed
+	# Shoot on the rising edge of the fire button; aim is the camera's forward
+	# (-Z of its basis) for full 3D pitch+yaw. offline_mode gates turn/cooldown.
+	var shoot_pressed: bool = Input.is_action_pressed("shoot")
+	if shoot_pressed and not _shoot_was_held_offline and camera != null and arena != null and arena.offline != null:
+		arena.offline.shoot_local(-camera.global_transform.basis.z)
+	_shoot_was_held_offline = shoot_pressed
+	# Rising-edge spacebar so a held key sends one jump, not 60. Offline-local
+	# runs Physics.step_jump itself so the arc matches the server's path.
 	var jump_pressed: bool = Input.is_action_pressed("jump")
 	var jump_edge: bool = jump_pressed and not _jump_was_held_offline
 	_jump_was_held_offline = jump_pressed
-	var now_ms: int = int(Time.get_unix_time_from_system() * 1000.0)
+	# A banked Leap turns this takeoff into the boosted arc; cleared on landing.
+	if jump_edge and leap_armed:
+		leaping = true
+		leap_armed = false
 	jump_started_at_ms = PhysicsScript.step_jump(jump_started_at_ms, jump_edge, now_ms)
-	move_and_slide()
-	# Apply arc Y after move_and_slide so the slide pass doesn't shave the
-	# body's altitude. The arc is deterministic - same math as the server
-	# in advanceIdleJumpState - so Y at any moment is purely a function of
-	# jump_started_at_ms and now_ms.
-	global_position.y = PhysicsScript.jump_arc_y(jump_started_at_ms, now_ms)
-	if sprinting:
-		sprint_energy -= SPRINT_DRAIN_PER_S * delta
-	else:
-		sprint_energy += SPRINT_REGEN_PER_S * delta
-	_update_footsteps(Vector2(velocity.x, velocity.z).length(), sprinting)
+	if jump_started_at_ms == -1:
+		leaping = false
+	var amp: float = PhysicsScript.LEAP_JUMP_AMP if leaping else PhysicsScript.JUMP_AMP
+	var body_y: float = PhysicsScript.jump_arc_y(jump_started_at_ms, now_ms, amp)
+	# Drive XZ through the shared movement step (wall bounceback + the no-go
+	# predicate + topology wrap, which clamps a plane leap back in-bounds) and
+	# resolve_overlap (player-player push) - matching the server / online
+	# predictor, instead of move_and_slide (which only slid and let bodies
+	# pass through each other). above_walls lets a high leap clear walls.
+	var world_move := transform.basis * input_dir
+	var walls := _offline_walls()
+	var prev_xz := Vector2(global_position.x, global_position.z)
+	var step: Dictionary = MovementScript.step(
+		{"position": prev_xz, "sprint_energy": sprint_energy, "sprinting": _offline_sprinting},
+		{
+			"move": Vector2(world_move.x, world_move.z),
+			"sprint": Input.is_action_pressed("sprint"),
+			"dt": delta,
+			"surge": surge_active,
+		},
+		walls,
+		arena.topology,
+		body_y > PhysicsScript.WALL_HEIGHT,
+	)
+	var new_xz: Vector2 = MovementScript.resolve_overlap(
+		step.position, _other_xz(), walls, arena.topology
+	)
+	global_position = Vector3(new_xz.x, body_y, new_xz.y)
+	sprint_energy = step.sprint_energy
+	_offline_sprinting = step.sprinting
+	var planar_speed: float = (new_xz - prev_xz).length() / delta if delta > 0.0 else 0.0
+	_update_footsteps(planar_speed, _offline_sprinting)
 
 func _apply_bot_movement(delta: float) -> void:
 	var intent := bot_intent
 	if intent.length() > 1.0:
 		intent = intent.normalized()
-	var sprinting := bot_sprint and sprint_energy > 0.0 and intent.length() > 0.0
-	var speed := SPRINT_SPEED if sprinting else WALK_SPEED
-	velocity.x = intent.x * speed
-	velocity.z = intent.z * speed
 	if intent.length() > 0.01:
 		var target_yaw := atan2(-intent.x, -intent.z)
-		rotation.y = lerp_angle(rotation.y, target_yaw, clampf(8.0 * delta, 0.0, 1.0))
+		# Fixed-rate turn toward the heading (mirrors botSteering.ts turnToward /
+		# MAX_YAW_RATE) instead of a proportional lerp, so offline bot facing
+		# matches the online model.
+		rotation.y = _turn_toward(rotation.y, target_yaw, SharedConstants.MAX_YAW_RATE, delta)
 	# Consume the bot's rising-edge jump request. bot_ai.gd flips bot_jump
 	# true for one tick when its 3-trigger predicate fires; resetting here
-	# prevents step_jump from re-firing every physics tick. Same arc math
-	# as the local player and the server's bot path.
+	# prevents step_jump from re-firing every physics tick.
 	var jump_request: bool = bot_jump
 	bot_jump = false
 	var now_ms: int = int(Time.get_unix_time_from_system() * 1000.0)
 	jump_started_at_ms = PhysicsScript.step_jump(jump_started_at_ms, jump_request, now_ms)
-	move_and_slide()
-	global_position.y = PhysicsScript.jump_arc_y(jump_started_at_ms, now_ms)
-	if sprinting:
-		sprint_energy -= SPRINT_DRAIN_PER_S * delta
-	else:
-		sprint_energy += SPRINT_REGEN_PER_S * delta
-	_update_footsteps(Vector2(velocity.x, velocity.z).length(), sprinting)
+	var body_y: float = PhysicsScript.jump_arc_y(jump_started_at_ms, now_ms)
+	# Same shared movement step the local body uses: bounceback, no-go wall
+	# predicate, wrap, and player-player push - so offline bots bump off walls
+	# and each other instead of sliding/intersecting.
+	var walls := _offline_walls()
+	# The body may render at a camera-nearest seam copy (see below), so recover
+	# the canonical sim position before stepping - the movement step + wall
+	# predicate reason in canonical world coords.
+	var canonical_prev: Vector3 = arena.topology.wrap(global_position) if arena.topology != null else global_position
+	var prev_xz := Vector2(canonical_prev.x, canonical_prev.z)
+	var step: Dictionary = MovementScript.step(
+		{"position": prev_xz, "sprint_energy": sprint_energy, "sprinting": _offline_sprinting},
+		{"move": Vector2(intent.x, intent.z), "sprint": bot_sprint, "dt": delta, "surge": false},
+		walls,
+		arena.topology,
+		body_y > PhysicsScript.WALL_HEIGHT,
+	)
+	var new_xz: Vector2 = MovementScript.resolve_overlap(
+		step.position, _other_xz(), walls, arena.topology
+	)
+	# Render at the wrapped image nearest the local camera so a bot across a
+	# topology seam stays visible instead of vanishing until the camera also
+	# crosses (mirrors the online remote-body path). wrap() recovers canonical
+	# next frame, so the simulation is unaffected.
+	global_position = _to_camera_nearest_copy(Vector3(new_xz.x, body_y, new_xz.y))
+	sprint_energy = step.sprint_energy
+	_offline_sprinting = step.sprinting
+	var planar_speed: float = (new_xz - prev_xz).length() / delta if delta > 0.0 else 0.0
+	_update_footsteps(planar_speed, _offline_sprinting)
+
+# Rotate `current` toward `target` by at most max_rate*dt along the shortest
+# angular path. Mirrors botSteering.ts turnToward (offline bot facing model).
+func _turn_toward(current: float, target: float, max_rate: float, dt: float) -> float:
+	var d: float = wrapf(target - current, -PI, PI)
+	var max_step: float = max_rate * dt
+	return current + clampf(d, -max_step, max_step)
+
+# Maze wall segments for the shared movement step (empty when no labyrinth).
+func _offline_walls() -> Array:
+	if arena == null or arena.labyrinth == null:
+		return []
+	return arena.labyrinth.wall_endpoints()
+
+# Other bodies' XZ for resolve_overlap (everyone but this one). Bodies may
+# render at a camera-nearest seam copy, so wrap each back to canonical to compare
+# true positions.
+func _other_xz() -> Array:
+	var out: Array = []
+	if arena == null:
+		return out
+	for n in arena.player_nodes.values():
+		if n == self:
+			continue
+		var c: Vector3 = arena.topology.wrap(n.global_position) if arena.topology != null else n.global_position
+		out.append(Vector2(c.x, c.z))
+	return out
 
 func set_external_motion(planar_speed: float, sprinting: bool) -> void:
 	_external_planar_speed = planar_speed

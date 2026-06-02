@@ -1,0 +1,341 @@
+{
+  "schemaVersion": 1,
+  "params": {
+    "sprintTriggerRadius": 10,
+    "maxSprint": 100,
+    "tagRadius": 1.4,
+    "jumpEvadeBuffer": 0.5
+  },
+  "scenarios": [
+    {
+      "name": "none",
+      "item": null,
+      "ctx": {
+        "chasing": false,
+        "fleeing": false,
+        "wantJump": false,
+        "canShoot": false,
+        "enemyDist": 999,
+        "sprintEnergy": 100,
+        "hasActionableEnemy": false,
+        "nearestEnemyPos": null
+      },
+      "expected": {
+        "use": false,
+        "memorySeed": null
+      }
+    },
+    {
+      "name": "radar_hold_has_enemy",
+      "item": "radar",
+      "ctx": {
+        "chasing": false,
+        "fleeing": false,
+        "wantJump": false,
+        "canShoot": false,
+        "enemyDist": 999,
+        "sprintEnergy": 100,
+        "hasActionableEnemy": true,
+        "nearestEnemyPos": null
+      },
+      "expected": {
+        "use": false,
+        "memorySeed": null
+      }
+    },
+    {
+      "name": "radar_hold_no_enemy",
+      "item": "radar",
+      "ctx": {
+        "chasing": false,
+        "fleeing": false,
+        "wantJump": false,
+        "canShoot": false,
+        "enemyDist": 999,
+        "sprintEnergy": 100,
+        "hasActionableEnemy": false,
+        "nearestEnemyPos": null
+      },
+      "expected": {
+        "use": false,
+        "memorySeed": null
+      }
+    },
+    {
+      "name": "radar_spend_seeds",
+      "item": "radar",
+      "ctx": {
+        "chasing": false,
+        "fleeing": false,
+        "wantJump": false,
+        "canShoot": false,
+        "enemyDist": 999,
+        "sprintEnergy": 100,
+        "hasActionableEnemy": false,
+        "nearestEnemyPos": {
+          "x": 12,
+          "z": -7
+        }
+      },
+      "expected": {
+        "use": true,
+        "memorySeed": {
+          "x": 12,
+          "z": -7
+        }
+      }
+    },
+    {
+      "name": "leap_spend",
+      "item": "leap",
+      "ctx": {
+        "chasing": false,
+        "fleeing": false,
+        "wantJump": true,
+        "canShoot": false,
+        "enemyDist": 999,
+        "sprintEnergy": 100,
+        "hasActionableEnemy": false,
+        "nearestEnemyPos": null
+      },
+      "expected": {
+        "use": true,
+        "memorySeed": null
+      }
+    },
+    {
+      "name": "leap_hold",
+      "item": "leap",
+      "ctx": {
+        "chasing": false,
+        "fleeing": false,
+        "wantJump": false,
+        "canShoot": false,
+        "enemyDist": 999,
+        "sprintEnergy": 100,
+        "hasActionableEnemy": false,
+        "nearestEnemyPos": null
+      },
+      "expected": {
+        "use": false,
+        "memorySeed": null
+      }
+    },
+    {
+      "name": "surge_spend",
+      "item": "surge",
+      "ctx": {
+        "chasing": true,
+        "fleeing": false,
+        "wantJump": false,
+        "canShoot": false,
+        "enemyDist": 6,
+        "sprintEnergy": 40,
+        "hasActionableEnemy": false,
+        "nearestEnemyPos": null
+      },
+      "expected": {
+        "use": true,
+        "memorySeed": null
+      }
+    },
+    {
+      "name": "surge_hold_high_energy",
+      "item": "surge",
+      "ctx": {
+        "chasing": true,
+        "fleeing": false,
+        "wantJump": false,
+        "canShoot": false,
+        "enemyDist": 6,
+        "sprintEnergy": 80,
+        "hasActionableEnemy": false,
+        "nearestEnemyPos": null
+      },
+      "expected": {
+        "use": false,
+        "memorySeed": null
+      }
+    },
+    {
+      "name": "surge_hold_far",
+      "item": "surge",
+      "ctx": {
+        "chasing": false,
+        "fleeing": true,
+        "wantJump": false,
+        "canShoot": false,
+        "enemyDist": 14,
+        "sprintEnergy": 10,
+        "hasActionableEnemy": false,
+        "nearestEnemyPos": null
+      },
+      "expected": {
+        "use": false,
+        "memorySeed": null
+      }
+    },
+    {
+      "name": "overcharge_spend",
+      "item": "overcharge",
+      "ctx": {
+        "chasing": false,
+        "fleeing": false,
+        "wantJump": false,
+        "canShoot": true,
+        "enemyDist": 999,
+        "sprintEnergy": 100,
+        "hasActionableEnemy": false,
+        "nearestEnemyPos": null
+      },
+      "expected": {
+        "use": true,
+        "memorySeed": null
+      }
+    },
+    {
+      "name": "overcharge_hold",
+      "item": "overcharge",
+      "ctx": {
+        "chasing": false,
+        "fleeing": false,
+        "wantJump": false,
+        "canShoot": false,
+        "enemyDist": 999,
+        "sprintEnergy": 100,
+        "hasActionableEnemy": false,
+        "nearestEnemyPos": null
+      },
+      "expected": {
+        "use": false,
+        "memorySeed": null
+      }
+    },
+    {
+      "name": "cloak_spend",
+      "item": "cloak",
+      "ctx": {
+        "chasing": false,
+        "fleeing": true,
+        "wantJump": false,
+        "canShoot": false,
+        "enemyDist": 8,
+        "sprintEnergy": 100,
+        "hasActionableEnemy": false,
+        "nearestEnemyPos": null
+      },
+      "expected": {
+        "use": true,
+        "memorySeed": null
+      }
+    },
+    {
+      "name": "cloak_hold_far",
+      "item": "cloak",
+      "ctx": {
+        "chasing": false,
+        "fleeing": true,
+        "wantJump": false,
+        "canShoot": false,
+        "enemyDist": 12,
+        "sprintEnergy": 100,
+        "hasActionableEnemy": false,
+        "nearestEnemyPos": null
+      },
+      "expected": {
+        "use": false,
+        "memorySeed": null
+      }
+    },
+    {
+      "name": "cloak_hold_not_fleeing",
+      "item": "cloak",
+      "ctx": {
+        "chasing": true,
+        "fleeing": false,
+        "wantJump": false,
+        "canShoot": false,
+        "enemyDist": 4,
+        "sprintEnergy": 100,
+        "hasActionableEnemy": false,
+        "nearestEnemyPos": null
+      },
+      "expected": {
+        "use": false,
+        "memorySeed": null
+      }
+    },
+    {
+      "name": "clone_spend_chase",
+      "item": "clone",
+      "ctx": {
+        "chasing": true,
+        "fleeing": false,
+        "wantJump": false,
+        "canShoot": false,
+        "enemyDist": 999,
+        "sprintEnergy": 100,
+        "hasActionableEnemy": false,
+        "nearestEnemyPos": null
+      },
+      "expected": {
+        "use": true,
+        "memorySeed": null
+      }
+    },
+    {
+      "name": "clone_hold_idle",
+      "item": "clone",
+      "ctx": {
+        "chasing": false,
+        "fleeing": false,
+        "wantJump": false,
+        "canShoot": false,
+        "enemyDist": 999,
+        "sprintEnergy": 100,
+        "hasActionableEnemy": false,
+        "nearestEnemyPos": null
+      },
+      "expected": {
+        "use": false,
+        "memorySeed": null
+      }
+    },
+    {
+      "name": "portal_spend",
+      "item": "portal",
+      "ctx": {
+        "chasing": false,
+        "fleeing": true,
+        "wantJump": false,
+        "canShoot": false,
+        "enemyDist": 2,
+        "sprintEnergy": 100,
+        "hasActionableEnemy": false,
+        "nearestEnemyPos": null
+      },
+      "expected": {
+        "use": true,
+        "memorySeed": null
+      }
+    },
+    {
+      "name": "portal_hold_far",
+      "item": "portal",
+      "ctx": {
+        "chasing": false,
+        "fleeing": true,
+        "wantJump": false,
+        "canShoot": false,
+        "enemyDist": 8,
+        "sprintEnergy": 100,
+        "hasActionableEnemy": false,
+        "nearestEnemyPos": null
+      },
+      "expected": {
+        "use": false,
+        "memorySeed": null
+      }
+    }
+  ]
+}

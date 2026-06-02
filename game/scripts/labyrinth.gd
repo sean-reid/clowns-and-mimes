@@ -10,8 +10,9 @@ extends Node3D
 ## The ring layout (_build_ring, _add_arc_wall) is no longer dispatched but is
 ## kept for an experimental lobby mode that may opt back in.
 ##
-## Walls are deterministic given a seed and feed a topology-aware AStar2D graph
-## for bot pathfinding.
+## Walls are deterministic given a seed. Bots pathfind off the wall_endpoints
+## list via bot_pathfinder.gd (the shared weighted-A* port); this node only owns
+## the geometry + its rendering.
 
 const TopologyScript := preload("res://scripts/topology/topology.gd")
 const GridMaze := preload("res://scripts/grid_maze.gd")
@@ -30,29 +31,8 @@ const SYMMETRY_ORDER := 12
 const RING_RADII: Array[float] = [6.0, 12.0, 18.0, 24.0, 30.0, 36.0]
 const CENTER_SQUARE_SIZE := 4.0
 
-const GRID_RES := 80
-const CELL_SIZE := TopologyScript.WIDTH / float(GRID_RES)
-const PLAYER_CLEARANCE := 0.55
-
 var seed_value: int = 0
 var topology: TopologyScript
-var pathfinder: AStar2D
-var solid_cells: Dictionary = {}
-
-# Path cache. bot_ai.gd calls find_path every tick per bot; in a busy
-# match (6 bots converging on a small set of patrol targets) the same
-# (from_cell, to_cell) pair recurs often. Cache the raw PackedVector2Array
-# keyed on "fx,fy->tx,ty" so the A* walk is skipped on cache hits. Each
-# call still does the cell-to-world conversion, so callers that mutate
-# the returned Array don't poison subsequent calls. Cleared on rebuild.
-const PATH_CACHE_MAX_ENTRIES := 32
-var _path_cache: Dictionary = {}
-var _path_cache_order: Array[String] = []
-# Per-axis cell counts for the pathfinding grid. Set from the topology's
-# playfield extents in build(); klein's double cover makes the x axis twice
-# as wide as the z axis. Everything else stays square.
-var _grid_cols: int = GRID_RES
-var _grid_rows: int = GRID_RES
 
 var walls_root: Node3D
 var floor_node: MeshInstance3D
@@ -72,11 +52,6 @@ var _wall_endpoints: Array = []  # [{ax, az, bx, bz}, ...]
 func build(rng_seed: int, top: TopologyScript) -> void:
 	seed_value = rng_seed
 	topology = top
-	# Match the AStar grid resolution to the topology's playfield extents so
-	# klein's double cover gets 2*GRID_RES columns (160) and stays square
-	# elsewhere.
-	_grid_cols = int(round(topology.extent_x() / CELL_SIZE))
-	_grid_rows = int(round(topology.extent_z() / CELL_SIZE))
 	_resolve_children()
 	_ensure_wall_material()
 	_ensure_floor()
@@ -85,7 +60,6 @@ func build(rng_seed: int, top: TopologyScript) -> void:
 	_wall_endpoints.clear()
 	var topo_name: String = topology.name()
 	_build_grid_maze(rng_seed, topo_name)
-	_build_pathfinder()
 	_build_wrap_tiles()
 
 func _build_grid_maze(rng_seed: int, topo_name: String) -> void:
@@ -112,37 +86,6 @@ func _build_grid_maze(rng_seed: int, topo_name: String) -> void:
 
 func wall_endpoints() -> Array:
 	return _wall_endpoints
-
-func find_path(from: Vector3, to: Vector3) -> Array[Vector3]:
-	if pathfinder == null:
-		return []
-	var from_cell: Vector2i = _world_to_cell(from)
-	var to_cell: Vector2i = _world_to_cell(to)
-	if _is_solid(to_cell):
-		to_cell = _nearest_open_cell(to_cell)
-	if _is_solid(from_cell):
-		from_cell = _nearest_open_cell(from_cell)
-	var raw: PackedVector2Array = _cached_point_path(from_cell, to_cell)
-	var out: Array[Vector3] = []
-	for point in raw:
-		out.append(_cell_to_world(Vector2i(int(point.x), int(point.y))))
-	return out
-
-func _cached_point_path(from_cell: Vector2i, to_cell: Vector2i) -> PackedVector2Array:
-	var key: String = "%d,%d->%d,%d" % [from_cell.x, from_cell.y, to_cell.x, to_cell.y]
-	if _path_cache.has(key):
-		return _path_cache[key]
-	var raw: PackedVector2Array = pathfinder.get_point_path(_cell_id(from_cell), _cell_id(to_cell))
-	_path_cache[key] = raw
-	_path_cache_order.append(key)
-	if _path_cache_order.size() > PATH_CACHE_MAX_ENTRIES:
-		var evict: String = _path_cache_order.pop_front()
-		_path_cache.erase(evict)
-	return raw
-
-func _invalidate_path_cache() -> void:
-	_path_cache.clear()
-	_path_cache_order.clear()
 
 # ---------------------------------------------------------------------------
 # Construction
@@ -343,123 +286,3 @@ func _make_wall(seg_length: float) -> StaticBody3D:
 	collider.shape = shape
 	body.add_child(collider)
 	return body
-
-# ---------------------------------------------------------------------------
-# Pathfinding graph
-# ---------------------------------------------------------------------------
-
-func _build_pathfinder() -> void:
-	pathfinder = AStar2D.new()
-	solid_cells.clear()
-	_invalidate_path_cache()
-	for cy in range(_grid_rows):
-		for cx in range(_grid_cols):
-			pathfinder.add_point(_cell_id(Vector2i(cx, cy)), Vector2(cx, cy))
-	for segment in _wall_segments:
-		_mark_wall_solid(segment["transform"], segment["length"])
-	_connect_neighbors()
-
-func _connect_neighbors() -> void:
-	var wrap_x: bool = topology != null and topology.wraps_x()
-	var wrap_z: bool = topology != null and topology.wraps_z()
-	var flip_z: bool = topology != null and topology.flips_z_on_x_wrap()
-	for cy in range(_grid_rows):
-		for cx in range(_grid_cols):
-			var from_cell := Vector2i(cx, cy)
-			if _is_solid(from_cell):
-				continue
-			for dx in [-1, 0, 1]:
-				for dy in [-1, 0, 1]:
-					if dx == 0 and dy == 0:
-						continue
-					var nb: Vector2i = _wrap_cell(Vector2i(cx + dx, cy + dy), wrap_x, wrap_z, flip_z)
-					if nb.x < 0:
-						continue
-					if _is_solid(nb):
-						continue
-					var from_id: int = _cell_id(from_cell)
-					var to_id: int = _cell_id(nb)
-					if not pathfinder.are_points_connected(from_id, to_id):
-						pathfinder.connect_points(from_id, to_id, true)
-
-func _wrap_cell(cell: Vector2i, wrap_x: bool, wrap_z: bool, flip_z: bool) -> Vector2i:
-	var cx: int = cell.x
-	var cy: int = cell.y
-	var x_crossed := false
-	if cx < 0:
-		if not wrap_x:
-			return Vector2i(-1, -1)
-		cx += _grid_cols
-		x_crossed = true
-	elif cx >= _grid_cols:
-		if not wrap_x:
-			return Vector2i(-1, -1)
-		cx -= _grid_cols
-		x_crossed = true
-	if cy < 0:
-		if not wrap_z:
-			return Vector2i(-1, -1)
-		cy += _grid_rows
-	elif cy >= _grid_rows:
-		if not wrap_z:
-			return Vector2i(-1, -1)
-		cy -= _grid_rows
-	if x_crossed and flip_z:
-		cy = _grid_rows - 1 - cy
-	return Vector2i(cx, cy)
-
-func _mark_wall_solid(wall_xform: Transform3D, seg_length: float) -> void:
-	var half_len: float = seg_length * 0.5 + PLAYER_CLEARANCE
-	var half_thick: float = WALL_THICKNESS * 0.5 + PLAYER_CLEARANCE
-	var inverse: Transform3D = wall_xform.affine_inverse()
-	var min_pos := Vector3(INF, 0.0, INF)
-	var max_pos := Vector3(-INF, 0.0, -INF)
-	for dx in [-half_len, half_len]:
-		for dz in [-half_thick, half_thick]:
-			var w: Vector3 = wall_xform * Vector3(dx, 0.0, dz)
-			min_pos.x = min(min_pos.x, w.x)
-			min_pos.z = min(min_pos.z, w.z)
-			max_pos.x = max(max_pos.x, w.x)
-			max_pos.z = max(max_pos.z, w.z)
-	var min_cell: Vector2i = _world_to_cell(min_pos)
-	var max_cell: Vector2i = _world_to_cell(max_pos)
-	for cx in range(min_cell.x, max_cell.x + 1):
-		for cy in range(min_cell.y, max_cell.y + 1):
-			var cell := Vector2i(cx, cy)
-			var world_point: Vector3 = _cell_to_world(cell)
-			var local: Vector3 = inverse * world_point
-			if absf(local.x) <= half_len and absf(local.z) <= half_thick:
-				solid_cells[_cell_id(cell)] = true
-
-func _is_solid(cell: Vector2i) -> bool:
-	if cell.x < 0 or cell.x >= _grid_cols or cell.y < 0 or cell.y >= _grid_rows:
-		return true
-	return solid_cells.has(_cell_id(cell))
-
-func _cell_id(cell: Vector2i) -> int:
-	return cell.y * _grid_cols + cell.x
-
-func _world_to_cell(p: Vector3) -> Vector2i:
-	var half_x: float = float(_grid_cols) * CELL_SIZE * 0.5
-	var half_z: float = float(_grid_rows) * CELL_SIZE * 0.5
-	var x: int = int(round((p.x + half_x) / CELL_SIZE))
-	var y: int = int(round((p.z + half_z) / CELL_SIZE))
-	return Vector2i(clamp(x, 0, _grid_cols - 1), clamp(y, 0, _grid_rows - 1))
-
-func _cell_to_world(cell: Vector2i) -> Vector3:
-	var half_x: float = float(_grid_cols) * CELL_SIZE * 0.5
-	var half_z: float = float(_grid_rows) * CELL_SIZE * 0.5
-	var x: float = float(cell.x) * CELL_SIZE - half_x + CELL_SIZE * 0.5
-	var z: float = float(cell.y) * CELL_SIZE - half_z + CELL_SIZE * 0.5
-	return Vector3(x, 0.0, z)
-
-func _nearest_open_cell(cell: Vector2i) -> Vector2i:
-	for radius in range(1, 6):
-		for dx in range(-radius, radius + 1):
-			for dy in range(-radius, radius + 1):
-				var c := Vector2i(cell.x + dx, cell.y + dy)
-				if c.x < 0 or c.x >= _grid_cols or c.y < 0 or c.y >= _grid_rows:
-					continue
-				if not _is_solid(c):
-					return c
-	return cell

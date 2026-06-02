@@ -4,6 +4,7 @@ extends Node
 
 @onready var holder: Node = $Holder
 
+const WindowState := preload("res://scripts/window_state.gd")
 const TITLE := preload("res://scenes/title_screen.tscn")
 const MENU := preload("res://scenes/main_menu.tscn")
 const MENU_V2 := preload("res://scenes/menu_v2.tscn")
@@ -12,6 +13,9 @@ const PARTY := preload("res://scenes/party.tscn")
 const ARENA := preload("res://scenes/arena.tscn")
 
 func _ready() -> void:
+	# Owns the OS window size across launches; lives under the persistent root so
+	# it survives screen swaps and catches the close notification.
+	add_child(WindowState.new())
 	_swap(TITLE.instantiate())
 
 func _swap(node: Node) -> void:

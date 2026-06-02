@@ -46,6 +46,12 @@ var telemetry_consent: String = ""
 var telemetry_id: String = ""
 # First-match onboarding overlay. False until the player finishes or skips it.
 var has_seen_tutorial: bool = false
+# Last OS window geometry. ZERO size means "never saved" - the first launch
+# fills the screen; later launches restore this size/position (or re-maximize
+# when window_maximized). Reset clears it back to the fill-screen default.
+var window_size: Vector2i = Vector2i.ZERO
+var window_position: Vector2i = Vector2i.ZERO
+var window_maximized: bool = false
 
 func _ready() -> void:
 	_load()
@@ -110,6 +116,17 @@ func set_telemetry_id(value: String) -> void:
 	telemetry_id = value
 	_save()
 
+# Persist the window geometry the player left the app at. No `changed` emit:
+# nothing live re-applies window size, and the generic signal drives audio /
+# graphics re-application we don't want to trigger on every resize.
+func set_window_geometry(size: Vector2i, position: Vector2i, maximized: bool) -> void:
+	if window_size == size and window_position == position and window_maximized == maximized:
+		return
+	window_size = size
+	window_position = position
+	window_maximized = maximized
+	_save()
+
 ## Restore every preference to its first-launch default. Keeps telemetry_id
 ## (a stable anonymous handle, not a preference) but clears the consent choice
 ## so the opt-in prompt runs again. Emits `changed` so the live scene re-applies.
@@ -121,6 +138,9 @@ func reset_to_defaults() -> void:
 	use_v1_menu = false
 	telemetry_consent = ""
 	has_seen_tutorial = false
+	window_size = Vector2i.ZERO
+	window_position = Vector2i.ZERO
+	window_maximized = false
 	_apply_audio()
 	_save()
 	changed.emit()
@@ -145,6 +165,9 @@ func _load() -> void:
 	telemetry_consent = String(cfg.get_value(SECTION, "telemetry_consent", ""))
 	telemetry_id = String(cfg.get_value(SECTION, "telemetry_id", ""))
 	has_seen_tutorial = bool(cfg.get_value(SECTION, "has_seen_tutorial", false))
+	window_size = cfg.get_value(SECTION, "window_size", Vector2i.ZERO) as Vector2i
+	window_position = cfg.get_value(SECTION, "window_position", Vector2i.ZERO) as Vector2i
+	window_maximized = bool(cfg.get_value(SECTION, "window_maximized", false))
 
 func _save() -> void:
 	var cfg := ConfigFile.new()
@@ -156,4 +179,7 @@ func _save() -> void:
 	cfg.set_value(SECTION, "telemetry_consent", telemetry_consent)
 	cfg.set_value(SECTION, "telemetry_id", telemetry_id)
 	cfg.set_value(SECTION, "has_seen_tutorial", has_seen_tutorial)
+	cfg.set_value(SECTION, "window_size", window_size)
+	cfg.set_value(SECTION, "window_position", window_position)
+	cfg.set_value(SECTION, "window_maximized", window_maximized)
 	cfg.save(CONFIG_PATH)

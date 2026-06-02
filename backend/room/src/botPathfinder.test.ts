@@ -102,4 +102,29 @@ describe('BotPathfinder avoidance', () => {
     // The waypoint should not be the straight-ahead next cell (2,5).
     expect(wpCell).not.toBe(2 + 5 * 10);
   });
+
+  it('still routes through occupied cells when they are the only way (soft, not hard)', () => {
+    // Same wall-with-a-gap geometry as the detour test: the only route from the
+    // left of the wall to the right bends around the tip. Mark every cell along
+    // that detour occupied. A hard block would make the destination unreachable
+    // and the search would give up (returning the raw target); the soft cost
+    // must instead route through, handing back a real around-the-tip waypoint.
+    const walls: WallSegment[] = [{ ax: 0, az: -HALF, bx: 0, bz: HALF - 2 * CELL }];
+    const pf = new BotPathfinder(walls, 'plane');
+    const from = center(2, 2);
+    const to = center(7, 2);
+    const fromCell = pf.cellAt(from);
+    const toCell = pf.cellAt(to);
+    // Occupy everything except the endpoints, so any route must cross occupancy.
+    const occupied = new Set<number>();
+    for (let cell = 0; cell < 100; cell += 1) {
+      if (cell !== fromCell && cell !== toCell) occupied.add(cell);
+    }
+    const wp = pf.nextWaypointAvoiding(from, to, occupied);
+    // It found a path despite the occupancy: the waypoint rounds the wall (it is
+    // not the raw target, which the bot can't see through the wall) and the body
+    // can reach it.
+    expect(wp).not.toBe(to);
+    expect(pathClearsWalls(walls, from.x, from.z, wp.x, wp.z)).toBe(true);
+  });
 });

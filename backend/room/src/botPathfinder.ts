@@ -29,17 +29,30 @@ interface GridShape {
   flipRowOnXWrap: boolean;
 }
 
+// Soft costs layered on the unit step cost so A* prefers a smoother route, not
+// just any shortest one. A cell walled on more sides costs a little more, so
+// paths lean toward open space rather than threading dead-end-adjacent cells; a
+// cell holding another player costs a lot more, so bots route around each other
+// (and around a frozen body parked in a corridor) instead of stacking up. The
+// occupancy cost is a soft penalty, not the old hard block, so a bot can still
+// push through when there's genuinely no other way rather than give up and walk
+// straight into the obstacle. Both are tuned against playtest feel.
+const WALL_AVOID_WEIGHT = 0.5;
+const OCCUPANCY_WEIGHT = 6;
+
 export class BotPathfinder {
   private readonly shape: GridShape;
   // adjacency[cell] is a bitset over the cell's neighbor list. Bit k set means
   // the k-th neighbor entry is reachable. The neighbor lookup is by direction
   // index (east, north, west, south), so adjacency stores 4 bits per cell.
   private readonly adjacency: Uint8Array;
-  // BFS cache: key is fromCell*total + toCell. Value is the cell chain from the
-  // step after fromCell through toCell ([] if unreachable / same cell). The map
-  // is fresh per pathfinder; bots typically query a handful of cell pairs per
-  // tick so it stays small. The avoiding variant skips the cache (its forbidden
-  // set varies per tick).
+  // Per-cell static cost added when entering it: WALL_AVOID_WEIGHT * the number
+  // of walled sides. Precomputed from adjacency since walls don't move.
+  private readonly wallCost: Float32Array;
+  // A* cache: key is fromCell*total + toCell. Value is the cell chain from the
+  // step after fromCell through toCell ([] if unreachable / same cell). Only
+  // the no-occupancy search is cached (its cost field is static); the
+  // occupancy-aware variant skips the cache since other players move each tick.
   private readonly chainCache = new Map<number, number[]>();
   // Walls kept for the line-of-sight funnel that smooths the cell path. A
   // segment between two points spanning more than this threshold has wrapped
@@ -52,42 +65,44 @@ export class BotPathfinder {
     this.shape = gridShapeFor(topology);
     const total = this.shape.cols * this.shape.rows;
     this.adjacency = new Uint8Array(total);
+    this.wallCost = new Float32Array(total);
     this.walls = walls;
     this.seamThreshold = 2 * Math.max(this.shape.cellX, this.shape.cellZ);
     this.buildAdjacency(walls);
+    this.computeWallCost();
   }
 
   /**
    * World-space point to walk toward, given current position `from` and the
-   * desired destination `to`. Runs BFS over the cell grid, then string-pulls
-   * the resulting cell path against line of sight so the bot aims at the
-   * farthest waypoint it can see in a straight line instead of stair-stepping
-   * cell center to cell center. Returns `to` unchanged when the endpoints
-   * share a cell or no path exists (the caller's slide-fallback then takes a
-   * stab at it).
+   * desired destination `to`. Runs weighted A* over the cell grid, then
+   * string-pulls the resulting cell path against line of sight so the bot aims
+   * at the farthest waypoint it can see in a straight line instead of
+   * stair-stepping cell center to cell center. Returns `to` unchanged when the
+   * endpoints share a cell or no path exists (the caller's slide-fallback then
+   * takes a stab at it).
    */
   nextWaypoint(from: Vec2, to: Vec2): Vec2 {
     const fromCell = this.worldToCell(from);
     const toCell = this.worldToCell(to);
     if (fromCell === toCell) return to;
-    // Adjacent and reachable: head straight there, no BFS or funnel needed.
+    // Adjacent and reachable: head straight there, no search or funnel needed.
     if (this.directlyReachable(fromCell, toCell)) return to;
     return this.funnel(from, this.cachedChain(fromCell, toCell), to);
   }
 
   /**
-   * Like nextWaypoint but treats the given cells as solid for this query.
-   * Used by the chase / rescue path so a frozen enemy parked in the corridor
-   * routes around instead of pinning the bot against the body. The avoid set
-   * must not include the destination cell (toCell is allowed). Skips the BFS
-   * cache because the avoid set varies per tick.
+   * Like nextWaypoint but adds a soft cost to the given cells for this query,
+   * so the bot prefers to route around them (other players, a frozen body in a
+   * corridor) yet can still pass through if there's no real alternative. The
+   * destination cell is never penalized. Skips the cache because the occupied
+   * set varies per tick.
    */
-  nextWaypointAvoiding(from: Vec2, to: Vec2, avoidCells: ReadonlySet<number>): Vec2 {
-    if (avoidCells.size === 0) return this.nextWaypoint(from, to);
+  nextWaypointAvoiding(from: Vec2, to: Vec2, occupiedCells: ReadonlySet<number>): Vec2 {
+    if (occupiedCells.size === 0) return this.nextWaypoint(from, to);
     const fromCell = this.worldToCell(from);
     const toCell = this.worldToCell(to);
     if (fromCell === toCell) return to;
-    return this.funnel(from, this.bfsChain(fromCell, toCell, avoidCells), to);
+    return this.funnel(from, this.aStarChain(fromCell, toCell, occupiedCells), to);
   }
 
   /** Public cell index for a world-space position; callers building an avoid
@@ -103,56 +118,92 @@ export class BotPathfinder {
   }
 
   // Cell chain from the step after fromCell through toCell, cached per
-  // (from, to) pair for the no-avoid common case (a swarm chasing one target
-  // pays the search once). Empty when unreachable.
+  // (from, to) pair for the no-occupancy common case (a swarm chasing one
+  // target pays the search once). Empty when unreachable.
   private cachedChain(fromCell: number, toCell: number): number[] {
     const total = this.shape.cols * this.shape.rows;
     const key = fromCell * total + toCell;
     const cached = this.chainCache.get(key);
     if (cached !== undefined) return cached;
-    const chain = this.bfsChain(fromCell, toCell);
+    const chain = this.aStarChain(fromCell, toCell);
     this.chainCache.set(key, chain);
     return chain;
   }
 
-  // BFS shortest path over the cell grid. Returns the cells from the step
-  // after fromCell through toCell inclusive, or [] when unreachable. `avoid`
-  // cells are solid for this query unless they are the destination.
-  private bfsChain(fromCell: number, toCell: number, avoid?: ReadonlySet<number>): number[] {
+  // Weighted A* over the cell grid. Step cost into a cell is 1 + its static
+  // wallCost, plus OCCUPANCY_WEIGHT when `occupied` holds it (never the
+  // destination). The heuristic is the wrap-aware cell Manhattan distance,
+  // admissible because the minimum step cost is 1. Returns the cells from the
+  // step after fromCell through toCell inclusive, or [] when unreachable.
+  private aStarChain(fromCell: number, toCell: number, occupied?: ReadonlySet<number>): number[] {
     const total = this.shape.cols * this.shape.rows;
-    const parent = new Int32Array(total);
-    parent.fill(-1);
-    parent[fromCell] = fromCell;
-    const queue: number[] = [fromCell];
-    let found = false;
-    while (queue.length > 0) {
-      const cur = queue.shift()!;
-      if (cur === toCell) {
-        found = true;
-        break;
-      }
+    const g = new Float64Array(total).fill(Infinity);
+    const came = new Int32Array(total).fill(-1);
+    const closed = new Uint8Array(total);
+    g[fromCell] = 0;
+    const open = new MinHeap();
+    open.push(fromCell, this.cellHeuristic(fromCell, toCell));
+    while (!open.isEmpty()) {
+      const cur = open.pop();
+      if (cur === toCell) break;
+      if (closed[cur]) continue;
+      closed[cur] = 1;
       const cc = cur % this.shape.cols;
       const cr = Math.floor(cur / this.shape.cols);
       const mask = this.adjacency[cur]!;
       for (let dir = 0; dir < 4; dir += 1) {
         if ((mask & (1 << dir)) === 0) continue;
         const nb = this.neighborCell(cc, cr, dir);
-        if (nb < 0) continue;
-        if (parent[nb] !== -1) continue;
-        if (avoid && nb !== toCell && avoid.has(nb)) continue;
-        parent[nb] = cur;
-        queue.push(nb);
+        if (nb < 0 || closed[nb]) continue;
+        let step = 1 + this.wallCost[nb]!;
+        if (occupied && nb !== toCell && occupied.has(nb)) step += OCCUPANCY_WEIGHT;
+        const tentative = g[cur]! + step;
+        if (tentative < g[nb]!) {
+          g[nb] = tentative;
+          came[nb] = cur;
+          open.push(nb, tentative + this.cellHeuristic(nb, toCell));
+        }
       }
     }
-    if (!found) return [];
+    if (g[toCell] === Infinity) return [];
     const rev: number[] = [];
     let cur = toCell;
     while (cur !== fromCell) {
       rev.push(cur);
-      cur = parent[cur]!;
+      cur = came[cur]!;
     }
     rev.reverse();
     return rev;
+  }
+
+  // Wrap-aware cell Manhattan distance (minimum step count), used as the A*
+  // heuristic. Underestimates true cost since every step costs at least 1.
+  private cellHeuristic(a: number, b: number): number {
+    const { cols, rows, wrapX, wrapZ } = this.shape;
+    const ac = a % cols;
+    const ar = Math.floor(a / cols);
+    const bc = b % cols;
+    const br = Math.floor(b / cols);
+    let dc = Math.abs(ac - bc);
+    if (wrapX) dc = Math.min(dc, cols - dc);
+    let dr = Math.abs(ar - br);
+    if (wrapZ) dr = Math.min(dr, rows - dr);
+    return dc + dr;
+  }
+
+  // Static per-cell entry cost from how many sides are walled (a boundary on a
+  // non-wrapping edge counts as a wall). Open cells cost ~0 extra; boxed-in
+  // cells cost more, so A* leans toward roomier routes.
+  private computeWallCost(): void {
+    const total = this.shape.cols * this.shape.rows;
+    for (let cell = 0; cell < total; cell += 1) {
+      let open = 0;
+      const mask = this.adjacency[cell]!;
+      for (let dir = 0; dir < 4; dir += 1) {
+        if (mask & (1 << dir)) open += 1;
+      }
+      this.wallCost[cell] = (4 - open) * WALL_AVOID_WEIGHT;
+    }
   }
 
   // String-pull the cell chain against line of sight: walk the cell centers
@@ -335,4 +386,64 @@ function gridShapeFor(topology: Topology): GridShape {
     wrapZ: topology !== 'plane',
     flipRowOnXWrap: false,
   };
+}
+
+// Minimal binary min-heap over (cell, priority) pairs for the A* open set.
+// Lazy: a cell can be pushed more than once as its g-score improves; the search
+// skips already-closed pops, so stale duplicates are harmless. Kept tiny and
+// allocation-light because it ports straight across to the GDScript bot.
+class MinHeap {
+  private readonly cells: number[] = [];
+  private readonly prio: number[] = [];
+
+  isEmpty(): boolean {
+    return this.cells.length === 0;
+  }
+
+  push(cell: number, priority: number): void {
+    this.cells.push(cell);
+    this.prio.push(priority);
+    let i = this.cells.length - 1;
+    while (i > 0) {
+      const parent = (i - 1) >> 1;
+      if (this.prio[parent]! <= this.prio[i]!) break;
+      this.swap(i, parent);
+      i = parent;
+    }
+  }
+
+  pop(): number {
+    const top = this.cells[0]!;
+    const lastCell = this.cells.pop()!;
+    const lastPrio = this.prio.pop()!;
+    if (this.cells.length > 0) {
+      this.cells[0] = lastCell;
+      this.prio[0] = lastPrio;
+      this.siftDown(0);
+    }
+    return top;
+  }
+
+  private siftDown(i: number): void {
+    const n = this.cells.length;
+    for (;;) {
+      const l = 2 * i + 1;
+      const r = 2 * i + 2;
+      let smallest = i;
+      if (l < n && this.prio[l]! < this.prio[smallest]!) smallest = l;
+      if (r < n && this.prio[r]! < this.prio[smallest]!) smallest = r;
+      if (smallest === i) break;
+      this.swap(i, smallest);
+      i = smallest;
+    }
+  }
+
+  private swap(a: number, b: number): void {
+    const c = this.cells[a]!;
+    this.cells[a] = this.cells[b]!;
+    this.cells[b] = c;
+    const p = this.prio[a]!;
+    this.prio[a] = this.prio[b]!;
+    this.prio[b] = p;
+  }
 }

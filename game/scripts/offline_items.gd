@@ -11,13 +11,20 @@ extends RefCounted
 
 const GridMaze := preload("res://scripts/grid_maze.gd")
 const TopologyScript := preload("res://scripts/topology/topology.gd")
+const SharedConstants := preload("res://scripts/shared_constants.gd")
 
 const WORLD_WIDTH := 80.0
-const ITEM_RESPAWN_MS := 30000
-const ITEM_PICKUP_RADIUS := 1.6
-const ITEM_SPAWN_KEEP_DENOM := 3
-const ITEM_TYPES_ALWAYS := ["surge", "radar"]
-const ITEM_TYPES_ROTATING := ["leap", "portal", "clone", "overcharge", "cloak"]
+# Scalar + type-list constants come from the shared generator (single source);
+# the generator emits ms/counts as floats, so cast the integer ones back. The
+# structural pieces below (EXCLUDED_CENTERS, the grid geometry, the LCG) are
+# code-mirrors guarded by the determinism fixture.
+const ITEM_RESPAWN_MS := int(SharedConstants.ITEM_RESPAWN_MS)
+const ITEM_PICKUP_RADIUS := SharedConstants.ITEM_PICKUP_RADIUS
+const ITEM_SPAWN_KEEP_DENOM := int(SharedConstants.ITEM_SPAWN_KEEP_DENOM)
+const CLOAK_DURATION_MS := int(SharedConstants.CLOAK_DURATION_MS)
+const RADAR_DURATION_MS := int(SharedConstants.RADAR_DURATION_MS)
+const ITEM_TYPES_ALWAYS := SharedConstants.ITEM_TYPES_ALWAYS
+const ITEM_TYPES_ROTATING := SharedConstants.ITEM_TYPES_ROTATING
 # Team-spawn + centroid cells, excluded so items don't land on spawning players.
 const EXCLUDED_CENTERS := [Vector3(-12, 0, 4), Vector3(12, 0, 4), Vector3(0, 0, 0)]
 

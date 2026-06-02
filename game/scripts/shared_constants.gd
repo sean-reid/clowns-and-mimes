@@ -66,6 +66,17 @@ const OCCUPANCY_WEIGHT := 6.0
 const WALL_THICKNESS := 0.4
 const PLAYER_RADIUS := 0.4
 
+# Mirrored from backend/shared/src/items.ts
+const ITEM_RESPAWN_MS := 30000.0
+const ITEM_PICKUP_RADIUS := 1.6
+const ITEM_SPAWN_KEEP_DENOM := 3.0
+const RADAR_DURATION_MS := 5000.0
+const CLOAK_DURATION_MS := 4000.0
+
 # Mirrored from backend/shared/src/names.ts
 const NAME_ADJECTIVES := ["Silent", "Painted", "Loud", "Floppy", "Crooked", "Bashful", "Velvet", "Hushed", "Ruffled", "Striped", "Glossy", "Pale", "Sneaky", "Whiskered", "Brittle", "Tipsy", "Polka", "Wobbly", "Crinkled", "Powdered", "Squeaky", "Tufted", "Knobbly", "Frilly", "Wonky", "Boggled", "Plucky", "Drooping", "Frazzled", "Soggy", "Greasy", "Jaunty", "Saggy", "Lopsided", "Petite", "Stilted", "Drippy", "Mottled", "Googly", "Spangled", "Befuddled", "Twitchy", "Mournful", "Limpid", "Smudged", "Curdled", "Cracked", "Bumbling", "Threadbare", "Daffy", "Dusty", "Garish", "Hapless", "Wistful", "Brassy", "Maudlin", "Frumpy", "Yawning", "Stooped", "Vexed", "Spotty", "Lurching", "Foggy", "Crumbly", "Goofy", "Zany", "Wacky", "Kooky", "Loopy", "Nutty", "Bonkers", "Clumsy", "Giddy", "Madcap", "Cockeyed", "Harebrained", "Addled", "Ditzy", "Screwball", "Cuckoo", "Jumbled", "Galumphing", "Bamboozled", "Slapstick"]
 const NAME_NOUNS := ["Bozo", "Coulrophobe", "Pierrot", "Harlequin", "Buffoon", "Jester", "Marceau", "Tramp", "Auguste", "Carnie", "Pagliacci", "Punchinello", "Hopo", "Cake", "Honk", "Greasepaint", "Stripes", "Tear", "Glove", "Wig", "Nose", "Shoe", "Banana", "Pinwheel", "Smile", "Frown", "Lapel", "Pocket", "Hatband", "Cravat", "Suspender", "Bowtie", "Trumpet", "Kazoo", "Squirt", "Ladder", "Bucket", "Pratfall", "Cartwheel", "Tightrope", "Unicycle", "Confetti", "Crumpet", "Boutonniere", "Mistletoe", "Marionette", "Glissando", "Pantomime", "Vaudeville", "Curtain", "Footlight", "Spotlight", "Soliloquy", "Pirouette", "Maskmaker", "Topiary", "Sashay", "Gambol", "Tumbler", "Patter", "Whoopee", "Mime", "Clown", "Zanni", "Pulcinella", "Brighella", "Colombina", "Pantalone", "Scaramuccia", "Dottore", "Capitano", "Innamorato", "Lazzo", "Burla", "Maschera", "Carnevale", "Tarantella", "Saltarello", "Serenata", "Gondola", "Pizzicato", "Cannoli", "Biscotto"]
+
+# Mirrored from backend/shared/src/items.ts
+const ITEM_TYPES_ALWAYS := ["surge", "radar"]
+const ITEM_TYPES_ROTATING := ["leap", "portal", "clone", "overcharge", "cloak"]

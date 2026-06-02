@@ -156,6 +156,14 @@ var cloak_until_ms: int = 0
 # own copy here so holding Space sends exactly one jump instead of one
 # per physics tick. Unused for online local + remote bodies.
 var _jump_was_held_offline: bool = false
+# Offline power-up state for the local body. Online drives equivalents
+# server-side (leaping/cloak ride the delta; surge is applied in the server
+# movement step), so these stay 0/false on the online path. offline_mode sets
+# them when the held item is used.
+var leap_armed: bool = false
+var surge_until_ms: int = 0
+# Rising-edge tracker for the offline-local use-item key.
+var _use_item_was_held_offline: bool = false
 # Cached scale applied to the head mesh each frame. Lerped back to
 # Vector3.ONE over SQUASH_RECOVER_S when no jump is active so the
 # transition out of a jump doesn't pop. Stored on the node so the
@@ -320,11 +328,22 @@ func _physics_process(delta: float) -> void:
 	input_dir.x -= Input.get_action_strength("move_left")
 	input_dir.x += Input.get_action_strength("move_right")
 	input_dir = input_dir.normalized()
+	var now_ms: int = int(Time.get_unix_time_from_system() * 1000.0)
 	var sprinting := Input.is_action_pressed("sprint") and sprint_energy > 0.0 and input_dir.length() > 0.0
 	var speed := SPRINT_SPEED if sprinting else WALK_SPEED
+	# Surge power-up multiplies move speed for its window (matches the server's
+	# movement step, where surge scales WALK/SPRINT alike).
+	if surge_until_ms > now_ms:
+		speed *= SharedConstants.SURGE_SPEED_MULT
 	var basis_dir := transform.basis * input_dir
 	velocity.x = basis_dir.x * speed
 	velocity.z = basis_dir.z * speed
+	# Use-item on the rising edge of E (offline-local; online sends a message
+	# from arena.gd instead). offline_mode clears the slot and applies the effect.
+	var use_pressed: bool = Input.is_action_pressed("use_item")
+	if use_pressed and not _use_item_was_held_offline and arena != null and arena.offline != null:
+		arena.offline.use_item_local()
+	_use_item_was_held_offline = use_pressed
 	# Rising-edge spacebar so a held key sends one jump, not 60. Online holds
 	# the same edge in arena.gd::_jump_was_held; the predictor builds its
 	# input frame from there. Offline-local runs Physics.step_jump itself
@@ -332,8 +351,13 @@ func _physics_process(delta: float) -> void:
 	var jump_pressed: bool = Input.is_action_pressed("jump")
 	var jump_edge: bool = jump_pressed and not _jump_was_held_offline
 	_jump_was_held_offline = jump_pressed
-	var now_ms: int = int(Time.get_unix_time_from_system() * 1000.0)
+	# A banked Leap turns this takeoff into the boosted arc; cleared on landing.
+	if jump_edge and leap_armed:
+		leaping = true
+		leap_armed = false
 	jump_started_at_ms = PhysicsScript.step_jump(jump_started_at_ms, jump_edge, now_ms)
+	if jump_started_at_ms == -1:
+		leaping = false
 	move_and_slide()
 	# Apply arc Y after move_and_slide so the slide pass doesn't shave the
 	# body's altitude. The arc is deterministic - same math as the server

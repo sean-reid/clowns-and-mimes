@@ -15,6 +15,7 @@ const TEST_SCRIPTS: Array[String] = [
 	"res://tests/test_bot_perception.gd",
 	"res://tests/test_bot_decision.gd",
 	"res://tests/test_bot_decision_determinism.gd",
+	"res://tests/test_bot_goals_determinism.gd",
 	"res://tests/test_offline_items.gd",
 	"res://tests/test_offline_items_determinism.gd",
 	"res://tests/test_projectiles_determinism.gd",

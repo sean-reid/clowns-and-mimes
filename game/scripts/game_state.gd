@@ -4,9 +4,17 @@ extends Node
 
 signal mode_changed(mode: String)
 signal topology_changed(topology: String)
+## Fired when the menu's connectivity probe resolves or the state changes, so
+## screens can reflect connecting / online / offline without re-querying.
+signal connectivity_changed(state: int, reason: String)
 
 enum Topology { PLANE, TORUS, MOBIUS, KLEIN }
 enum Mode { OFFLINE, HOST, JOIN, OPEN }
+# UNKNOWN before the first probe; CONNECTING while one is in flight; then ONLINE
+# (matchmaker reachable) or OFFLINE (unreachable). connectivity_reason explains
+# OFFLINE ("no_connection"; "out_of_date" reserved for a version mismatch
+# surfaced on an action).
+enum Connectivity { UNKNOWN, CONNECTING, ONLINE, OFFLINE }
 
 const TOPOLOGY_NAMES := {
 	Topology.PLANE: "plane",
@@ -18,6 +26,8 @@ const TOPOLOGY_NAMES := {
 var username: String = ""
 var mode: Mode = Mode.OFFLINE
 var topology: Topology = Topology.PLANE
+var connectivity: Connectivity = Connectivity.UNKNOWN
+var connectivity_reason: String = ""
 var lobby_code: String = ""
 var server_url: String = ""
 # Host token from the matchmaker create response. Sent on the WS join so the
@@ -62,6 +72,11 @@ func set_mode(new_mode: Mode) -> void:
 func set_topology(new_topology: Topology) -> void:
 	topology = new_topology
 	topology_changed.emit(TOPOLOGY_NAMES[topology])
+
+func set_connectivity(state: Connectivity, reason: String = "") -> void:
+	connectivity = state
+	connectivity_reason = reason
+	connectivity_changed.emit(int(state), reason)
 
 func topology_as_string() -> String:
 	return TOPOLOGY_NAMES[topology]

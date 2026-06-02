@@ -60,6 +60,8 @@ func start() -> void:
 	arena.item_renderer.render_from_snapshot(_item_wire())
 	if arena.projectile_renderer == null:
 		arena.projectile_renderer = ProjectileRendererScript.new(arena)
+	# Offline can shoot now, so show the aiming crosshair like the online path.
+	arena.hud.set_crosshair_visible(true)
 	arena.rules.start(arena.topology)
 
 ## Called from arena._process during offline play. Pushes live positions

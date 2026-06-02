@@ -121,5 +121,49 @@
         "z": 0
       }
     }
+  ],
+  "portalScenarios": [
+    {
+      "name": "entry_side_in_hemisphere",
+      "topology": "plane",
+      "botX": 3,
+      "botZ": 0,
+      "awayX": 1,
+      "awayZ": 0,
+      "entryX": 5,
+      "entryZ": 0,
+      "exitX": -5,
+      "exitZ": 0,
+      "expected": {
+        "x": 5,
+        "z": 0
+      }
+    },
+    {
+      "name": "exit_side",
+      "topology": "plane",
+      "botX": -3,
+      "botZ": 0,
+      "awayX": 1,
+      "awayZ": 0,
+      "entryX": 5,
+      "entryZ": 0,
+      "exitX": -5,
+      "exitZ": 0,
+      "expected": null
+    },
+    {
+      "name": "wrong_hemisphere",
+      "topology": "plane",
+      "botX": 3,
+      "botZ": 0,
+      "awayX": -1,
+      "awayZ": 0,
+      "entryX": 5,
+      "entryZ": 0,
+      "exitX": -5,
+      "exitZ": 0,
+      "expected": null
+    }
   ]
 }

@@ -85,7 +85,16 @@ const SOURCES = [
       'BOT_JUMP_CORNER_THREAT_RADIUS',
       'CLONE_DURATION_MS',
       'CLONE_SPAWN_OFFSET',
+      'WALL_AVOID_WEIGHT',
+      'OCCUPANCY_WEIGHT',
     ],
+  },
+  {
+    file: 'backend/shared/src/labyrinth.ts',
+    sourceUrl: 'backend/shared/src/labyrinth.ts',
+    // WALL_CLEARANCE itself is computed (not a literal), so share its literal
+    // parts; the GDScript side recombines them.
+    consts: ['WALL_THICKNESS', 'PLAYER_RADIUS'],
   },
 ];
 

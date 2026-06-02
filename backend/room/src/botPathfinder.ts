@@ -16,6 +16,7 @@ import { pathClearsWalls, pathCrossesWall, type WallSegment } from '@cm/shared/l
 import { GRID_MAZE_N, MOBIUS_GRID_X, MOBIUS_GRID_Z } from '@cm/shared/gridMaze';
 import { MOBIUS_HALF_X, MOBIUS_HALF_Z } from '@cm/shared/mobius';
 import { WORLD_WIDTH } from '@cm/shared/topology';
+import { OCCUPANCY_WEIGHT, WALL_AVOID_WEIGHT } from '@cm/shared/botTuning';
 
 interface GridShape {
   cols: number;
@@ -36,9 +37,8 @@ interface GridShape {
 // (and around a frozen body parked in a corridor) instead of stacking up. The
 // occupancy cost is a soft penalty, not the old hard block, so a bot can still
 // push through when there's genuinely no other way rather than give up and walk
-// straight into the obstacle. Both are tuned against playtest feel.
-const WALL_AVOID_WEIGHT = 0.5;
-const OCCUPANCY_WEIGHT = 6;
+// straight into the obstacle. Both live in @cm/shared/botTuning so the offline
+// GDScript pathfinder reads identical weights.
 
 export class BotPathfinder {
   private readonly shape: GridShape;

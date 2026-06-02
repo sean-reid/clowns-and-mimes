@@ -59,6 +59,12 @@ const BOT_JUMP_EVADE_BUFFER := 0.5
 const BOT_JUMP_CORNER_THREAT_RADIUS := 4.0
 const CLONE_DURATION_MS := 30000.0
 const CLONE_SPAWN_OFFSET := 2.0
+const WALL_AVOID_WEIGHT := 0.5
+const OCCUPANCY_WEIGHT := 6.0
+
+# Mirrored from backend/shared/src/labyrinth.ts
+const WALL_THICKNESS := 0.4
+const PLAYER_RADIUS := 0.4
 
 # Mirrored from backend/shared/src/names.ts
 const NAME_ADJECTIVES := ["Silent", "Painted", "Loud", "Floppy", "Crooked", "Bashful", "Velvet", "Hushed", "Ruffled", "Striped", "Glossy", "Pale", "Sneaky", "Whiskered", "Brittle", "Tipsy", "Polka", "Wobbly", "Crinkled", "Powdered", "Squeaky", "Tufted", "Knobbly", "Frilly", "Wonky", "Boggled", "Plucky", "Drooping", "Frazzled", "Soggy", "Greasy", "Jaunty", "Saggy", "Lopsided", "Petite", "Stilted", "Drippy", "Mottled", "Googly", "Spangled", "Befuddled", "Twitchy", "Mournful", "Limpid", "Smudged", "Curdled", "Cracked", "Bumbling", "Threadbare", "Daffy", "Dusty", "Garish", "Hapless", "Wistful", "Brassy", "Maudlin", "Frumpy", "Yawning", "Stooped", "Vexed", "Spotty", "Lurching", "Foggy", "Crumbly", "Goofy", "Zany", "Wacky", "Kooky", "Loopy", "Nutty", "Bonkers", "Clumsy", "Giddy", "Madcap", "Cockeyed", "Harebrained", "Addled", "Ditzy", "Screwball", "Cuckoo", "Jumbled", "Galumphing", "Bamboozled", "Slapstick"]

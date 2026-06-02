@@ -40,6 +40,27 @@ func _assert_scenario(sc: Dictionary) -> void:
 	assert_approx(dest.x, float(ex.x), TOLERANCE, "%s: target x" % name)
 	assert_approx(dest.z, float(ex.z), TOLERANCE, "%s: target z" % name)
 
+func _assert_portal(sc: Dictionary) -> void:
+	var name: String = sc.name
+	var topo := TopologyFactory.from_string(sc.topology)
+	var got: Variant = BotGoals.portal_escape_target(
+		Vector3(float(sc.botX), 0.5, float(sc.botZ)),
+		Vector3(float(sc.awayX), 0.0, float(sc.awayZ)),
+		Vector3(float(sc.entryX), 0.5, float(sc.entryZ)),
+		Vector3(float(sc.exitX), 0.5, float(sc.exitZ)),
+		topo
+	)
+	var ex: Variant = sc.expected
+	if ex == null:
+		assert_true(got == null, "%s: expected null" % name)
+		return
+	assert_true(got != null, "%s: expected a mouth, got null" % name)
+	if got == null:
+		return
+	var dest: Vector3 = got
+	assert_approx(dest.x, float(ex.x), TOLERANCE, "%s: mouth x" % name)
+	assert_approx(dest.z, float(ex.z), TOLERANCE, "%s: mouth z" % name)
+
 func test_goals_match_fixture() -> void:
 	var fixture := _load_fixture()
 	if fixture.is_empty():
@@ -48,3 +69,5 @@ func test_goals_match_fixture() -> void:
 	assert_true(scenarios.size() > 0, "fixture has scenarios")
 	for sc in scenarios:
 		_assert_scenario(sc)
+	for sc in fixture.get("portalScenarios", []):
+		_assert_portal(sc)

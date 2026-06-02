@@ -23,3 +23,19 @@ static func nearest_item_target(
 			best_dist = d
 			best = Vector3(pos.x, 0.0, pos.z)
 	return best
+
+# Where a fleeing bot should walk to take the portal it opened, or null to
+# ignore the portal this tick. `away` is the unit flee direction (away from the
+# pursuer). Returns the entry mouth only when the bot is on the entry side
+# (closer to entry than exit, so it won't teleport out and path back) and the
+# mouth lies in the flee hemisphere (so it never doubles back toward the
+# pursuer to reach it). Mirrors botGoals.ts portalEscapeTarget.
+static func portal_escape_target(
+	bot_pos: Vector3, away: Vector3, entry: Vector3, exit: Vector3, topology: TopologyScript
+) -> Variant:
+	if topology.distance(bot_pos, entry) > topology.distance(bot_pos, exit):
+		return null
+	var to_mouth: Vector3 = topology.delta(bot_pos, entry)
+	if to_mouth.x * away.x + to_mouth.z * away.z <= 0.0:
+		return null
+	return Vector3(entry.x, 0.0, entry.z)

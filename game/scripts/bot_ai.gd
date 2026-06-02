@@ -194,6 +194,18 @@ func _collect_target(bot: Dictionary):
 		SharedConstants.BOT_ITEM_SEEK_RADIUS
 	)
 
+# The entry mouth of a portal this bot opened, if heading into it furthers the
+# flee (BotGoals.portal_escape_target gates on side + hemisphere); else null.
+func _portal_escape(away: Vector3) -> Variant:
+	if player.arena == null or player.arena.offline == null:
+		return null
+	var portal: Variant = player.arena.offline.bot_portal_entry(player_id)
+	if portal == null:
+		return null
+	return BotGoalsScript.portal_escape_target(
+		player.global_position, away, portal.a, portal.b, topology
+	)
+
 func _choose_target() -> void:
 	match state:
 		State.CHASE:
@@ -205,8 +217,13 @@ func _choose_target() -> void:
 			away.y = 0.0
 			if away.length() < 0.001:
 				away = Vector3(rng.randf_range(-1.0, 1.0), 0.0, rng.randf_range(-1.0, 1.0))
-			patrol_target = topology.wrap(
-				player.global_position + away.normalized() * SharedConstants.BOT_FLEE_PROJECTION
+			away = away.normalized()
+			# If this bot opened a portal, head into its own entry mouth instead
+			# of the open-field flee point - that's why it spent the item.
+			var mouth: Variant = _portal_escape(away)
+			patrol_target = (
+				mouth if mouth != null
+				else topology.wrap(player.global_position + away * SharedConstants.BOT_FLEE_PROJECTION)
 			)
 		State.RESCUE:
 			patrol_target = _decision.rescue_target.position

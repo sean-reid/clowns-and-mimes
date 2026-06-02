@@ -185,6 +185,7 @@ func _open_portal(owner: Node, player_id: String) -> void:
 		return
 	_portal_seq += 1
 	geom["id"] = "portal_%d" % _portal_seq
+	geom["owner"] = player_id
 	geom["expires_at"] = (
 		int(Time.get_unix_time_from_system() * 1000.0) + OfflinePortalsScript.PORTAL_DURATION_MS
 	)
@@ -192,6 +193,15 @@ func _open_portal(owner: Node, player_id: String) -> void:
 	# The opener stands on the entry mouth; block them until they step clear so
 	# the pair doesn't instantly teleport them off it.
 	_portal_blocked[player_id] = true
+
+# Entry (a) + exit (b) mouths of the live portal `player_id` opened, or null.
+# A fleeing bot heads into its own entry mouth via BotGoals.portal_escape_target.
+# Mirrors the server's botPortalEntry.
+func bot_portal_entry(player_id: String) -> Variant:
+	for portal in _portals:
+		if portal.get("owner", "") == player_id:
+			return {"a": portal.a, "b": portal.b}
+	return null
 
 # Expire elapsed pairs, then teleport any player standing on a live mouth to the
 # opposite exit. Blocked-until-clear + per-player cooldown stop the bounce.

@@ -10,7 +10,7 @@
 import { writeFile } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { nearestItemTarget } from '../backend/room/src/botGoals.ts';
+import { nearestItemTarget, portalEscapeTarget } from '../backend/room/src/botGoals.ts';
 import { WORLD_WIDTH } from '../backend/shared/src/topology.ts';
 import type { Topology, Vec3 } from '@cm/shared';
 
@@ -87,6 +87,74 @@ const SCENARIOS: Scenario[] = [
   },
 ];
 
+// portalEscapeTarget scenarios: entry at +5, exit at -5 on the x axis.
+interface PortalScenario {
+  name: string;
+  topology: Topology;
+  botX: number;
+  botZ: number;
+  awayX: number;
+  awayZ: number;
+  entryX: number;
+  entryZ: number;
+  exitX: number;
+  exitZ: number;
+}
+
+const PORTAL_SCENARIOS: PortalScenario[] = [
+  // On the entry side and the mouth is in the flee hemisphere -> take it.
+  {
+    name: 'entry_side_in_hemisphere',
+    topology: 'plane',
+    botX: 3,
+    botZ: 0,
+    awayX: 1,
+    awayZ: 0,
+    entryX: 5,
+    entryZ: 0,
+    exitX: -5,
+    exitZ: 0,
+  },
+  // Closer to the exit than the entry -> ignore (would teleport back).
+  {
+    name: 'exit_side',
+    topology: 'plane',
+    botX: -3,
+    botZ: 0,
+    awayX: 1,
+    awayZ: 0,
+    entryX: 5,
+    entryZ: 0,
+    exitX: -5,
+    exitZ: 0,
+  },
+  // On the entry side but the mouth is behind the flee direction -> ignore.
+  {
+    name: 'wrong_hemisphere',
+    topology: 'plane',
+    botX: 3,
+    botZ: 0,
+    awayX: -1,
+    awayZ: 0,
+    entryX: 5,
+    entryZ: 0,
+    exitX: -5,
+    exitZ: 0,
+  },
+];
+
+function runPortal(s: PortalScenario) {
+  const mouth = portalEscapeTarget(
+    { x: s.botX, z: s.botZ },
+    { x: s.awayX, z: s.awayZ },
+    { x: s.entryX, z: s.entryZ },
+    { x: s.exitX, z: s.exitZ },
+    s.topology,
+    WORLD_WIDTH,
+  );
+  return { ...s, expected: mouth ? { x: mouth.x, z: mouth.z } : null };
+}
+
 function run(s: Scenario) {
   const best = nearestItemTarget(
     { x: s.botX, z: s.botZ },
@@ -107,11 +175,20 @@ function run(s: Scenario) {
 }
 
 async function main(): Promise<void> {
-  const fixture = { schemaVersion: 1, scenarios: SCENARIOS.map(run) };
+  const fixture = {
+    schemaVersion: 1,
+    scenarios: SCENARIOS.map(run),
+    portalScenarios: PORTAL_SCENARIOS.map(runPortal),
+  };
   await writeFile(OUTPUT, JSON.stringify(fixture, null, 2) + '\n');
   console.log(`wrote ${OUTPUT}`);
   console.log(
-    `scenarios: ${fixture.scenarios
+    `items: ${fixture.scenarios
+      .map((s) => `${s.name}=${s.expected ? `(${s.expected.x},${s.expected.z})` : 'null'}`)
+      .join(', ')}`,
+  );
+  console.log(
+    `portal: ${fixture.portalScenarios
       .map((s) => `${s.name}=${s.expected ? `(${s.expected.x},${s.expected.z})` : 'null'}`)
       .join(', ')}`,
   );

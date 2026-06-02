@@ -125,7 +125,12 @@ func _start_matchmaking() -> void:
 		GameState.Mode.OPEN:
 			matchmaker.join_open(GameState.party_id)
 		_:
-			_go_offline("offline")
+			# Explicit offline mode resolves synchronously here in _ready, but
+			# the scene swapper connects our requested_screen handler only after
+			# add_child returns (add_child runs _ready first). Defer the offline
+			# transition one idle cycle so the "arena" emit isn't fired - and
+			# lost - before that connection exists.
+			_go_offline.call_deferred("offline")
 			return
 	_schedule_fallback_timer()
 

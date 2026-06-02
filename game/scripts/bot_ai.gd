@@ -26,6 +26,7 @@ const BOT_NO_PROGRESS_WINDOW_S := 0.8
 const TopologyScript := preload("res://scripts/topology/topology.gd")
 const GameRulesScript := preload("res://scripts/game_rules.gd")
 const PhysicsScript := preload("res://scripts/physics.gd")
+const BotPathfinderScript := preload("res://scripts/bot_pathfinder.gd")
 
 enum State { PATROL, CHASE, FLEE, RESCUE }
 
@@ -42,8 +43,10 @@ var accumulated: float = 0.0
 var patrol_target: Vector3 = Vector3.ZERO
 var stuck_clock: float = 0.0
 var last_position: Vector3 = Vector3.ZERO
-var current_path: Array[Vector3] = []
-var path_index: int = 0
+# Weighted-A* pathfinder shared with the server (built from the maze walls in
+# attach). Null when there's no labyrinth, in which case the bot steers
+# straight at its target.
+var pathfinder: RefCounted = null
 # Seconds since this bot last triggered a jump. Initialised to a value
 # well past the refractory window so the very first eligible tick can
 # jump if the trigger fires.
@@ -62,6 +65,8 @@ func attach(p: CharacterBody3D, id: String, rules_ref: Node, top: TopologyScript
 	rules = rules_ref
 	topology = top
 	labyrinth = lab
+	if lab != null:
+		pathfinder = BotPathfinderScript.new(lab.wall_endpoints(), top.name())
 
 func _physics_process(delta: float) -> void:
 	if player == null or rules == null:
@@ -119,32 +124,38 @@ func _choose_target() -> void:
 	if stuck_clock > STUCK_TIME:
 		_pick_patrol_target()
 		stuck_clock = 0.0
-	_recompute_path()
 
-func _recompute_path() -> void:
-	if labyrinth == null:
-		current_path = [patrol_target]
-		path_index = 0
-		return
-	current_path = labyrinth.find_path(player.global_position, patrol_target)
-	# get_point_path returns at least the start cell; aim past it.
-	path_index = 1 if current_path.size() > 1 else 0
-
-func _next_waypoint() -> Vector3:
-	while path_index < current_path.size():
-		var wp: Vector3 = current_path[path_index]
-		var d: float = topology.distance(player.global_position, wp) if topology != null else Vector2(wp.x - player.global_position.x, wp.z - player.global_position.z).length()
-		if d < 1.0:
-			path_index += 1
+# Cells holding other players, as a set the pathfinder soft-avoids so bots
+# spread out and route around each other. The current target is exempted so the
+# bot still closes on it (the pathfinder also never penalizes the goal cell).
+func _occupied_cells(preserve_id: String) -> Dictionary:
+	var out: Dictionary = {}
+	if pathfinder == null:
+		return out
+	for pid in rules.players:
+		if pid == player_id or pid == preserve_id:
 			continue
-		return wp
-	return patrol_target
+		var pos: Vector3 = rules.players[pid].get("position", Vector3.ZERO)
+		out[pathfinder.cell_at(pos)] = true
+	return out
 
 func _drive() -> void:
 	if topology == null:
 		player.bot_intent = Vector3.ZERO
 		return
-	var target: Vector3 = _next_waypoint()
+	# Ask the shared A* pathfinder for the next waypoint toward patrol_target,
+	# routing around other players; physics (move_and_slide) handles the actual
+	# wall sliding. Falls back to steering straight when there's no labyrinth.
+	var target: Vector3 = patrol_target
+	if pathfinder != null:
+		var preserve_id: String = ""
+		if state == State.CHASE:
+			preserve_id = _nearest_enemy_id()
+		elif state == State.RESCUE:
+			preserve_id = _nearest_frozen_teammate_id()
+		target = pathfinder.next_waypoint_avoiding(
+			player.global_position, patrol_target, _occupied_cells(preserve_id)
+		)
 	var to_target: Vector3 = topology.delta(player.global_position, target)
 	to_target.y = 0.0
 	if to_target.length() < 0.05:

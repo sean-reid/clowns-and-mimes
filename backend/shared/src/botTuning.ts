@@ -44,3 +44,9 @@ export const BOT_JUMP_CORNER_THREAT_RADIUS = 4.0;
 // Clone power-up ally lifetime + spawn offset.
 export const CLONE_DURATION_MS = 30000;
 export const CLONE_SPAWN_OFFSET = 2.0;
+
+// Weighted-A* path costs. A cell walled on more sides costs a little more so
+// routes lean toward open space; a cell holding another player costs a lot more
+// (soft, not a hard block) so bots route around each other. Tuned in playtest.
+export const WALL_AVOID_WEIGHT = 0.5;
+export const OCCUPANCY_WEIGHT = 6;

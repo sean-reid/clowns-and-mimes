@@ -20,6 +20,7 @@ const TEST_SCRIPTS: Array[String] = [
 	"res://tests/test_bot_coordination_determinism.gd",
 	"res://tests/test_offline_items.gd",
 	"res://tests/test_offline_items_determinism.gd",
+	"res://tests/test_offline_mode_lifecycle.gd",
 	"res://tests/test_projectiles_determinism.gd",
 	"res://tests/test_portals_determinism.gd",
 	"res://tests/test_username_generator.gd",

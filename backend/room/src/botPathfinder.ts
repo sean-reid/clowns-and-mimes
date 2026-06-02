@@ -12,7 +12,7 @@
 // bots all chasing the same target only pays the search cost once.
 
 import type { Topology, Vec2 } from '@cm/shared';
-import { pathCrossesWall, type WallSegment } from '@cm/shared/labyrinth';
+import { pathClearsWalls, pathCrossesWall, type WallSegment } from '@cm/shared/labyrinth';
 import { GRID_MAZE_N, MOBIUS_GRID_X, MOBIUS_GRID_Z } from '@cm/shared/gridMaze';
 import { MOBIUS_HALF_X, MOBIUS_HALF_Z } from '@cm/shared/mobius';
 import { WORLD_WIDTH } from '@cm/shared/topology';
@@ -179,7 +179,12 @@ export class BotPathfinder {
         Math.abs(c.z - prev.z) > this.seamThreshold
       )
         break;
-      if (this.walls.length > 0 && pathCrossesWall(this.walls, from.x, from.z, c.x, c.z)) break;
+      // Clearance-aware line of sight: only shortcut to a waypoint the bot's
+      // body can reach in a straight line without scraping a wall. A plain
+      // crossing test would accept a diagonal that skims a wall tip (the
+      // center-to-center line never enters the wall), and the bot would then
+      // pin on the corner because the movement layer enforces WALL_CLEARANCE.
+      if (this.walls.length > 0 && !pathClearsWalls(this.walls, from.x, from.z, c.x, c.z)) break;
       best = c;
       prev = c;
     }

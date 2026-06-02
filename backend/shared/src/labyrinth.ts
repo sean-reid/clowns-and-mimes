@@ -170,6 +170,31 @@ export function pointBlockedByWall(walls: readonly WallSegment[], x: number, z: 
   return false;
 }
 
+/**
+ * Can a body of radius `clearance` travel the straight segment (ax,az)->(bx,bz)
+ * without any part of it coming within the wall's solid half-thickness? Unlike
+ * pathCrossesWall (which only stops tunneling and end-approach), this rejects a
+ * path that merely *skims* a wall tip, so the bot pathfinder won't shortcut a
+ * waypoint its body can't actually traverse. True when the swept disc clears
+ * every wall - i.e. the segment stays at least `clearance` from each wall
+ * centerline along its whole length.
+ */
+export function pathClearsWalls(
+  walls: readonly WallSegment[],
+  ax: number,
+  az: number,
+  bx: number,
+  bz: number,
+  clearance: number = WALL_CLEARANCE,
+): boolean {
+  for (const w of walls) {
+    if (segmentToSegmentDistance(ax, az, bx, bz, w.ax, w.az, w.bx, w.bz) < clearance) {
+      return false;
+    }
+  }
+  return true;
+}
+
 export function topologyExpectedWidth(_t: Topology): number {
   return WORLD_WIDTH;
 }
@@ -212,4 +237,28 @@ function pointToSegmentDistance(px: number, pz: number, w: WallSegment): number 
   const x = w.ax + dx * t;
   const z = w.az + dz * t;
   return Math.hypot(px - x, pz - z);
+}
+
+// Shortest distance between two line segments. Zero when they cross; otherwise
+// the smallest of the four endpoint-to-other-segment distances (the closest
+// approach of two non-intersecting segments always involves an endpoint).
+function segmentToSegmentDistance(
+  ax: number,
+  az: number,
+  bx: number,
+  bz: number,
+  cx: number,
+  cz: number,
+  dx: number,
+  dz: number,
+): number {
+  if (segmentsIntersect(ax, az, bx, bz, cx, cz, dx, dz)) return 0;
+  const seg1: WallSegment = { ax, az, bx, bz };
+  const seg2: WallSegment = { ax: cx, az: cz, bx: dx, bz: dz };
+  return Math.min(
+    pointToSegmentDistance(ax, az, seg2),
+    pointToSegmentDistance(bx, bz, seg2),
+    pointToSegmentDistance(cx, cz, seg1),
+    pointToSegmentDistance(dx, dz, seg1),
+  );
 }

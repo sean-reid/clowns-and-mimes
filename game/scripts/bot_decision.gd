@@ -25,7 +25,9 @@ static func decide(
 	active_turn_team: String,
 	engagement: Dictionary,
 	params: Dictionary,
-	collect_target = null
+	collect_target = null,
+	rescue_claim = null,
+	has_rescue_claim: bool = false
 ) -> Dictionary:
 	var vision: float = params.vision_radius
 	var candidate := BotPerception.nearest_visible_enemy(bot, players, walls, topology, now)
@@ -81,7 +83,16 @@ static func decide(
 		and now < engagement.investigate_until
 	)
 
-	var rescue := BotPerception.nearest_frozen_ally(bot, players, topology, vision)
+	# Rescue target: with no coordination claim provided, fall back to the solo
+	# nearest-frozen-ally scan; with a claim, honor it (null = suppress rescue so
+	# two bots don't swarm one ally). Mirrors botDecision's rescueOverride.
+	var rescue: Dictionary
+	if not has_rescue_claim:
+		rescue = BotPerception.nearest_frozen_ally(bot, players, topology, vision)
+	elif rescue_claim == null:
+		rescue = {"target": {}, "dist": INF}
+	else:
+		rescue = rescue_claim
 
 	var enemy_in_range: bool = not target.is_empty() and enemy_dist < vision
 	var chasing: bool = enemy_in_range and active_turn_team == bot.team

@@ -32,6 +32,7 @@
     "gen:bot-decision-fixture": "tsx scripts/gen-bot-decision-fixture.ts",
     "gen:bot-goals-fixture": "tsx scripts/gen-bot-goals-fixture.ts",
     "gen:bot-items-fixture": "tsx scripts/gen-bot-items-fixture.ts",
+    "gen:bot-coordination-fixture": "tsx scripts/gen-bot-coordination-fixture.ts",
     "gen:projectiles-fixture": "tsx scripts/gen-projectiles-fixture.ts",
     "gen:portals-fixture": "tsx scripts/gen-portals-fixture.ts"
   },

@@ -167,7 +167,12 @@ func _apply_item_effect(node: Node, item_type: String, player_id: String) -> voi
 			if not p2.is_empty():
 				p2["overchargeArmed"] = true
 		"clone":
-			_spawn_clone(node)
+			# Disabled offline: a clone is itself an item-using bot, so clones
+			# spawn clones and the body+AI count snowballs into heavy frame lag.
+			# The item still spawns and is consumed on use (layout parity intact),
+			# it just produces no decoy. See _spawn_clone (kept for online parity
+			# reference / a future cap).
+			pass
 		"portal":
 			_open_portal(node, player_id)
 

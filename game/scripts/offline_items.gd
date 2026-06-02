@@ -73,10 +73,15 @@ static func item_spawn_layout(seed_value: int, topology_name: String) -> Array:
 			out.append({"id": "i-%d" % cell, "type": t, "position": _cell_center(col, r, g)})
 	return out
 
-## Build the floor from the seed. Called at match start.
-func spawn(seed_value: int, topology_name: String) -> void:
+## Build the floor from the seed. Called at match start. `exclude_types` drops
+## those power-up types from the live floor (offline disables clone for perf);
+## the deterministic layout itself is unchanged, so item_spawn_layout stays in
+## parity with the server and the determinism fixture.
+func spawn(seed_value: int, topology_name: String, exclude_types: Array = []) -> void:
 	_items.clear()
 	for entry in item_spawn_layout(seed_value, topology_name):
+		if entry.type in exclude_types:
+			continue
 		_items[entry.id] = {
 			"id": entry.id, "type": entry.type, "position": entry.position, "respawn_at": 0
 		}

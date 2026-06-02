@@ -22,6 +22,14 @@ const BOT_JUMP_CORNER_THREAT_RADIUS := SharedConstants.BOT_JUMP_CORNER_THREAT_RA
 const BOT_JUMP_NOISE_PER_SECOND := SharedConstants.BOT_JUMP_NOISE_PER_SECOND
 const BOT_JUMP_REFRACTORY_S := SharedConstants.BOT_JUMP_REFRACTORY_MS / 1000.0
 const BOT_NO_PROGRESS_WINDOW_S := SharedConstants.BOT_NO_PROGRESS_WINDOW_MS / 1000.0
+# Patrol exploration: how the bot scatters across the arena (matches the online
+# pickExplorationPatrolPoint so offline bots fan out instead of converging).
+const BOT_PATROL_CANDIDATE_ATTEMPTS := int(SharedConstants.BOT_PATROL_CANDIDATE_ATTEMPTS)
+const BOT_RECENT_TARGET_RADIUS := SharedConstants.BOT_RECENT_TARGET_RADIUS
+const BOT_RECENT_TARGETS_KEEP := int(SharedConstants.BOT_RECENT_TARGETS_KEEP)
+const BOT_PATROL_RETARGET_MS := SharedConstants.BOT_PATROL_RETARGET_MS
+# Inset from the playfield edge for patrol points (matches online's half-4).
+const PATROL_MARGIN := 4.0
 const TopologyScript := preload("res://scripts/topology/topology.gd")
 const GameRulesScript := preload("res://scripts/game_rules.gd")
 const PhysicsScript := preload("res://scripts/physics.gd")
@@ -31,6 +39,7 @@ const BotGoalsScript := preload("res://scripts/bot_goals.gd")
 const BotItemsScript := preload("res://scripts/bot_items.gd")
 const BotPerception := preload("res://scripts/bot_perception.gd")
 const BotCoordinationScript := preload("res://scripts/bot_coordination.gd")
+const WallGeometry := preload("res://scripts/wall_geometry.gd")
 
 enum State { PATROL, CHASE, FLEE, RESCUE, INVESTIGATE, COLLECT }
 
@@ -45,6 +54,12 @@ var rng := RandomNumberGenerator.new()
 var state: int = State.PATROL
 var accumulated: float = 0.0
 var patrol_target: Vector3 = Vector3.ZERO
+# Recently chosen patrol points (Vector3); a fresh pick avoids landing near
+# these so the bot spreads out. Capped at BOT_RECENT_TARGETS_KEEP.
+var recent_targets: Array = []
+# Next-retarget deadline (ms) so patrol commits on a cadence like online, not
+# only on arrival.
+var patrol_until_ms: float = 0.0
 var stuck_clock: float = 0.0
 var last_position: Vector3 = Vector3.ZERO
 # Weighted-A* pathfinder shared with the server (built from the maze walls in
@@ -67,7 +82,7 @@ func _ready() -> void:
 	if player == null:
 		player = get_parent() as CharacterBody3D
 	last_position = player.global_position if player != null else Vector3.ZERO
-	_pick_patrol_target()
+	_commit_patrol_target()
 
 func attach(p: CharacterBody3D, id: String, rules_ref: Node, top: TopologyScript, lab: Node3D = null) -> void:
 	player = p
@@ -233,10 +248,14 @@ func _choose_target() -> void:
 		State.INVESTIGATE:
 			patrol_target = engagement.last_known_pos
 		State.PATROL:
-			if patrol_target == Vector3.ZERO or (player.global_position - patrol_target).length() < 1.5:
-				_pick_patrol_target()
+			# Retarget on a cadence or on arrival (mirrors online's drive loop),
+			# not only when we reach the point - so a bot keeps roaming.
+			var now_ms: float = float(Time.get_ticks_msec())
+			if now_ms >= patrol_until_ms or (player.global_position - patrol_target).length() < 1.5:
+				_commit_patrol_target()
+				patrol_until_ms = now_ms + BOT_PATROL_RETARGET_MS
 	if stuck_clock > STUCK_TIME:
-		_pick_patrol_target()
+		_commit_patrol_target()
 		stuck_clock = 0.0
 
 # Positions of every other player (both teams) for the pathfinder's dynamic
@@ -384,10 +403,42 @@ func _maybe_use_item(want_jump: bool) -> void:
 		engagement.last_known_pos = decision.memory_seed
 		engagement.investigate_until = float(Time.get_ticks_msec()) + SharedConstants.BOT_INVESTIGATE_MS
 
-func _pick_patrol_target() -> void:
-	var radius: float = rng.randf_range(8.0, 32.0)
-	var angle: float = rng.randf_range(0.0, TAU)
-	patrol_target = Vector3(cos(angle) * radius, 0.0, sin(angle) * radius)
+# Uniform random point across the playfield (mirrors online randomPatrolPoint:
+# WORLD_WIDTH/2 - margin per axis). NOT a ring around the origin - that made
+# every bot head for the centre and bunch up.
+func _random_patrol_point() -> Vector3:
+	var half: float = TopologyScript.WIDTH / 2.0 - PATROL_MARGIN
+	return Vector3(rng.randf_range(-half, half), 0.0, rng.randf_range(-half, half))
+
+# Try up to BOT_PATROL_CANDIDATE_ATTEMPTS points, skipping ones inside a wall or
+# near a recently chosen target, so the bot fans out rather than re-treading.
+# Falls back to the last candidate. Mirrors online pickExplorationPatrolPoint.
+func _pick_exploration_patrol_point() -> Vector3:
+	var walls: Array = labyrinth.wall_endpoints() if labyrinth != null else []
+	var last := _random_patrol_point()
+	for _i in BOT_PATROL_CANDIDATE_ATTEMPTS:
+		var candidate := _random_patrol_point()
+		last = candidate
+		if not walls.is_empty() and WallGeometry.point_blocked_by_wall(walls, candidate.x, candidate.z):
+			continue
+		var too_close := false
+		for recent in recent_targets:
+			var dx: float = candidate.x - recent.x
+			var dz: float = candidate.z - recent.z
+			if dx * dx + dz * dz < BOT_RECENT_TARGET_RADIUS * BOT_RECENT_TARGET_RADIUS:
+				too_close = true
+				break
+		if not too_close:
+			return candidate
+	return last
+
+# Commit a fresh exploration target and remember it (capped) so the next pick
+# steers clear of it. Mirrors online commitPatrolTarget.
+func _commit_patrol_target() -> void:
+	patrol_target = _pick_exploration_patrol_point()
+	recent_targets.append(patrol_target)
+	while recent_targets.size() > BOT_RECENT_TARGETS_KEEP:
+		recent_targets.pop_front()
 
 func _team() -> String:
 	return player.team

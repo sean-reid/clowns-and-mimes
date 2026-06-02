@@ -21,6 +21,7 @@ const BotAIScript := preload("res://scripts/bot_ai.gd")
 const TopologyFactory := preload("res://scripts/topology/topology_factory.gd")
 const OfflineItemsScript := preload("res://scripts/offline_items.gd")
 const ItemRendererScript := preload("res://scripts/item_renderer.gd")
+const SharedConstants := preload("res://scripts/shared_constants.gd")
 
 # Per-team bot fill target. 3 bots per side gives a 4-vs-4 (with the
 # local human on one side) which the playtest landed on as the right
@@ -82,6 +83,33 @@ func _step_items(delta: float) -> void:
 	if arena.item_renderer != null:
 		arena.item_renderer.render_from_snapshot(_item_wire())
 		arena.item_renderer.tick(delta)
+
+# The local player used their held item (rising edge of E). Clear the slot and
+# apply the effect. Bots use items via their own AI in a later slice.
+func use_item_local() -> void:
+	if _items == null:
+		return
+	var id: String = arena.local_player_id
+	var p: Dictionary = arena.rules.players.get(id, {})
+	if p.is_empty():
+		return
+	var item_type: String = _items.use_item(p)
+	if item_type == "":
+		return
+	arena.hud.set_held_item("")
+	_apply_item_effect(arena.local_player, item_type)
+
+# Per-type effect on the player body. Body effects (cloak / leap / surge) are
+# wired; radar / overcharge / clone / portal land with their systems later.
+func _apply_item_effect(node: Node, item_type: String) -> void:
+	var now_ms := int(Time.get_unix_time_from_system() * 1000.0)
+	match item_type:
+		"cloak":
+			node.cloak_until_ms = now_ms + OfflineItemsScript.CLOAK_DURATION_MS
+		"leap":
+			node.leap_armed = true
+		"surge":
+			node.surge_until_ms = now_ms + int(SharedConstants.SURGE_DURATION_MS)
 
 # Floor items in the {id, type, position:{x,y,z}} wire shape the renderer reads
 # (offline_items keeps positions as Vector3 for the gameplay side).

@@ -96,6 +96,17 @@ const SOURCES = [
     // parts; the GDScript side recombines them.
     consts: ['WALL_THICKNESS', 'PLAYER_RADIUS'],
   },
+  {
+    file: 'backend/shared/src/items.ts',
+    sourceUrl: 'backend/shared/src/items.ts',
+    consts: [
+      'ITEM_RESPAWN_MS',
+      'ITEM_PICKUP_RADIUS',
+      'ITEM_SPAWN_KEEP_DENOM',
+      'RADAR_DURATION_MS',
+      'CLOAK_DURATION_MS',
+    ],
+  },
 ];
 
 // Source files + the string-array `export const`s to pull from each. These
@@ -106,15 +117,22 @@ const STRING_ARRAY_SOURCES = [
     sourceUrl: 'backend/shared/src/names.ts',
     consts: ['NAME_ADJECTIVES', 'NAME_NOUNS'],
   },
+  {
+    file: 'backend/shared/src/items.ts',
+    sourceUrl: 'backend/shared/src/items.ts',
+    consts: ['ITEM_TYPES_ALWAYS', 'ITEM_TYPES_ROTATING'],
+  },
 ];
 
 async function extract(file, name) {
   const text = await readFile(resolve(repoRoot, file), 'utf8');
-  const re = new RegExp(`^export const ${name}\\s*=\\s*([^;]+);`, 'm');
+  // Allow an optional `: Type` annotation between the name and `=`.
+  const re = new RegExp(`^export const ${name}\\s*(?::[^=]+)?=\\s*([^;]+);`, 'm');
   const m = text.match(re);
   if (!m) throw new Error(`${file}: missing const ${name}`);
   const expr = m[1].trim();
-  const value = parseFloat(expr);
+  // Strip numeric separators (30_000 -> 30000) so the literal parses.
+  const value = parseFloat(expr.replace(/_/g, ''));
   if (!Number.isFinite(value)) {
     throw new Error(
       `${file}: ${name} = "${expr}" is not a literal number; only literals can be shared`,
@@ -127,7 +145,7 @@ async function extract(file, name) {
 // list of string entries in source order.
 async function extractStringArray(file, name) {
   const text = await readFile(resolve(repoRoot, file), 'utf8');
-  const re = new RegExp(`^export const ${name}\\s*=\\s*\\[([\\s\\S]*?)\\];`, 'm');
+  const re = new RegExp(`^export const ${name}\\s*(?::[^=]+)?=\\s*\\[([\\s\\S]*?)\\];`, 'm');
   const m = text.match(re);
   if (!m) throw new Error(`${file}: missing string array ${name}`);
   const items = [...m[1].matchAll(/'((?:[^'\\]|\\.)*)'/g)].map((x) => x[1]);

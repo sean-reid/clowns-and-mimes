@@ -19,6 +19,8 @@ extends Node
 const GameRulesScript := preload("res://scripts/game_rules.gd")
 const BotAIScript := preload("res://scripts/bot_ai.gd")
 const TopologyFactory := preload("res://scripts/topology/topology_factory.gd")
+const OfflineItemsScript := preload("res://scripts/offline_items.gd")
+const ItemRendererScript := preload("res://scripts/item_renderer.gd")
 
 # Per-team bot fill target. 3 bots per side gives a 4-vs-4 (with the
 # local human on one side) which the playtest landed on as the right
@@ -26,6 +28,9 @@ const TopologyFactory := preload("res://scripts/topology/topology_factory.gd")
 const BOT_COUNT_PER_TEAM := 3
 
 var arena: Node = null
+# Offline power-up system + its floor renderer (online builds the renderer on
+# the network path; offline owns both here).
+var _items: OfflineItemsScript = null
 
 func attach(arena_ref: Node) -> void:
 	arena = arena_ref
@@ -35,23 +40,57 @@ func attach(arena_ref: Node) -> void:
 func start() -> void:
 	arena.topology = TopologyFactory.from_string(GameState.topology_as_string())
 	arena.hud.set_topology(arena.topology.name())
-	arena._build_labyrinth(_derive_seed())
+	var seed_value := _derive_seed()
+	arena._build_labyrinth(seed_value)
 	_setup_rules()
 	_spawn_players()
+	# Same seed as the maze so the item layout matches what the server would
+	# spawn for this room (the shared deterministic layout).
+	_items = OfflineItemsScript.new()
+	_items.spawn(seed_value, arena.topology.name())
+	if arena.item_renderer == null:
+		arena.item_renderer = ItemRendererScript.new(arena)
+	arena.item_renderer.render_from_snapshot(_item_wire())
 	arena.rules.start(arena.topology)
 
 ## Called from arena._process during offline play. Pushes live positions
-## to the rules engine and refreshes the countdown label.
-func drive_hud() -> void:
+## to the rules engine, runs the item pickup/respawn pass, and refreshes the
+## countdown label + floor item icons.
+func drive_hud(delta: float) -> void:
 	if arena.rules == null:
 		return
 	for id in arena.player_nodes.keys():
 		arena.rules.update_position(id, arena.player_nodes[id].global_position)
 	arena.rules.tick(Time.get_unix_time_from_system())
+	_step_items(delta)
 	arena.hud.set_countdown_seconds(arena.rules.phase_time_remaining(Time.get_unix_time_from_system()))
 	# The minimap plots live positions, so refresh it every frame here rather
 	# than only on tag/save events (which sufficed for the old status bars).
 	_render_team_status()
+
+# Respawn + pickup pass, then reconcile the floor icons. A local pickup fills
+# the held-item HUD slot. Effects on use land in a follow-up.
+func _step_items(delta: float) -> void:
+	if _items == null:
+		return
+	var now_ms := int(Time.get_unix_time_from_system() * 1000.0)
+	var events: Array = _items.step(now_ms, arena.rules.players.values(), arena.topology)
+	for ev in events:
+		if ev.player_id == arena.local_player_id:
+			var held: String = arena.rules.players[ev.player_id].get("active_item", "")
+			arena.hud.set_held_item(held)
+	if arena.item_renderer != null:
+		arena.item_renderer.render_from_snapshot(_item_wire())
+		arena.item_renderer.tick(delta)
+
+# Floor items in the {id, type, position:{x,y,z}} wire shape the renderer reads
+# (offline_items keeps positions as Vector3 for the gameplay side).
+func _item_wire() -> Array:
+	var out: Array = []
+	for it in _items.available():
+		var p: Vector3 = it.position
+		out.append({"id": it.id, "type": it.type, "position": {"x": p.x, "y": p.y, "z": p.z}})
+	return out
 
 func _setup_rules() -> void:
 	arena.rules = GameRulesScript.new()

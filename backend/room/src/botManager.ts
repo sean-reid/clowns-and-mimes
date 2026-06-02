@@ -76,6 +76,11 @@ interface BotMind {
   investigateUntil: number;
   recentTargets: Array<{ x: number; z: number }>;
   lastJumpedAt: number;
+  // Fixed per-bot jitter in [0,1) that staggers the deterministic jump
+  // triggers, so two bots in the same situation don't take off on the exact
+  // same tick (the reactive evade / no-progress jumps would otherwise fire
+  // simultaneously across a cluster).
+  jumpPhase: number;
 }
 
 function clamp(v: number, lo: number, hi: number): number {
@@ -214,6 +219,7 @@ export class BotManager {
       investigateUntil: 0,
       recentTargets: [],
       lastJumpedAt: 0,
+      jumpPhase: Math.random(),
     };
   }
 
@@ -368,6 +374,7 @@ export class BotManager {
         investigateUntil: 0,
         recentTargets: [],
         lastJumpedAt: 0,
+        jumpPhase: Math.random(),
       };
       this.botMinds.set(bot.id, mind);
 
@@ -407,21 +414,23 @@ export class BotManager {
       const jumpEligible = bot.jumpStartedAt === null && sinceLastJump >= BOT_JUMP_REFRACTORY_MS;
       let wantJump = false;
       if (jumpEligible) {
+        // Per-bot jitter so a cluster reacting to the same threat doesn't take
+        // off on one tick: the evade range and the no-progress window each vary
+        // a little per bot (jumpPhase in [0,1)).
+        const evadeBuffer = BOT_JUMP_EVADE_BUFFER * (0.5 + mind.jumpPhase);
+        const noProgressWindow = BOT_NO_PROGRESS_WINDOW_MS * (0.75 + 0.5 * mind.jumpPhase);
         if (
           fleeing &&
           target !== null &&
           !target.frozen &&
           target.jumpStartedAt === null &&
-          enemyDist <= TAG_RADIUS_BOT + BOT_JUMP_EVADE_BUFFER
+          enemyDist <= TAG_RADIUS_BOT + evadeBuffer
         ) {
           wantJump = true;
         }
         if (!wantJump) {
           const noProgressDur = now - mind.progressSampleAt;
-          if (
-            noProgressDur >= BOT_NO_PROGRESS_WINDOW_MS &&
-            enemyDist <= BOT_JUMP_CORNER_THREAT_RADIUS
-          ) {
+          if (noProgressDur >= noProgressWindow && enemyDist <= BOT_JUMP_CORNER_THREAT_RADIUS) {
             wantJump = true;
           }
         }

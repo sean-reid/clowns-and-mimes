@@ -6,6 +6,15 @@ When cutting a release: rename the `[Unreleased]` heading below to the version b
 
 ## [Unreleased]
 
+## [0.7.1] - 2026-06-02
+
+Patch release for two title-to-menu rough edges. The ENTER button is now clickable the instant it appears, and an online player's menu buttons are live right away.
+
+### Fixed
+
+- The title screen's ENTER button snaps into view and is clickable as soon as it shows, instead of fading in over half a second while silently ignoring clicks.
+- The online/offline check now runs while the title animates, so the menu's Open and Private match buttons are live immediately for an online player instead of briefly appearing disabled.
+
 ## [0.7.0] - 2026-06-01
 
 The offline-and-smarter-bots release. Playing against bots is now a full match — bots use every power-up, fire freeze shots, take portals, coordinate who rescues whom, and spread across the arena instead of trailing each other in a clump. The bot brain was rebuilt on weighted pathfinding that hugs open lanes and rounds corners without grinding on them, so bots feel less stuck both offline and online. The main menu makes offline play a first-class choice with its own topology picker and recovers cleanly when the connection returns, and the game window fills your screen the first time and remembers its size after. Online play is unchanged on the wire (protocol v4).

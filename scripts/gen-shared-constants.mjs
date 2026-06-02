@@ -94,7 +94,9 @@ const SOURCES = [
       'CLONE_DURATION_MS',
       'CLONE_SPAWN_OFFSET',
       'WALL_AVOID_WEIGHT',
+      'WALL_AVOID_RADIUS',
       'OCCUPANCY_WEIGHT',
+      'OCCUPANCY_RADIUS',
     ],
   },
   {

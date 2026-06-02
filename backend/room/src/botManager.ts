@@ -8,7 +8,7 @@
 // Phase A1 simulate fixture regression-tests the human side, and new
 // tests in this file cover the bot-specific paths.
 
-import type { ItemType, PlayerState, ServerToClient, Team, Topology, Vec3 } from '@cm/shared';
+import type { ItemType, PlayerState, ServerToClient, Team, Topology, Vec2, Vec3 } from '@cm/shared';
 import { topologyDistance, wrapPosition, wrappedUnitDelta } from '@cm/shared/topology';
 import { pathCrossesWall, pointBlockedByWall, type WallSegment } from '@cm/shared/labyrinth';
 import { generateRandomName } from '@cm/shared/names';
@@ -327,15 +327,15 @@ export class BotManager {
     }
   }
 
-  private avoidCellsForBot(self: PlayerState, preserve: PlayerState | null): Set<number> {
-    const out = new Set<number>();
-    const pathfinder = this.host.getPathfinder();
-    if (!pathfinder) return out;
-    const preserveId = preserve ? preserve.id : null;
+  // Positions of every other player (both teams) for the pathfinder's dynamic
+  // player-repulsion field, so a bot routes around teammates and enemies alike.
+  // No target is excluded here: the pathfinder never penalizes the destination
+  // cell, so a chase / rescue target staying reachable is handled there.
+  private avoidPositionsForBot(self: PlayerState): Vec2[] {
+    const out: Vec2[] = [];
     for (const other of this.host.players.values()) {
       if (other.id === self.id) continue;
-      if (other.id === preserveId) continue;
-      out.add(pathfinder.cellAt(other.position));
+      out.push({ x: other.position.x, z: other.position.z });
     }
     return out;
   }
@@ -512,31 +512,31 @@ export class BotManager {
             topology,
             WORLD_WIDTH,
           );
-        const avoid = this.avoidCellsForBot(bot, null);
+        const avoid = this.avoidPositionsForBot(bot);
         const waypoint = pathfinder
           ? pathfinder.nextWaypointAvoiding(bot.position, fleeTarget, avoid)
           : fleeTarget;
         dir = wrappedUnitDelta(bot.position, waypoint, topology, WORLD_WIDTH);
       } else if (decision.mode === 'rescue' && rescueTarget) {
-        const avoid = this.avoidCellsForBot(bot, rescueTarget);
+        const avoid = this.avoidPositionsForBot(bot);
         const waypoint = pathfinder
           ? pathfinder.nextWaypointAvoiding(bot.position, rescueTarget.position, avoid)
           : rescueTarget.position;
         dir = wrappedUnitDelta(bot.position, waypoint, topology, WORLD_WIDTH);
       } else if (decision.mode === 'chase' && target) {
-        const avoid = this.avoidCellsForBot(bot, target);
+        const avoid = this.avoidPositionsForBot(bot);
         const waypoint = pathfinder
           ? pathfinder.nextWaypointAvoiding(bot.position, target.position, avoid)
           : target.position;
         dir = wrappedUnitDelta(bot.position, waypoint, topology, WORLD_WIDTH);
       } else if (decision.mode === 'investigate' && mind.lastKnownPos) {
-        const avoid = this.avoidCellsForBot(bot, null);
+        const avoid = this.avoidPositionsForBot(bot);
         const waypoint = pathfinder
           ? pathfinder.nextWaypointAvoiding(bot.position, mind.lastKnownPos, avoid)
           : mind.lastKnownPos;
         dir = wrappedUnitDelta(bot.position, waypoint, topology, WORLD_WIDTH);
       } else if (decision.mode === 'collect' && decision.collectTarget) {
-        const avoid = this.avoidCellsForBot(bot, null);
+        const avoid = this.avoidPositionsForBot(bot);
         const waypoint = pathfinder
           ? pathfinder.nextWaypointAvoiding(bot.position, decision.collectTarget, avoid)
           : decision.collectTarget;
@@ -546,7 +546,7 @@ export class BotManager {
           this.commitPatrolTarget(mind);
           mind.patrolUntil = now + BOT_PATROL_RETARGET_MS;
         }
-        const avoid = this.avoidCellsForBot(bot, null);
+        const avoid = this.avoidPositionsForBot(bot);
         const waypoint = pathfinder
           ? pathfinder.nextWaypointAvoiding(bot.position, mind.patrolTarget, avoid)
           : mind.patrolTarget;

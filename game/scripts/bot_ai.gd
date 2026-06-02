@@ -202,18 +202,16 @@ func _choose_target() -> void:
 		_pick_patrol_target()
 		stuck_clock = 0.0
 
-# Cells holding other players, as a set the pathfinder soft-avoids so bots
-# spread out and route around each other. The current target is exempted so the
-# bot still closes on it (the pathfinder also never penalizes the goal cell).
-func _occupied_cells(preserve_id: String) -> Dictionary:
-	var out: Dictionary = {}
-	if pathfinder == null:
-		return out
+# Positions of every other player (both teams) for the pathfinder's dynamic
+# player-repulsion field, so the bot routes around teammates and enemies alike.
+# No target is excluded: the pathfinder never penalizes the destination cell, so
+# a chase / rescue target stays reachable.
+func _avoid_positions() -> Array:
+	var out: Array = []
 	for pid in rules.players:
-		if pid == player_id or pid == preserve_id:
+		if pid == player_id:
 			continue
-		var pos: Vector3 = rules.players[pid].get("position", Vector3.ZERO)
-		out[pathfinder.cell_at(pos)] = true
+		out.append(rules.players[pid].get("position", Vector3.ZERO))
 	return out
 
 func _drive() -> void:
@@ -225,13 +223,8 @@ func _drive() -> void:
 	# wall sliding. Falls back to steering straight when there's no labyrinth.
 	var target: Vector3 = patrol_target
 	if pathfinder != null:
-		var preserve_id: String = ""
-		if state == State.CHASE:
-			preserve_id = _nearest_enemy_id()
-		elif state == State.RESCUE:
-			preserve_id = _nearest_frozen_teammate_id()
 		target = pathfinder.next_waypoint_avoiding(
-			player.global_position, patrol_target, _occupied_cells(preserve_id)
+			player.global_position, patrol_target, _avoid_positions()
 		)
 	var to_target: Vector3 = topology.delta(player.global_position, target)
 	to_target.y = 0.0

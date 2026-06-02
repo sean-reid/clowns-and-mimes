@@ -15,7 +15,19 @@ const WallGeometry := preload("res://scripts/wall_geometry.gd")
 
 const WORLD_WIDTH := 80.0
 const WALL_AVOID_WEIGHT := SharedConstants.WALL_AVOID_WEIGHT
+const WALL_AVOID_RADIUS := SharedConstants.WALL_AVOID_RADIUS
 const OCCUPANCY_WEIGHT := SharedConstants.OCCUPANCY_WEIGHT
+const OCCUPANCY_RADIUS := SharedConstants.OCCUPANCY_RADIUS
+
+# Linear repulsion ramp shared by the wall and player cost fields: full `weight`
+# at the obstacle, falling to 0 at `radius` and beyond. Quantized to 1e-4 so the
+# sqrt-based distance can never drift an A* tie vs the TS search (both then store
+# the same Float32). Distance beyond the radius - INF when there's nothing to
+# avoid - yields exactly 0. Mirrors botPathfinder.ts `repulsion`.
+static func _repulsion(distance: float, radius: float, weight: float) -> float:
+	if distance >= radius:
+		return 0.0
+	return roundf(weight * ((radius - distance) / radius) * 1e4) / 1e4
 
 var _walls: Array = []
 var _cols: int = 0
@@ -49,14 +61,14 @@ func next_waypoint(from: Vector3, to: Vector3) -> Vector3:
 		return to
 	return _funnel(from, _cached_chain(from_cell, to_cell), to)
 
-func next_waypoint_avoiding(from: Vector3, to: Vector3, occupied: Dictionary) -> Vector3:
-	if occupied.is_empty():
+func next_waypoint_avoiding(from: Vector3, to: Vector3, avoid_positions: Array) -> Vector3:
+	if avoid_positions.is_empty():
 		return next_waypoint(from, to)
 	var from_cell := _world_to_cell(from.x, from.z)
 	var to_cell := _world_to_cell(to.x, to.z)
 	if from_cell == to_cell:
 		return to
-	return _funnel(from, _astar_chain(from_cell, to_cell, occupied), to)
+	return _funnel(from, _astar_chain(from_cell, to_cell, avoid_positions), to)
 
 func cell_at(pos: Vector3) -> int:
 	return _world_to_cell(pos.x, pos.z)
@@ -69,16 +81,20 @@ func _cached_chain(from_cell: int, to_cell: int) -> Array:
 	var key := from_cell * (_cols * _rows) + to_cell
 	if _chain_cache.has(key):
 		return _chain_cache[key]
-	var chain := _astar_chain(from_cell, to_cell, {})
+	var chain := _astar_chain(from_cell, to_cell, [])
 	_chain_cache[key] = chain
 	return chain
 
-# Weighted A*. Step cost into a cell is 1 + its static wall cost, plus
-# OCCUPANCY_WEIGHT when occupied (never the destination). Heuristic is the
-# wrap-aware cell Manhattan distance, admissible since min step cost is 1.
-# Returns the cells after from_cell through to_cell, or [] if unreachable.
-func _astar_chain(from_cell: int, to_cell: int, occupied: Dictionary) -> Array:
+# Weighted A*. Step cost into a cell is 1 + its static wall cost, plus the
+# dynamic player-repulsion cost when avoid_positions is given (never on the
+# destination cell). Heuristic is the wrap-aware cell Manhattan distance,
+# admissible since min step cost is 1. Returns the cells after from_cell through
+# to_cell, or [] if unreachable.
+func _astar_chain(from_cell: int, to_cell: int, avoid_positions: Array) -> Array:
 	var total := _cols * _rows
+	var occ_cost: PackedFloat32Array = (
+		_occupancy_cost(avoid_positions) if not avoid_positions.is_empty() else PackedFloat32Array()
+	)
 	var g := PackedFloat32Array()
 	g.resize(total)
 	g.fill(INF)
@@ -111,8 +127,8 @@ func _astar_chain(from_cell: int, to_cell: int, occupied: Dictionary) -> Array:
 			if nb < 0 or closed[nb] == 1:
 				continue
 			var step := 1.0 + _wall_cost[nb]
-			if nb != to_cell and occupied.has(nb):
-				step += OCCUPANCY_WEIGHT
+			if not occ_cost.is_empty() and nb != to_cell:
+				step += occ_cost[nb]
 			var tentative: float = g[cur] + step
 			if tentative < g[nb]:
 				g[nb] = tentative
@@ -163,15 +179,39 @@ func _cell_heuristic(a: int, b: int) -> float:
 		dr = mini(dr, _rows - dr)
 	return float(dc + dr)
 
+# Static per-cell entry cost: a continuous repulsion field that rises as the
+# cell center nears the closest wall, ramping from 0 at WALL_AVOID_RADIUS to
+# WALL_AVOID_WEIGHT at the wall. The playfield boundary on a non-wrapping axis
+# counts as a wall. Mirrors botPathfinder.ts computeWallCost.
 func _compute_wall_cost() -> void:
 	var total := _cols * _rows
+	var half_x := _cols * _cell_x / 2.0
+	var half_z := _rows * _cell_z / 2.0
 	for cell in total:
-		var open_sides := 0
-		var mask := _adjacency[cell]
-		for dir in 4:
-			if mask & (1 << dir):
-				open_sides += 1
-		_wall_cost[cell] = float(4 - open_sides) * WALL_AVOID_WEIGHT
+		var c := _cell_center(cell)
+		var d := WallGeometry.nearest_wall_distance(_walls, c.x, c.y)
+		if not _wrap_x:
+			d = minf(d, minf(c.x + half_x, half_x - c.x))
+		if not _wrap_z:
+			d = minf(d, minf(c.y + half_z, half_z - c.y))
+		_wall_cost[cell] = _repulsion(d, WALL_AVOID_RADIUS, WALL_AVOID_WEIGHT)
+
+# Dynamic per-cell entry cost for one query: a continuous repulsion field around
+# the avoid positions (other players), recomputed per query since players move.
+# The caller skips the destination cell. Mirrors botPathfinder.ts occupancyCost.
+func _occupancy_cost(avoid_positions: Array) -> PackedFloat32Array:
+	var total := _cols * _rows
+	var out := PackedFloat32Array()
+	out.resize(total)
+	for cell in total:
+		var c := _cell_center(cell)
+		var nearest := INF
+		for p in avoid_positions:
+			var d: float = Vector2(c.x - p.x, c.y - p.z).length()
+			if d < nearest:
+				nearest = d
+		out[cell] = _repulsion(nearest, OCCUPANCY_RADIUS, OCCUPANCY_WEIGHT)
+	return out
 
 func _build_adjacency() -> void:
 	var seam := 2.0 * maxf(_cell_x, _cell_z)

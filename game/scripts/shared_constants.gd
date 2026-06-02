@@ -64,8 +64,10 @@ const BOT_JUMP_EVADE_BUFFER := 0.5
 const BOT_JUMP_CORNER_THREAT_RADIUS := 4.0
 const CLONE_DURATION_MS := 30000.0
 const CLONE_SPAWN_OFFSET := 2.0
-const WALL_AVOID_WEIGHT := 0.5
+const WALL_AVOID_WEIGHT := 4.0
+const WALL_AVOID_RADIUS := 14.0
 const OCCUPANCY_WEIGHT := 6.0
+const OCCUPANCY_RADIUS := 6.0
 
 # Mirrored from backend/shared/src/labyrinth.ts
 const WALL_THICKNESS := 0.4

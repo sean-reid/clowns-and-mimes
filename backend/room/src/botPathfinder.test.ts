@@ -90,15 +90,18 @@ describe('BotPathfinder string-pulling', () => {
 });
 
 describe('BotPathfinder avoidance', () => {
-  it('routes around a cell in the avoid set', () => {
+  it('routes around a player standing in the straight-line cell', () => {
     const pf = new BotPathfinder([], 'plane');
     const from = center(1, 5);
     const to = center(4, 5);
-    // Block the straight-line cells (2,5) and (3,5); the detour must leave row 5.
-    const avoid = new Set<number>([2 + 5 * 10, 3 + 5 * 10]);
+    // A player parked at the center of (2,5) and (3,5). The avoidance radius is
+    // under one cell, so this penalizes those two cells (not their neighbors);
+    // the detour must leave row 5.
+    const blocked = [2 + 5 * 10, 3 + 5 * 10];
+    const avoid = blocked.map((c) => center(c % 10, Math.floor(c / 10)));
     const wp = pf.nextWaypointAvoiding(from, to, avoid);
     const wpCell = pf.cellAt(wp);
-    expect(avoid.has(wpCell)).toBe(false);
+    expect(blocked).not.toContain(wpCell);
     // The waypoint should not be the straight-ahead next cell (2,5).
     expect(wpCell).not.toBe(2 + 5 * 10);
   });
@@ -115,10 +118,12 @@ describe('BotPathfinder avoidance', () => {
     const to = center(7, 2);
     const fromCell = pf.cellAt(from);
     const toCell = pf.cellAt(to);
-    // Occupy everything except the endpoints, so any route must cross occupancy.
-    const occupied = new Set<number>();
+    // A player parked in every cell except the endpoints, so any route must
+    // cross occupancy.
+    const occupied: Vec2[] = [];
     for (let cell = 0; cell < 100; cell += 1) {
-      if (cell !== fromCell && cell !== toCell) occupied.add(cell);
+      if (cell !== fromCell && cell !== toCell)
+        occupied.push(center(cell % 10, Math.floor(cell / 10)));
     }
     const wp = pf.nextWaypointAvoiding(from, to, occupied);
     // It found a path despite the occupancy: the waypoint rounds the wall (it is

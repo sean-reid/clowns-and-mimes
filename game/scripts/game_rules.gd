@@ -103,6 +103,20 @@ func try_unfreeze(savior_id: String, victim_id: String) -> bool:
 	saved.emit(victim_id, savior_id)
 	return true
 
+# Freeze a victim hit by a projectile. The projectile sim already validated the
+# hit (team / frozen / grace), so this skips the touch-tag range/turn checks and
+# goes straight to the freeze + tagged + win path, mirroring the server.
+func freeze_by_projectile(victim_id: String, attacker_id: String) -> void:
+	if not players.has(victim_id):
+		return
+	var victim: Dictionary = players[victim_id]
+	if victim["frozen"]:
+		return
+	victim["frozen"] = true
+	var team: String = players[attacker_id]["team"] if players.has(attacker_id) else ""
+	tagged.emit(victim_id, attacker_id, team)
+	_check_win()
+
 func phase_time_remaining(now_s: float) -> float:
 	return max(0.0, phase_ends_at - now_s)
 

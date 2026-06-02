@@ -22,6 +22,8 @@ const TopologyFactory := preload("res://scripts/topology/topology_factory.gd")
 const OfflineItemsScript := preload("res://scripts/offline_items.gd")
 const ItemRendererScript := preload("res://scripts/item_renderer.gd")
 const SharedConstants := preload("res://scripts/shared_constants.gd")
+const OfflineProjectilesScript := preload("res://scripts/offline_projectiles.gd")
+const ProjectileRendererScript := preload("res://scripts/projectile_renderer.gd")
 
 # Per-team bot fill target. 3 bots per side gives a 4-vs-4 (with the
 # local human on one side) which the playtest landed on as the right
@@ -32,6 +34,10 @@ var arena: Node = null
 # Offline power-up system + its floor renderer (online builds the renderer on
 # the network path; offline owns both here).
 var _items: OfflineItemsScript = null
+# Live offline projectiles + per-shooter cooldown clock + id counter.
+var _projectiles: Array = []
+var _last_shot_ms: Dictionary = {}
+var _proj_seq: int = 0
 
 func attach(arena_ref: Node) -> void:
 	arena = arena_ref
@@ -52,6 +58,10 @@ func start() -> void:
 	if arena.item_renderer == null:
 		arena.item_renderer = ItemRendererScript.new(arena)
 	arena.item_renderer.render_from_snapshot(_item_wire())
+	if arena.projectile_renderer == null:
+		arena.projectile_renderer = ProjectileRendererScript.new(arena)
+	# Offline can shoot now, so show the aiming crosshair like the online path.
+	arena.hud.set_crosshair_visible(true)
 	arena.rules.start(arena.topology)
 
 ## Called from arena._process during offline play. Pushes live positions
@@ -64,6 +74,7 @@ func drive_hud(delta: float) -> void:
 		arena.rules.update_position(id, arena.player_nodes[id].global_position)
 	arena.rules.tick(Time.get_unix_time_from_system())
 	_step_items(delta)
+	_step_projectiles(delta)
 	arena.hud.set_countdown_seconds(arena.rules.phase_time_remaining(Time.get_unix_time_from_system()))
 	# The minimap plots live positions, so refresh it every frame here rather
 	# than only on tag/save events (which sufficed for the old status bars).
@@ -116,6 +127,86 @@ func _apply_item_effect(node: Node, item_type: String) -> void:
 			var p: Dictionary = arena.rules.players.get(arena.local_player_id, {})
 			if not p.is_empty():
 				p["radarUntil"] = now_ms + OfflineItemsScript.RADAR_DURATION_MS
+
+# The local player fired (rising edge of the shoot button). Same gating as the
+# server: not frozen, only on the shooter's turn, and off cooldown (unless
+# overcharge - wired with the overcharge effect later). `dir` is the camera
+# forward ray. Returns whether a projectile launched.
+func shoot_local(dir: Vector3) -> bool:
+	return _shoot(arena.local_player_id, dir)
+
+func _shoot(shooter_id: String, dir: Vector3) -> bool:
+	var p: Dictionary = arena.rules.players.get(shooter_id, {})
+	if p.is_empty() or p.get("frozen", false):
+		return false
+	if arena.rules.active_team() != p.team:
+		return false
+	var now_ms := int(Time.get_unix_time_from_system() * 1000.0)
+	var last: int = _last_shot_ms.get(shooter_id, -1)
+	if last >= 0 and now_ms - last < OfflineProjectilesScript.SHOOT_COOLDOWN_MS:
+		return false
+	var owner := {"id": shooter_id, "team": p.team, "position": p.position}
+	_proj_seq += 1
+	var proj: Dictionary = OfflineProjectilesScript.spawn_projectile(
+		owner, dir, "p-%d" % _proj_seq, now_ms, now_ms
+	)
+	if proj.is_empty():
+		return false
+	_last_shot_ms[shooter_id] = now_ms
+	_projectiles.append(proj)
+	return true
+
+# Advance projectiles, freeze any victims, and reconcile the rendered spheres.
+func _step_projectiles(delta: float) -> void:
+	if _projectiles.is_empty():
+		if arena.projectile_renderer != null:
+			arena.projectile_renderer.render_from_delta([])
+		return
+	var now_ms := int(Time.get_unix_time_from_system() * 1000.0)
+	var targets: Array = []
+	for pid in arena.rules.players:
+		var pp: Dictionary = arena.rules.players[pid]
+		targets.append(
+			{"id": pid, "team": pp.team, "position": pp.position, "frozen": pp.get("frozen", false)}
+		)
+	var walls: Array = arena.labyrinth.wall_endpoints() if arena.labyrinth != null else []
+	var res: Dictionary = OfflineProjectilesScript.step_projectiles(
+		_projectiles,
+		targets,
+		{
+			"dt": delta,
+			"now_ms": now_ms,
+			"walls": walls,
+			"topology": arena.topology,
+			"hit_radius": OfflineProjectilesScript.PROJECTILE_HIT_RADIUS,
+			"saved_at": {},
+			"unfreeze_grace_ms": 0,
+		}
+	)
+	_projectiles = res.survivors
+	for hit in res.hits:
+		if hit.has("victim_id"):
+			arena.rules.freeze_by_projectile(hit.victim_id, hit.owner_id)
+	if arena.projectile_renderer != null:
+		arena.projectile_renderer.render_from_delta(_projectile_wire())
+		arena.projectile_renderer.tick(delta)
+
+# Live projectiles in the {id, team, position:{x,y,z}, velocity:{x,y,z}} wire
+# shape the renderer reads.
+func _projectile_wire() -> Array:
+	var out: Array = []
+	for proj in _projectiles:
+		var pos: Vector3 = proj.position
+		var vel: Vector3 = proj.velocity
+		out.append(
+			{
+				"id": proj.id,
+				"team": proj.team,
+				"position": {"x": pos.x, "y": pos.y, "z": pos.z},
+				"velocity": {"x": vel.x, "y": vel.y, "z": vel.z},
+			}
+		)
+	return out
 
 # Floor items in the {id, type, position:{x,y,z}} wire shape the renderer reads
 # (offline_items keeps positions as Vector3 for the gameplay side).

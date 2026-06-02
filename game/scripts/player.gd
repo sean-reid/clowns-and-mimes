@@ -162,8 +162,9 @@ var _jump_was_held_offline: bool = false
 # them when the held item is used.
 var leap_armed: bool = false
 var surge_until_ms: int = 0
-# Rising-edge tracker for the offline-local use-item key.
+# Rising-edge trackers for the offline-local use-item + shoot keys.
 var _use_item_was_held_offline: bool = false
+var _shoot_was_held_offline: bool = false
 # Cached scale applied to the head mesh each frame. Lerped back to
 # Vector3.ONE over SQUASH_RECOVER_S when no jump is active so the
 # transition out of a jump doesn't pop. Stored on the node so the
@@ -348,6 +349,12 @@ func _physics_process(delta: float) -> void:
 	if use_pressed and not _use_item_was_held_offline and arena != null and arena.offline != null:
 		arena.offline.use_item_local()
 	_use_item_was_held_offline = use_pressed
+	# Shoot on the rising edge of the fire button; aim is the camera's forward
+	# (-Z of its basis) for full 3D pitch+yaw. offline_mode gates turn/cooldown.
+	var shoot_pressed: bool = Input.is_action_pressed("shoot")
+	if shoot_pressed and not _shoot_was_held_offline and camera != null and arena != null and arena.offline != null:
+		arena.offline.shoot_local(-camera.global_transform.basis.z)
+	_shoot_was_held_offline = shoot_pressed
 	# Rising-edge spacebar so a held key sends one jump, not 60. Online holds
 	# the same edge in arena.gd::_jump_was_held; the predictor builds its
 	# input frame from there. Offline-local runs Physics.step_jump itself

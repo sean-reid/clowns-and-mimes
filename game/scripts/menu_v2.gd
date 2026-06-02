@@ -171,7 +171,15 @@ func _setup_connectivity() -> void:
 	timer.timeout.connect(_reprobe)
 	add_child(timer)
 	_refresh_connectivity_ui()
-	_probe_connectivity()
+	# The title screen kicks off the first probe, so its result is usually already
+	# on GameState by now - reflect it without a forced CONNECTING flash. Only
+	# probe here if it hasn't resolved yet (title probe still in flight / orphaned).
+	var resolved: bool = (
+		GameState.connectivity == GameState.Connectivity.ONLINE
+		or GameState.connectivity == GameState.Connectivity.OFFLINE
+	)
+	if not resolved:
+		_probe_connectivity()
 
 # Explicit probe (first load + Retry): announce CONNECTING so the UI reflects it.
 func _probe_connectivity() -> void:

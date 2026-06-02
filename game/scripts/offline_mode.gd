@@ -113,7 +113,7 @@ func _step_items(delta: float) -> void:
 		arena.item_renderer.tick(delta)
 
 # The local player used their held item (rising edge of E). Clear the slot and
-# apply the effect. Bots use items via their own AI in a later slice.
+# apply the effect.
 func use_item_local() -> void:
 	if _items == null:
 		return
@@ -125,11 +125,26 @@ func use_item_local() -> void:
 	if item_type == "":
 		return
 	arena.hud.set_held_item("")
-	_apply_item_effect(arena.local_player, item_type)
+	_apply_item_effect(arena.local_player, item_type, id)
 
-# Per-type effect on the player body. Body effects (cloak / leap / surge) are
-# wired; radar / overcharge / clone / portal land with their systems later.
-func _apply_item_effect(node: Node, item_type: String) -> void:
+# A bot used its held item (decided by its AI). Clear the slot + apply the effect
+# to its body, keyed by its id. Returns the used type ("" if it held nothing).
+# Mirrors the server's useBotItem.
+func bot_use_item(player_id: String, node: Node) -> String:
+	if _items == null or node == null:
+		return ""
+	var p: Dictionary = arena.rules.players.get(player_id, {})
+	if p.is_empty():
+		return ""
+	var item_type: String = _items.use_item(p)
+	if item_type == "":
+		return ""
+	_apply_item_effect(node, item_type, player_id)
+	return item_type
+
+# Per-type effect on the given player's body, keyed by player_id for the effects
+# that live on the rules dict (radar / overcharge) or per-player portal block.
+func _apply_item_effect(node: Node, item_type: String, player_id: String) -> void:
 	var now_ms := int(Time.get_unix_time_from_system() * 1000.0)
 	match item_type:
 		"cloak":
@@ -139,26 +154,27 @@ func _apply_item_effect(node: Node, item_type: String) -> void:
 		"surge":
 			node.surge_until_ms = now_ms + int(SharedConstants.SURGE_DURATION_MS)
 		"radar":
-			# The minimap reveals the enemy team while the local player's
-			# radarUntil is in the future; it reads that key off the rules dict.
-			var p: Dictionary = arena.rules.players.get(arena.local_player_id, {})
+			# The minimap reveals the enemy team while radarUntil is in the
+			# future; it reads that key off the rules dict. (For a bot the reveal
+			# is inert - its AI seeds investigate memory from the use decision.)
+			var p: Dictionary = arena.rules.players.get(player_id, {})
 			if not p.is_empty():
 				p["radarUntil"] = now_ms + OfflineItemsScript.RADAR_DURATION_MS
 		"overcharge":
 			# Arm the next shot (read in _shoot off the rules dict): it pierces
 			# and skips the cooldown.
-			var p2: Dictionary = arena.rules.players.get(arena.local_player_id, {})
+			var p2: Dictionary = arena.rules.players.get(player_id, {})
 			if not p2.is_empty():
 				p2["overchargeArmed"] = true
 		"clone":
 			_spawn_clone(node)
 		"portal":
-			_open_portal(node)
+			_open_portal(node, player_id)
 
 # Open a portal pair for the opener (entry mouth on the wall they face, exit on
 # a random other wall) and block them from it until they step clear. Mirrors
 # itemManager.openPortal.
-func _open_portal(owner: Node) -> void:
+func _open_portal(owner: Node, player_id: String) -> void:
 	var walls: Array = arena.labyrinth.wall_endpoints() if arena.labyrinth != null else []
 	if walls.is_empty():
 		return
@@ -175,7 +191,7 @@ func _open_portal(owner: Node) -> void:
 	_portals.append(geom)
 	# The opener stands on the entry mouth; block them until they step clear so
 	# the pair doesn't instantly teleport them off it.
-	_portal_blocked[arena.local_player_id] = true
+	_portal_blocked[player_id] = true
 
 # Expire elapsed pairs, then teleport any player standing on a live mouth to the
 # opposite exit. Blocked-until-clear + per-player cooldown stop the bounce.

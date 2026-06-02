@@ -28,6 +28,8 @@ const PhysicsScript := preload("res://scripts/physics.gd")
 const BotPathfinderScript := preload("res://scripts/bot_pathfinder.gd")
 const BotDecisionScript := preload("res://scripts/bot_decision.gd")
 const BotGoalsScript := preload("res://scripts/bot_goals.gd")
+const BotItemsScript := preload("res://scripts/bot_items.gd")
+const BotPerception := preload("res://scripts/bot_perception.gd")
 
 enum State { PATROL, CHASE, FLEE, RESCUE, INVESTIGATE, COLLECT }
 
@@ -85,13 +87,22 @@ func _physics_process(delta: float) -> void:
 	accumulated += delta
 	time_since_last_jump += delta
 	_update_stuck(delta)
-	if accumulated >= TICK_PERIOD:
+	var ticked: bool = accumulated >= TICK_PERIOD
+	if ticked:
 		accumulated = 0.0
 		_choose_state()
 		_choose_target()
 		_maybe_shoot()
+	# Compute the jump intent once per frame (after the tick refreshes state) and
+	# reuse it: a held Leap arms the very jump it triggers, so item-use needs to
+	# know the bot is about to take off.
+	var want_jump: bool = _wants_jump(delta)
+	if ticked:
+		_maybe_use_item(want_jump)
 	_drive()
-	_maybe_jump(delta)
+	if want_jump:
+		player.bot_jump = true
+		time_since_last_jump = 0.0
 
 # Fire when the decision says we have a clear shot (own turn, visible enemy in
 # range). offline_mode gates turn/cooldown; here we just aim. Mirrors the
@@ -260,11 +271,11 @@ func _try_close_unfreeze() -> void:
 # AND by skipping the eval entirely while the body is mid-arc (the
 # Physics.step_jump call inside _apply_bot_movement would reject the
 # request anyway, but bailing here keeps the predicate clean).
-func _maybe_jump(delta: float) -> void:
+func _wants_jump(delta: float) -> bool:
 	if player.jump_started_at_ms >= 0:
-		return
+		return false
 	if time_since_last_jump < BOT_JUMP_REFRACTORY_S:
-		return
+		return false
 	var active_team: String = rules.active_team()
 	var enemy_id: String = _nearest_enemy_id()
 	var enemy_dist: float = _dist_to_id(enemy_id)
@@ -299,9 +310,53 @@ func _maybe_jump(delta: float) -> void:
 	if not want_jump and chasing and active_team == _team():
 		if rng.randf() < BOT_JUMP_NOISE_PER_SECOND * delta:
 			want_jump = true
-	if want_jump:
-		player.bot_jump = true
-		time_since_last_jump = 0.0
+	return want_jump
+
+# Decide whether to spend the held power-up this tick (item-value layer), then
+# apply it offline. Mirrors botManager's per-tick decideItemUse call: a used
+# Radar seeds investigate memory toward the nearest enemy the bot can't see.
+func _maybe_use_item(want_jump: bool) -> void:
+	if player.arena == null or player.arena.offline == null:
+		return
+	var bot: Dictionary = rules.players.get(player_id, {})
+	if bot.is_empty():
+		return
+	var item: String = bot.get("active_item", "")
+	if item == "":
+		return
+	var enemy_dist: float = _decision.get("enemy_dist", INF)
+	var target: Dictionary = _decision.get("target", {})
+	var has_actionable: bool = not target.is_empty() and enemy_dist < SharedConstants.BOT_VISION_RADIUS
+	# Radar pings the nearest enemy anywhere (ignoring walls/cloak/range), used
+	# only when the bot is blind to every actionable enemy.
+	var ping: Variant = null
+	if not has_actionable:
+		var ne := BotPerception.nearest_enemy(bot, rules.players.values(), topology)
+		if not ne.target.is_empty():
+			ping = ne.target.position
+	var ctx := {
+		"chasing": _decision.get("chasing", false),
+		"fleeing": _decision.get("fleeing", false),
+		"want_jump": want_jump,
+		"can_shoot": _decision.get("can_shoot", false),
+		"enemy_dist": enemy_dist,
+		"sprint_energy": player.sprint_energy,
+		"has_actionable_enemy": has_actionable,
+		"nearest_enemy_pos": ping,
+	}
+	var params := {
+		"sprint_trigger_radius": SharedConstants.BOT_SPRINT_TRIGGER_RADIUS,
+		"max_sprint": SharedConstants.MAX_SPRINT,
+		"tag_radius": TAG_RADIUS_BOT,
+		"jump_evade_buffer": BOT_JUMP_EVADE_BUFFER,
+	}
+	var decision := BotItemsScript.decide_item_use(item, ctx, params)
+	if not decision.use:
+		return
+	player.arena.offline.bot_use_item(player_id, player)
+	if decision.memory_seed != null:
+		engagement.last_known_pos = decision.memory_seed
+		engagement.investigate_until = float(Time.get_ticks_msec()) + SharedConstants.BOT_INVESTIGATE_MS
 
 func _pick_patrol_target() -> void:
 	var radius: float = rng.randf_range(8.0, 32.0)

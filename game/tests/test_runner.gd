@@ -13,6 +13,8 @@ const TEST_SCRIPTS: Array[String] = [
 	"res://tests/test_bot_pathfinder.gd",
 	"res://tests/test_bot_perception.gd",
 	"res://tests/test_bot_decision.gd",
+	"res://tests/test_offline_items.gd",
+	"res://tests/test_offline_items_determinism.gd",
 	"res://tests/test_username_generator.gd",
 	"res://tests/test_game_rules.gd",
 	"res://tests/test_bot_ai.gd",

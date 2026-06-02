@@ -41,9 +41,6 @@ var _items: OfflineItemsScript = null
 var _projectiles: Array = []
 var _last_shot_ms: Dictionary = {}
 var _proj_seq: int = 0
-# Live Clone-power-up allies: id -> expiry (ms). Despawned when it elapses.
-var _clone_expires: Dictionary = {}
-var _clone_seq: int = 0
 # Live portal pairs + per-player blocked/cooldown state + exit-wall rng.
 var _portals: Array = []
 var _portal_blocked: Dictionary = {}
@@ -66,7 +63,10 @@ func start() -> void:
 	# Same seed as the maze so the item layout matches what the server would
 	# spawn for this room (the shared deterministic layout).
 	_items = OfflineItemsScript.new()
-	_items.spawn(seed_value, arena.topology.name())
+	# Clone is disabled offline: a clone is itself an item-using bot, so clones
+	# spawn clones and the body + AI-node count snowballs into frame lag. Drop it
+	# from the floor entirely (rather than spawn a dud) so it never confuses.
+	_items.spawn(seed_value, arena.topology.name(), ["clone"])
 	if arena.item_renderer == null:
 		arena.item_renderer = ItemRendererScript.new(arena)
 	arena.item_renderer.render_from_snapshot(_item_wire())
@@ -90,7 +90,6 @@ func drive_hud(delta: float) -> void:
 	arena.rules.tick(Time.get_unix_time_from_system())
 	_step_items(delta)
 	_step_projectiles(delta)
-	_sweep_clones()
 	_step_portals(delta)
 	arena.hud.set_countdown_seconds(arena.rules.phase_time_remaining(Time.get_unix_time_from_system()))
 	# The minimap plots live positions, so refresh it every frame here rather
@@ -166,8 +165,6 @@ func _apply_item_effect(node: Node, item_type: String, player_id: String) -> voi
 			var p2: Dictionary = arena.rules.players.get(player_id, {})
 			if not p2.is_empty():
 				p2["overchargeArmed"] = true
-		"clone":
-			_spawn_clone(node)
 		"portal":
 			_open_portal(node, player_id)
 
@@ -250,55 +247,6 @@ func _portal_wire() -> Array:
 			{"id": portal.id, "a": {"x": a.x, "y": a.y, "z": a.z}, "b": {"x": b.x, "y": b.y, "z": b.z}}
 		)
 	return out
-
-# Spawn a temporary ally bot next to the owner, registered + AI-attached like a
-# normal offline bot, that despawns after CLONE_DURATION_MS. Mirrors the
-# server's spawnClone.
-func _spawn_clone(owner: Node) -> void:
-	_clone_seq += 1
-	var id := "clone_%d" % _clone_seq
-	arena._spawn_player(id, UsernameGenerator.generate(), owner.team, true, false)
-	var node: Node = arena.player_nodes.get(id)
-	if node == null:
-		return
-	var pos := _clone_spawn_near(owner.global_position)
-	node.global_position = pos
-	node.settle_into_world()
-	arena.rules.register_player(id, owner.team, pos, node.display_name, true)
-	_attach_bot_ai(node, id)
-	_clone_expires[id] = (
-		int(Time.get_unix_time_from_system() * 1000.0) + int(SharedConstants.CLONE_DURATION_MS)
-	)
-	_render_team_status()
-
-# First clear bearing around `center` at CLONE_SPAWN_OFFSET (falls back to the
-# center if every bearing is walled).
-func _clone_spawn_near(center: Vector3) -> Vector3:
-	var walls: Array = arena.labyrinth.wall_endpoints() if arena.labyrinth != null else []
-	var offset: float = SharedConstants.CLONE_SPAWN_OFFSET
-	for i in 8:
-		var a: float = (float(i) / 8.0) * TAU
-		var w: Vector3 = arena.topology.wrap(
-			Vector3(center.x + cos(a) * offset, center.y, center.z + sin(a) * offset)
-		)
-		if walls.is_empty() or not WallGeometry.point_blocked_by_wall(walls, w.x, w.z):
-			return w
-	return center
-
-func _sweep_clones() -> void:
-	var now_ms := int(Time.get_unix_time_from_system() * 1000.0)
-	var removed := false
-	for id in _clone_expires.keys():
-		if _clone_expires[id] <= now_ms:
-			var node: Node = arena.player_nodes.get(id)
-			if node != null:
-				node.queue_free()
-				arena.player_nodes.erase(id)
-			arena.rules.remove_player(id)
-			_clone_expires.erase(id)
-			removed = true
-	if removed:
-		_render_team_status()
 
 # The local player fired (rising edge of the shoot button). Same gating as the
 # server: not frozen, only on the shooter's turn, and off cooldown (unless

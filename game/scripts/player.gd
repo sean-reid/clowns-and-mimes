@@ -329,12 +329,16 @@ func _physics_process(delta: float) -> void:
 	input_dir.x += Input.get_action_strength("move_right")
 	input_dir = input_dir.normalized()
 	var now_ms: int = int(Time.get_unix_time_from_system() * 1000.0)
+	var surge_active := surge_until_ms > now_ms
 	var sprinting := Input.is_action_pressed("sprint") and sprint_energy > 0.0 and input_dir.length() > 0.0
-	var speed := SPRINT_SPEED if sprinting else WALK_SPEED
-	# Surge power-up multiplies move speed for its window (matches the server's
-	# movement step, where surge scales WALK/SPRINT alike).
-	if surge_until_ms > now_ms:
-		speed *= SharedConstants.SURGE_SPEED_MULT
+	# Surge forces sprint pace x SURGE_SPEED_MULT regardless of the sprint key
+	# AND spends no stamina (matches the server movement step). Otherwise the
+	# sprint key picks SPRINT vs WALK.
+	var speed := WALK_SPEED
+	if surge_active:
+		speed = SPRINT_SPEED * SharedConstants.SURGE_SPEED_MULT
+	elif sprinting:
+		speed = SPRINT_SPEED
 	var basis_dir := transform.basis * input_dir
 	velocity.x = basis_dir.x * speed
 	velocity.z = basis_dir.z * speed
@@ -364,7 +368,8 @@ func _physics_process(delta: float) -> void:
 	# in advanceIdleJumpState - so Y at any moment is purely a function of
 	# jump_started_at_ms and now_ms.
 	global_position.y = PhysicsScript.jump_arc_y(jump_started_at_ms, now_ms)
-	if sprinting:
+	# Surge suppresses drain (free boost); otherwise sprinting drains, idle regens.
+	if sprinting and not surge_active:
 		sprint_energy -= SPRINT_DRAIN_PER_S * delta
 	else:
 		sprint_energy += SPRINT_REGEN_PER_S * delta

@@ -13,6 +13,7 @@ signal requested_screen(screen: String)
 
 const AssetPaths := preload("res://scripts/asset_paths.gd")
 const VersionCheck := preload("res://scripts/network/version_check.gd")
+const MatchmakerClient := preload("res://scripts/network/matchmaker_client.gd")
 const SettingsPanel := preload("res://scenes/settings_panel.tscn")
 # Popups are Window-based, so they don't inherit this scene's theme - assign it
 # explicitly to keep the dialogs on the carnival font/button styling.
@@ -20,6 +21,14 @@ const CARNIVAL_THEME := preload("res://assets/themes/carnival_theme.tres")
 
 # Picker id past the four concrete topologies = "Random" (rolled client-side).
 const RANDOM_TOPOLOGY_ID := 100
+
+# How often the menu silently re-probes the matchmaker so a reconnect flips the
+# UI back to online (and a drop flips it to offline) without the player acting.
+const CONNECTIVITY_REPROBE_S := 10.0
+
+# Panels that only make sense online; if we go offline while one is open, snap
+# back to root so the player isn't stuck on a dead-end flow.
+const ONLINE_PANELS := ["open", "private", "party", "host", "joinmatch", "joinparty"]
 
 @onready var user_label: Label = $TopBar/UserRow/UserLabel
 @onready var edit_link: Button = $TopBar/UserRow/EditLink
@@ -30,8 +39,14 @@ const RANDOM_TOPOLOGY_ID := 100
 @onready var settings_button: Button = $SettingsButton
 @onready var confetti: CPUParticles2D = $Confetti
 @onready var topology_picker: OptionButton = $Panels/HostPanel/TopologyRow/Topology
+@onready var offline_topology_picker: OptionButton = $Panels/OfflinePanel/TopologyRow/Topology
 @onready var match_code: LineEdit = $Panels/JoinMatchPanel/CodeEntry
 @onready var party_code: LineEdit = $Panels/JoinPartyPanel/CodeEntry
+@onready var open_button: Button = $Panels/RootPanel/OpenButton
+@onready var private_button: Button = $Panels/RootPanel/PrivateButton
+@onready var connectivity_bar: VBoxContainer = $ConnectivityBar
+@onready var connectivity_status: Label = $ConnectivityBar/Status
+@onready var retry_button: Button = $ConnectivityBar/Retry
 
 # Panel name -> the panel above it, for Back. Root has no parent.
 const BACK_TARGET := {
@@ -41,11 +56,15 @@ const BACK_TARGET := {
 	"host": "private",
 	"joinmatch": "private",
 	"joinparty": "party",
+	"offline": "root",
 }
 
 var _panels: Dictionary = {}
 var _username_was_typed: bool = false
 var _suppress_username_signal: bool = false
+# Matchmaker reachability probe + the timer that re-runs it.
+var _client: Node = null
+var _probe_in_flight: bool = false
 
 func _ready() -> void:
 	_panels = {
@@ -56,10 +75,12 @@ func _ready() -> void:
 		"host": $Panels/HostPanel,
 		"joinmatch": $Panels/JoinMatchPanel,
 		"joinparty": $Panels/JoinPartyPanel,
+		"offline": $Panels/OfflinePanel,
 	}
 	# Root navigation.
 	$Panels/RootPanel/OpenButton.pressed.connect(func(): _show_panel("open"))
 	$Panels/RootPanel/PrivateButton.pressed.connect(func(): _show_panel("private"))
+	$Panels/RootPanel/OfflineButton.pressed.connect(func(): _show_panel("offline"))
 	# Open match.
 	$Panels/OpenPanel/PartyButton.pressed.connect(func(): _show_panel("party"))
 	$Panels/OpenPanel/SoloButton.pressed.connect(_play_solo)
@@ -73,6 +94,9 @@ func _ready() -> void:
 	$Panels/HostPanel/StartButton.pressed.connect(_host)
 	$Panels/JoinMatchPanel/JoinButton.pressed.connect(_join_match)
 	$Panels/JoinPartyPanel/JoinButton.pressed.connect(_join_party)
+	# Offline leaf + reconnect retry.
+	$Panels/OfflinePanel/StartButton.pressed.connect(_play_offline)
+	retry_button.pressed.connect(_probe_connectivity)
 	# Back buttons (named "Back" under each panel that has a parent).
 	for panel_name in BACK_TARGET:
 		var back: Button = _panels[panel_name].get_node("Back")
@@ -111,6 +135,7 @@ func _ready() -> void:
 	AudioBus.play_music_from_path(AssetPaths.THEME_AUDIO)
 	_check_for_updates()
 	_maybe_show_telemetry_opt_in()
+	_setup_connectivity()
 
 func _show_panel(panel_name: String) -> void:
 	for key in _panels:
@@ -118,12 +143,88 @@ func _show_panel(panel_name: String) -> void:
 
 
 func _populate_topologies() -> void:
-	topology_picker.clear()
-	topology_picker.add_item("Plane", GameState.Topology.PLANE)
-	topology_picker.add_item("Torus", GameState.Topology.TORUS)
-	topology_picker.add_item("Möbius strip", GameState.Topology.MOBIUS)
-	topology_picker.add_item("Klein bottle", GameState.Topology.KLEIN)
-	topology_picker.add_item("Random", RANDOM_TOPOLOGY_ID)
+	# Host (online) and offline both pick a shape, so fill both the same way.
+	_fill_topology_picker(topology_picker)
+	_fill_topology_picker(offline_topology_picker)
+
+func _fill_topology_picker(picker: OptionButton) -> void:
+	picker.clear()
+	picker.add_item("Plane", GameState.Topology.PLANE)
+	picker.add_item("Torus", GameState.Topology.TORUS)
+	picker.add_item("Möbius strip", GameState.Topology.MOBIUS)
+	picker.add_item("Klein bottle", GameState.Topology.KLEIN)
+	picker.add_item("Random", RANDOM_TOPOLOGY_ID)
+
+# --- connectivity probe ----------------------------------------------------
+
+# Build the matchmaker client + re-probe timer, then fire the first probe. The
+# UI starts in CONNECTING (online actions disabled) and resolves to ONLINE or
+# OFFLINE; a background timer keeps it current so reconnects need no action.
+func _setup_connectivity() -> void:
+	_client = MatchmakerClient.new()
+	add_child(_client)
+	_client.health_result.connect(_on_health_result)
+	GameState.connectivity_changed.connect(_on_connectivity_changed)
+	var timer := Timer.new()
+	timer.wait_time = CONNECTIVITY_REPROBE_S
+	timer.autostart = true
+	timer.timeout.connect(_reprobe)
+	add_child(timer)
+	_refresh_connectivity_ui()
+	_probe_connectivity()
+
+# Explicit probe (first load + Retry): announce CONNECTING so the UI reflects it.
+func _probe_connectivity() -> void:
+	if _probe_in_flight:
+		return
+	_probe_in_flight = true
+	GameState.set_connectivity(GameState.Connectivity.CONNECTING)
+	_client.probe_health()
+
+# Background probe: don't flash CONNECTING, just refresh the verdict on result.
+func _reprobe() -> void:
+	if _probe_in_flight:
+		return
+	_probe_in_flight = true
+	_client.probe_health()
+
+func _on_health_result(online: bool, reason: String) -> void:
+	_probe_in_flight = false
+	GameState.set_connectivity(
+		GameState.Connectivity.ONLINE if online else GameState.Connectivity.OFFLINE,
+		reason,
+	)
+
+func _on_connectivity_changed(_state: int, _reason: String) -> void:
+	_refresh_connectivity_ui()
+
+# Online actions are gated on a reachable matchmaker; offline play is always
+# available. Reflect the current state in the root buttons + the status banner.
+func _refresh_connectivity_ui() -> void:
+	var state: int = GameState.connectivity
+	var online := state == GameState.Connectivity.ONLINE
+	open_button.disabled = not online
+	private_button.disabled = not online
+	match state:
+		GameState.Connectivity.CONNECTING:
+			connectivity_bar.visible = true
+			connectivity_status.text = "Checking for a connection…"
+			retry_button.visible = false
+		GameState.Connectivity.OFFLINE:
+			connectivity_bar.visible = true
+			connectivity_status.text = "You're offline — only offline play against bots is available."
+			retry_button.visible = true
+			_route_off_online_panels()
+		_:
+			connectivity_bar.visible = false
+
+# If we drop offline while sitting on an online-only panel, return to root so
+# the player lands on the still-usable offline button instead of a dead flow.
+func _route_off_online_panels() -> void:
+	for panel_name in ONLINE_PANELS:
+		if _panels[panel_name].visible:
+			_show_panel("root")
+			return
 
 # --- leaf actions ----------------------------------------------------------
 
@@ -147,6 +248,24 @@ func _host() -> void:
 	else:
 		GameState.set_topology(idx)
 	GameState.set_mode(GameState.Mode.HOST)
+	requested_screen.emit("lobby")
+
+# Explicit offline play vs bots with a chosen (or random) topology. Skips the
+# matchmaker entirely: empty server_url + Mode.OFFLINE routes the lobby straight
+# to the offline arena.
+func _play_offline() -> void:
+	_burst_confetti()
+	GameState.party_id = ""
+	GameState.party_member_id = ""
+	GameState.party_intent = ""
+	var idx := offline_topology_picker.get_selected_id()
+	GameState.host_random_topology = idx == RANDOM_TOPOLOGY_ID
+	if GameState.host_random_topology:
+		GameState.roll_random_topology()
+	else:
+		GameState.set_topology(idx)
+	GameState.server_url = ""
+	GameState.set_mode(GameState.Mode.OFFLINE)
 	requested_screen.emit("lobby")
 
 func _join_match() -> void:

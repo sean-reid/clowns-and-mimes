@@ -34,6 +34,32 @@ const SPRINT_ENGAGE_THRESHOLD := 20.0
 const PROJECTILE_RADIUS := 0.2
 const SHOOT_COOLDOWN_MS := 1500.0
 
+# Mirrored from backend/shared/src/botTuning.ts
+const TAG_RADIUS_BOT := 1.4
+const UNFREEZE_RADIUS_BOT := 1.4
+const BOT_VISION_RADIUS := 22.0
+const BOT_SHOOT_RANGE := 18.0
+const BOT_SHOOT_AIM_JITTER := 0.09
+const RETARGET_HYSTERESIS := 0.75
+const BOT_INVESTIGATE_MS := 3000.0
+const BOT_SPRINT_TRIGGER_RADIUS := 10.0
+const BOT_FLEE_PROJECTION := 12.0
+const DIR_SMOOTHING := 0.5
+const MAX_YAW_RATE := 9.0
+const BOT_PATROL_RETARGET_MS := 4000.0
+const BOT_PATROL_CANDIDATE_ATTEMPTS := 8.0
+const BOT_NO_PROGRESS_WINDOW_MS := 800.0
+const BOT_NO_PROGRESS_MIN_DIST := 0.5
+const BOT_RECENT_TARGETS_KEEP := 6.0
+const BOT_RECENT_TARGET_RADIUS := 10.0
+const BOT_ITEM_SEEK_RADIUS := 16.0
+const BOT_JUMP_REFRACTORY_MS := 1500.0
+const BOT_JUMP_NOISE_PER_SECOND := 0.05
+const BOT_JUMP_EVADE_BUFFER := 0.5
+const BOT_JUMP_CORNER_THREAT_RADIUS := 4.0
+const CLONE_DURATION_MS := 30000.0
+const CLONE_SPAWN_OFFSET := 2.0
+
 # Mirrored from backend/shared/src/names.ts
 const NAME_ADJECTIVES := ["Silent", "Painted", "Loud", "Floppy", "Crooked", "Bashful", "Velvet", "Hushed", "Ruffled", "Striped", "Glossy", "Pale", "Sneaky", "Whiskered", "Brittle", "Tipsy", "Polka", "Wobbly", "Crinkled", "Powdered", "Squeaky", "Tufted", "Knobbly", "Frilly", "Wonky", "Boggled", "Plucky", "Drooping", "Frazzled", "Soggy", "Greasy", "Jaunty", "Saggy", "Lopsided", "Petite", "Stilted", "Drippy", "Mottled", "Googly", "Spangled", "Befuddled", "Twitchy", "Mournful", "Limpid", "Smudged", "Curdled", "Cracked", "Bumbling", "Threadbare", "Daffy", "Dusty", "Garish", "Hapless", "Wistful", "Brassy", "Maudlin", "Frumpy", "Yawning", "Stooped", "Vexed", "Spotty", "Lurching", "Foggy", "Crumbly", "Goofy", "Zany", "Wacky", "Kooky", "Loopy", "Nutty", "Bonkers", "Clumsy", "Giddy", "Madcap", "Cockeyed", "Harebrained", "Addled", "Ditzy", "Screwball", "Cuckoo", "Jumbled", "Galumphing", "Bamboozled", "Slapstick"]
 const NAME_NOUNS := ["Bozo", "Coulrophobe", "Pierrot", "Harlequin", "Buffoon", "Jester", "Marceau", "Tramp", "Auguste", "Carnie", "Pagliacci", "Punchinello", "Hopo", "Cake", "Honk", "Greasepaint", "Stripes", "Tear", "Glove", "Wig", "Nose", "Shoe", "Banana", "Pinwheel", "Smile", "Frown", "Lapel", "Pocket", "Hatband", "Cravat", "Suspender", "Bowtie", "Trumpet", "Kazoo", "Squirt", "Ladder", "Bucket", "Pratfall", "Cartwheel", "Tightrope", "Unicycle", "Confetti", "Crumpet", "Boutonniere", "Mistletoe", "Marionette", "Glissando", "Pantomime", "Vaudeville", "Curtain", "Footlight", "Spotlight", "Soliloquy", "Pirouette", "Maskmaker", "Topiary", "Sashay", "Gambol", "Tumbler", "Patter", "Whoopee", "Mime", "Clown", "Zanni", "Pulcinella", "Brighella", "Colombina", "Pantalone", "Scaramuccia", "Dottore", "Capitano", "Innamorato", "Lazzo", "Burla", "Maschera", "Carnevale", "Tarantella", "Saltarello", "Serenata", "Gondola", "Pizzicato", "Cannoli", "Biscotto"]

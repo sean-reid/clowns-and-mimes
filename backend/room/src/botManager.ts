@@ -19,6 +19,32 @@ import {
   SPRINT_SPEED,
   WALK_SPEED,
 } from '@cm/shared/movement';
+import {
+  BOT_FLEE_PROJECTION,
+  BOT_INVESTIGATE_MS,
+  BOT_ITEM_SEEK_RADIUS,
+  BOT_JUMP_CORNER_THREAT_RADIUS,
+  BOT_JUMP_EVADE_BUFFER,
+  BOT_JUMP_NOISE_PER_SECOND,
+  BOT_JUMP_REFRACTORY_MS,
+  BOT_NO_PROGRESS_MIN_DIST,
+  BOT_NO_PROGRESS_WINDOW_MS,
+  BOT_PATROL_CANDIDATE_ATTEMPTS,
+  BOT_PATROL_RETARGET_MS,
+  BOT_RECENT_TARGET_RADIUS,
+  BOT_RECENT_TARGETS_KEEP,
+  BOT_SHOOT_AIM_JITTER,
+  BOT_SHOOT_RANGE,
+  BOT_SPRINT_TRIGGER_RADIUS,
+  BOT_VISION_RADIUS,
+  CLONE_DURATION_MS,
+  CLONE_SPAWN_OFFSET,
+  DIR_SMOOTHING,
+  MAX_YAW_RATE,
+  RETARGET_HYSTERESIS,
+  TAG_RADIUS_BOT,
+  UNFREEZE_RADIUS_BOT,
+} from '@cm/shared/botTuning';
 import type { BotPathfinder } from './botPathfinder.ts';
 import { smoothDir, stepWithSlide, turnToward } from './botSteering.ts';
 import { decideBotAction } from './botDecision.ts';
@@ -30,40 +56,10 @@ import { assignRescues } from './botCoordination.ts';
 // World half-extent (kept private here; Room owns the canonical constant).
 const WORLD_WIDTH = 80;
 
-// Bot AI constants. All bot tuning lives here so a single read explains
-// the AI's behavior.
+// Server-only bot orchestration (slot fill). The behavioral tuning lives in
+// @cm/shared/botTuning so the offline GDScript brain reads the same values.
 const TEAM_TARGET = 4;
 const BOT_FILL_DELAY_MS = 3_000;
-const TAG_RADIUS_BOT = 1.4;
-const UNFREEZE_RADIUS_BOT = 1.4;
-const BOT_VISION_RADIUS = 22;
-const BOT_PATROL_RETARGET_MS = 4_000;
-const BOT_SPRINT_TRIGGER_RADIUS = 10;
-// A bot holding no item will detour to grab a floor item within this range.
-// Inside vision (22) so it only chases items it can plausibly reach.
-const BOT_ITEM_SEEK_RADIUS = 16;
-const BOT_NO_PROGRESS_WINDOW_MS = 800;
-const BOT_NO_PROGRESS_MIN_DIST = 0.5;
-const BOT_FLEE_PROJECTION = 12;
-const BOT_INVESTIGATE_MS = 3_000;
-const BOT_RECENT_TARGETS_KEEP = 6;
-const BOT_RECENT_TARGET_RADIUS = 10;
-const BOT_PATROL_CANDIDATE_ATTEMPTS = 8;
-const BOT_JUMP_REFRACTORY_MS = 1500;
-const BOT_JUMP_NOISE_PER_SECOND = 0.05;
-const BOT_JUMP_EVADE_BUFFER = 0.5;
-const BOT_JUMP_CORNER_THREAT_RADIUS = 4.0;
-// Bots fire at a visible enemy within this range during their turn. Inside
-// BOT_VISION_RADIUS but tighter, so shots have a realistic chance to connect
-// before the projectile expires.
-const BOT_SHOOT_RANGE = 18;
-// Random angular spread (radians) added to each bot shot so aim isn't pixel
-// perfect; keeps bots beatable and shots from feeling robotic.
-const BOT_SHOOT_AIM_JITTER = 0.09;
-// Clone power-up: a temporary ally bot lives this long, then despawns.
-const CLONE_DURATION_MS = 30_000;
-// Clone spawns this far from its owner, on the first unobstructed bearing.
-const CLONE_SPAWN_OFFSET = 2.0;
 
 interface BotMind {
   patrolTarget: { x: number; z: number };
@@ -357,9 +353,6 @@ export class BotManager {
     const topology = this.host.getTopology();
     const walls = this.host.getWalls();
     const pathfinder = this.host.getPathfinder();
-    const DIR_SMOOTHING = 0.5;
-    const MAX_YAW_RATE = 9.0;
-    const RETARGET_HYSTERESIS = 0.75;
     // One rescue claim per frozen teammate, so bots spread across distinct
     // allies instead of swarming the nearest one. Computed once per tick.
     const rescueClaims = assignRescues(

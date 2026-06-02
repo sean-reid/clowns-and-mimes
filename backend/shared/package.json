@@ -12,6 +12,7 @@
     "./labyrinth": "./src/labyrinth.ts",
     "./gridMaze": "./src/gridMaze.ts",
     "./movement": "./src/movement.ts",
+    "./botTuning": "./src/botTuning.ts",
     "./mobius": "./src/mobius.ts",
     "./physics": "./src/physics.ts",
     "./tagRules": "./src/tagRules.ts",

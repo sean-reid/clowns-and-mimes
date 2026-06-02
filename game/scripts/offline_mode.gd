@@ -110,6 +110,12 @@ func _apply_item_effect(node: Node, item_type: String) -> void:
 			node.leap_armed = true
 		"surge":
 			node.surge_until_ms = now_ms + int(SharedConstants.SURGE_DURATION_MS)
+		"radar":
+			# The minimap reveals the enemy team while the local player's
+			# radarUntil is in the future; it reads that key off the rules dict.
+			var p: Dictionary = arena.rules.players.get(arena.local_player_id, {})
+			if not p.is_empty():
+				p["radarUntil"] = now_ms + OfflineItemsScript.RADAR_DURATION_MS
 
 # Floor items in the {id, type, position:{x,y,z}} wire shape the renderer reads
 # (offline_items keeps positions as Vector3 for the gameplay side).

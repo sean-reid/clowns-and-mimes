@@ -374,6 +374,12 @@ func _projectile_wire() -> Array:
 		)
 	return out
 
+# Available (un-held, un-elapsed) floor items the bot brain seeks toward, as the
+# offline_items gameplay dicts (position is a Vector3). Mirrors the server's
+# host.availableItems(). Empty before the item system spawns.
+func available_items() -> Array:
+	return _items.available() if _items != null else []
+
 # Floor items in the {id, type, position:{x,y,z}} wire shape the renderer reads
 # (offline_items keeps positions as Vector3 for the gameplay side).
 func _item_wire() -> Array:

@@ -27,8 +27,9 @@ const GameRulesScript := preload("res://scripts/game_rules.gd")
 const PhysicsScript := preload("res://scripts/physics.gd")
 const BotPathfinderScript := preload("res://scripts/bot_pathfinder.gd")
 const BotDecisionScript := preload("res://scripts/bot_decision.gd")
+const BotGoalsScript := preload("res://scripts/bot_goals.gd")
 
-enum State { PATROL, CHASE, FLEE, RESCUE, INVESTIGATE }
+enum State { PATROL, CHASE, FLEE, RESCUE, INVESTIGATE, COLLECT }
 
 @export var player_id: String = ""
 
@@ -130,6 +131,8 @@ func _choose_state() -> void:
 			state = State.RESCUE
 		"investigate":
 			state = State.INVESTIGATE
+		"collect":
+			state = State.COLLECT
 		_:
 			state = State.PATROL
 
@@ -152,7 +155,23 @@ func _run_decision() -> Dictionary:
 		float(Time.get_ticks_msec()),
 		rules.active_team(),
 		engagement,
-		params
+		params,
+		_collect_target(bot)
+	)
+
+# Nearest reachable floor item, but only while empty-handed (a held item blocks
+# pickup). Fed to the decision layer's opportunistic 'collect' mode. Null when
+# holding an item, when there's no offline item system, or when none is close.
+func _collect_target(bot: Dictionary):
+	if bot.get("active_item", "") != "":
+		return null
+	if player == null or player.arena == null or player.arena.offline == null:
+		return null
+	return BotGoalsScript.nearest_item_target(
+		bot.position,
+		player.arena.offline.available_items(),
+		topology,
+		SharedConstants.BOT_ITEM_SEEK_RADIUS
 	)
 
 func _choose_target() -> void:
@@ -171,6 +190,9 @@ func _choose_target() -> void:
 			)
 		State.RESCUE:
 			patrol_target = _decision.rescue_target.position
+		State.COLLECT:
+			# Walk onto the floor item; pickup is proximity-based in offline_items.
+			patrol_target = _decision.collect_target
 		State.INVESTIGATE:
 			patrol_target = engagement.last_known_pos
 		State.PATROL:

@@ -19,6 +19,9 @@ const JUMP_COOLDOWN_S := 0.1
 const BOUNCE_E_GROUNDED := 0.3
 const BOUNCE_E_AERIAL := 0.7
 const BOUNCE_E_WALL := 0.15
+const EYE_HEIGHT := 1.6
+const HEAD_CENTER_HEIGHT := 1.5
+const HEAD_RADIUS := 0.35
 
 # Mirrored from backend/shared/src/movement.ts
 const WALK_SPEED := 3.2
@@ -33,6 +36,8 @@ const SPRINT_ENGAGE_THRESHOLD := 20.0
 # Mirrored from backend/shared/src/projectiles.ts
 const PROJECTILE_RADIUS := 0.2
 const SHOOT_COOLDOWN_MS := 1500.0
+const PROJECTILE_SPEED := 16.0
+const PROJECTILE_LIFETIME_MS := 2500.0
 
 # Mirrored from backend/shared/src/botTuning.ts
 const TAG_RADIUS_BOT := 1.4

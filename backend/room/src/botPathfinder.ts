@@ -12,11 +12,31 @@
 // bots all chasing the same target only pays the search cost once.
 
 import type { Topology, Vec2 } from '@cm/shared';
-import { pathClearsWalls, pathCrossesWall, type WallSegment } from '@cm/shared/labyrinth';
+import {
+  nearestWallDistance,
+  pathClearsWalls,
+  pathCrossesWall,
+  type WallSegment,
+} from '@cm/shared/labyrinth';
 import { GRID_MAZE_N, MOBIUS_GRID_X, MOBIUS_GRID_Z } from '@cm/shared/gridMaze';
 import { MOBIUS_HALF_X, MOBIUS_HALF_Z } from '@cm/shared/mobius';
 import { WORLD_WIDTH } from '@cm/shared/topology';
-import { OCCUPANCY_WEIGHT, WALL_AVOID_WEIGHT } from '@cm/shared/botTuning';
+import {
+  OCCUPANCY_RADIUS,
+  OCCUPANCY_WEIGHT,
+  WALL_AVOID_RADIUS,
+  WALL_AVOID_WEIGHT,
+} from '@cm/shared/botTuning';
+
+// Linear repulsion ramp shared by the wall and player cost fields: full `weight`
+// at the obstacle, falling to 0 at `radius` and beyond. Quantized to 1e-4 so the
+// sqrt-based distance can never drift an A* tie between the TS and GDScript
+// searches (both then store the same Float32). Distance beyond the radius -
+// including Infinity when there's nothing to avoid - yields exactly 0.
+function repulsion(distance: number, radius: number, weight: number): number {
+  if (distance >= radius) return 0;
+  return Math.round(weight * ((radius - distance) / radius) * 1e4) / 1e4;
+}
 
 interface GridShape {
   cols: number;
@@ -30,15 +50,20 @@ interface GridShape {
   flipRowOnXWrap: boolean;
 }
 
-// Soft costs layered on the unit step cost so A* prefers a smoother route, not
-// just any shortest one. A cell walled on more sides costs a little more, so
-// paths lean toward open space rather than threading dead-end-adjacent cells; a
-// cell holding another player costs a lot more, so bots route around each other
-// (and around a frozen body parked in a corridor) instead of stacking up. The
-// occupancy cost is a soft penalty, not the old hard block, so a bot can still
-// push through when there's genuinely no other way rather than give up and walk
-// straight into the obstacle. Both live in @cm/shared/botTuning so the offline
-// GDScript pathfinder reads identical weights.
+// Soft costs layered on the unit step cost so A* prefers a clearer route, not
+// just any shortest one. Two continuous repulsion fields (see `repulsion`):
+//
+//  - walls (static, baked in computeWallCost): a cell's cost rises as its center
+//    nears the closest wall or the playfield boundary, so paths hug the middle
+//    of open lanes instead of scraping geometry, and
+//  - players (dynamic, recomputed per query in aStarChain): a cell's cost rises
+//    as its center nears any other player - teammates included - so bots route
+//    around each other and a frozen body parked in a corridor instead of
+//    stacking up. Soft, not a hard block, so a bot can still push through when
+//    there's genuinely no other way; the destination cell is never penalized.
+//
+// Both fields read their weights/radii from @cm/shared/botTuning so the offline
+// GDScript pathfinder runs the identical cost field.
 
 export class BotPathfinder {
   private readonly shape: GridShape;
@@ -46,8 +71,8 @@ export class BotPathfinder {
   // the k-th neighbor entry is reachable. The neighbor lookup is by direction
   // index (east, north, west, south), so adjacency stores 4 bits per cell.
   private readonly adjacency: Uint8Array;
-  // Per-cell static cost added when entering it: WALL_AVOID_WEIGHT * the number
-  // of walled sides. Precomputed from adjacency since walls don't move.
+  // Per-cell static cost added when entering it: the continuous wall-repulsion
+  // field (see computeWallCost). Precomputed from the walls, which don't move.
   private readonly wallCost: Float32Array;
   // A* cache: key is fromCell*total + toCell. Value is the cell chain from the
   // step after fromCell through toCell ([] if unreachable / same cell). Only
@@ -91,18 +116,18 @@ export class BotPathfinder {
   }
 
   /**
-   * Like nextWaypoint but adds a soft cost to the given cells for this query,
-   * so the bot prefers to route around them (other players, a frozen body in a
-   * corridor) yet can still pass through if there's no real alternative. The
-   * destination cell is never penalized. Skips the cache because the occupied
-   * set varies per tick.
+   * Like nextWaypoint but layers a soft, distance-based cost around the given
+   * player positions for this query, so the bot prefers to route around them
+   * (other players - teammates included - and frozen bodies) yet can still pass
+   * through if there's no real alternative. The destination cell is never
+   * penalized. Skips the cache because the positions vary per tick.
    */
-  nextWaypointAvoiding(from: Vec2, to: Vec2, occupiedCells: ReadonlySet<number>): Vec2 {
-    if (occupiedCells.size === 0) return this.nextWaypoint(from, to);
+  nextWaypointAvoiding(from: Vec2, to: Vec2, avoidPositions: readonly Vec2[]): Vec2 {
+    if (avoidPositions.length === 0) return this.nextWaypoint(from, to);
     const fromCell = this.worldToCell(from);
     const toCell = this.worldToCell(to);
     if (fromCell === toCell) return to;
-    return this.funnel(from, this.aStarChain(fromCell, toCell, occupiedCells), to);
+    return this.funnel(from, this.aStarChain(fromCell, toCell, avoidPositions), to);
   }
 
   /** Public cell index for a world-space position; callers building an avoid
@@ -131,12 +156,14 @@ export class BotPathfinder {
   }
 
   // Weighted A* over the cell grid. Step cost into a cell is 1 + its static
-  // wallCost, plus OCCUPANCY_WEIGHT when `occupied` holds it (never the
-  // destination). The heuristic is the wrap-aware cell Manhattan distance,
-  // admissible because the minimum step cost is 1. Returns the cells from the
-  // step after fromCell through toCell inclusive, or [] when unreachable.
-  private aStarChain(fromCell: number, toCell: number, occupied?: ReadonlySet<number>): number[] {
+  // wallCost, plus the dynamic player-repulsion cost when `avoidPositions` is
+  // given (never on the destination cell). The heuristic is the wrap-aware cell
+  // Manhattan distance, admissible because the minimum step cost is 1. Returns
+  // the cells from the step after fromCell through toCell inclusive, or [] when
+  // unreachable.
+  private aStarChain(fromCell: number, toCell: number, avoidPositions?: readonly Vec2[]): number[] {
     const total = this.shape.cols * this.shape.rows;
+    const occCost = avoidPositions ? this.occupancyCost(avoidPositions) : null;
     const g = new Float64Array(total).fill(Infinity);
     const came = new Int32Array(total).fill(-1);
     const closed = new Uint8Array(total);
@@ -156,7 +183,7 @@ export class BotPathfinder {
         const nb = this.neighborCell(cc, cr, dir);
         if (nb < 0 || closed[nb]) continue;
         let step = 1 + this.wallCost[nb]!;
-        if (occupied && nb !== toCell && occupied.has(nb)) step += OCCUPANCY_WEIGHT;
+        if (occCost && nb !== toCell) step += occCost[nb]!;
         const tentative = g[cur]! + step;
         if (tentative < g[nb]!) {
           g[nb] = tentative;
@@ -191,19 +218,43 @@ export class BotPathfinder {
     return dc + dr;
   }
 
-  // Static per-cell entry cost from how many sides are walled (a boundary on a
-  // non-wrapping edge counts as a wall). Open cells cost ~0 extra; boxed-in
-  // cells cost more, so A* leans toward roomier routes.
+  // Static per-cell entry cost: a continuous repulsion field that rises as the
+  // cell center nears the closest wall, ramping from 0 at WALL_AVOID_RADIUS to
+  // WALL_AVOID_WEIGHT at the wall. The playfield boundary on a non-wrapping axis
+  // counts as a wall, so edge cells get the same berth. Open cells cost ~0;
+  // cells hugging walls/corners cost more, so A* leans toward clearance.
   private computeWallCost(): void {
-    const total = this.shape.cols * this.shape.rows;
+    const { cols, rows, cellX, cellZ, wrapX, wrapZ } = this.shape;
+    const total = cols * rows;
+    const halfX = (cols * cellX) / 2;
+    const halfZ = (rows * cellZ) / 2;
     for (let cell = 0; cell < total; cell += 1) {
-      let open = 0;
-      const mask = this.adjacency[cell]!;
-      for (let dir = 0; dir < 4; dir += 1) {
-        if (mask & (1 << dir)) open += 1;
-      }
-      this.wallCost[cell] = (4 - open) * WALL_AVOID_WEIGHT;
+      const c = this.cellCenter(cell);
+      let d = nearestWallDistance(this.walls, c.x, c.z);
+      if (!wrapX) d = Math.min(d, c.x + halfX, halfX - c.x);
+      if (!wrapZ) d = Math.min(d, c.z + halfZ, halfZ - c.z);
+      this.wallCost[cell] = repulsion(d, WALL_AVOID_RADIUS, WALL_AVOID_WEIGHT);
     }
+  }
+
+  // Dynamic per-cell entry cost for one query: a continuous repulsion field
+  // around the avoid positions (other players), rising as a cell center nears
+  // the closest one, ramping from 0 at OCCUPANCY_RADIUS to OCCUPANCY_WEIGHT at
+  // the body. Recomputed per query since players move; the caller skips the
+  // destination cell so a target standing in a crowd stays reachable.
+  private occupancyCost(avoidPositions: readonly Vec2[]): Float64Array {
+    const total = this.shape.cols * this.shape.rows;
+    const out = new Float64Array(total);
+    for (let cell = 0; cell < total; cell += 1) {
+      const c = this.cellCenter(cell);
+      let nearest = Infinity;
+      for (const p of avoidPositions) {
+        const d = Math.hypot(c.x - p.x, c.z - p.z);
+        if (d < nearest) nearest = d;
+      }
+      out[cell] = repulsion(nearest, OCCUPANCY_RADIUS, OCCUPANCY_WEIGHT);
+    }
+    return out;
   }
 
   // String-pull the cell chain against line of sight: walk the cell centers

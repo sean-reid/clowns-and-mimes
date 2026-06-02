@@ -48,6 +48,17 @@ static func point_blocked_by_wall(walls: Array, x: float, z: float) -> bool:
 			return true
 	return false
 
+## Distance from (x, z) to the nearest wall centerline, or INF when there are no
+## walls. Feeds the bot pathfinder's continuous wall-avoidance cost field.
+## Mirrors labyrinth.ts nearestWallDistance.
+static func nearest_wall_distance(walls: Array, x: float, z: float) -> float:
+	var best := INF
+	for w in walls:
+		var d := _point_to_segment_distance(x, z, w)
+		if d < best:
+			best = d
+	return best
+
 static func _segments_intersect(
 	ax: float, az: float, bx: float, bz: float, cx: float, cz: float, dx: float, dz: float
 ) -> bool:

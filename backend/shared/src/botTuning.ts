@@ -45,8 +45,27 @@ export const BOT_JUMP_CORNER_THREAT_RADIUS = 4.0;
 export const CLONE_DURATION_MS = 30000;
 export const CLONE_SPAWN_OFFSET = 2.0;
 
-// Weighted-A* path costs. A cell walled on more sides costs a little more so
-// routes lean toward open space; a cell holding another player costs a lot more
-// (soft, not a hard block) so bots route around each other. Tuned in playtest.
-export const WALL_AVOID_WEIGHT = 0.5;
+// Weighted-A* path costs. Both wall and player avoidance are continuous
+// repulsion fields layered on the unit per-cell step cost: a cell's entry cost
+// rises the closer its center sits to the obstacle, ramping linearly from 0 at
+// the radius down to the full weight at the obstacle. A smooth gradient (rather
+// than a flat per-cell flag) steers bots toward the middle of open lanes and
+// off wall edges / corners and keeps them from clustering on each other,
+// trading some path length for clearance (clearance matters more than the
+// strictly shortest route here).
+//
+// Walls (static, baked once): the playfield boundary on a non-wrapping axis
+// counts as a wall too. Players (dynamic, per query): every other player -
+// teammates included - is avoided so bots don't collide / stack up, yet the
+// cost is soft (not a hard block) so a bot can still push through when there's
+// genuinely no other way; the destination cell is never penalized so a bot can
+// still close on a target standing in a crowd. The player radius is tighter
+// than the wall radius: walls are bigger obstacles to give a wide berth, a
+// teammate just needs not to be walked into.
+//
+// All live in @cm/shared/botTuning so the offline GDScript pathfinder runs the
+// identical cost field. Tuned in playtest.
+export const WALL_AVOID_WEIGHT = 4;
+export const WALL_AVOID_RADIUS = 14;
 export const OCCUPANCY_WEIGHT = 6;
+export const OCCUPANCY_RADIUS = 6;

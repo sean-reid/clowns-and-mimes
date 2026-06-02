@@ -70,9 +70,12 @@ func test_routes_around_occupied_cell() -> void:
 	var pf := BotPathfinder.new([], "plane")
 	var from := _center(1, 5)
 	var to := _center(4, 5)
-	var occupied := {2 + 5 * 10: true, 3 + 5 * 10: true}
-	var wp := pf.next_waypoint_avoiding(from, to, occupied)
-	assert_false(occupied.has(pf.cell_at(wp)), "waypoint not in an occupied cell")
+	# Players parked at the centers of (2,5) and (3,5). The avoidance radius is
+	# under one cell, so this penalizes those two cells, forcing a detour.
+	var blocked := [2 + 5 * 10, 3 + 5 * 10]
+	var avoid := [_center(2, 5), _center(3, 5)]
+	var wp := pf.next_waypoint_avoiding(from, to, avoid)
+	assert_false(blocked.has(pf.cell_at(wp)), "waypoint not in a penalized cell")
 
 func test_soft_occupancy_passes_through_when_only_route() -> void:
 	# Wall with a gap; the only route bends around the tip. Occupy everything but
@@ -84,11 +87,15 @@ func test_soft_occupancy_passes_through_when_only_route() -> void:
 	var to := _center(7, 2)
 	var from_cell := pf.cell_at(from)
 	var to_cell := pf.cell_at(to)
-	var occupied := {}
+	# A player parked in every cell but the endpoints, so any route crosses one.
+	var avoid := []
 	for cell in 100:
-		if cell != from_cell and cell != to_cell:
-			occupied[cell] = true
-	var wp := pf.next_waypoint_avoiding(from, to, occupied)
+		if cell == from_cell or cell == to_cell:
+			continue
+		@warning_ignore("integer_division")
+		var row := cell / 10
+		avoid.append(_center(cell % 10, row))
+	var wp := pf.next_waypoint_avoiding(from, to, avoid)
 	assert_true(
 		WallGeometry.path_clears_walls(walls, from.x, from.z, wp.x, wp.z),
 		"found a real route through occupancy"

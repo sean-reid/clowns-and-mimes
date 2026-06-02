@@ -22,7 +22,8 @@ const OUTPUT = resolve(repoRoot, 'game/tests/fixtures/bot_pathfinder_snapshot.js
 interface Query {
   from: Vec2;
   to: Vec2;
-  occupied?: number[];
+  // Player positions to soft-avoid (the continuous occupancy field).
+  avoid?: Vec2[];
 }
 interface Scenario {
   name: string;
@@ -38,8 +39,18 @@ const QUERIES: Query[] = [
   { from: { x: -28, z: 30 }, to: { x: 30, z: -28 } },
   { from: { x: 0, z: -34 }, to: { x: 0, z: 34 } },
   { from: { x: -34, z: 4 }, to: { x: 34, z: 4 } },
-  // Soft-occupancy detours (cells made expensive, not blocked) stress ties most.
-  { from: { x: -32, z: -32 }, to: { x: 28, z: 28 }, occupied: [44, 45, 54, 55] },
+  // Soft-occupancy detours (players make cells expensive, not blocked) stress
+  // ties most. These four positions are the centers of cells (4,4)(5,4)(4,5)(5,5).
+  {
+    from: { x: -32, z: -32 },
+    to: { x: 28, z: 28 },
+    avoid: [
+      { x: -4, z: -4 },
+      { x: 4, z: -4 },
+      { x: -4, z: 4 },
+      { x: 4, z: 4 },
+    ],
+  },
 ];
 
 const SCENARIOS: Array<{ name: string; seed: number; topology: Topology }> = [
@@ -55,9 +66,7 @@ async function main(): Promise<void> {
     const walls = generateGridMazeWalls(s.seed, s.topology);
     const pf = new BotPathfinder(walls, s.topology);
     const results = QUERIES.map((q) =>
-      q.occupied
-        ? pf.nextWaypointAvoiding(q.from, q.to, new Set(q.occupied))
-        : pf.nextWaypoint(q.from, q.to),
+      q.avoid ? pf.nextWaypointAvoiding(q.from, q.to, q.avoid) : pf.nextWaypoint(q.from, q.to),
     );
     return { name: s.name, seed: s.seed, topology: s.topology, queries: QUERIES, walls, results };
   });

@@ -37,11 +37,11 @@ func _assert_scenario(scenario: Dictionary) -> void:
 		var from := Vector3(float(q.from.x), 0.0, float(q.from.z))
 		var to := Vector3(float(q.to.x), 0.0, float(q.to.z))
 		var wp: Vector3
-		if q.has("occupied"):
-			var occ: Dictionary = {}
-			for cell in q["occupied"]:
-				occ[int(cell)] = true
-			wp = pf.next_waypoint_avoiding(from, to, occ)
+		if q.has("avoid"):
+			var avoid: Array = []
+			for p in q["avoid"]:
+				avoid.append(Vector3(float(p.x), 0.0, float(p.z)))
+			wp = pf.next_waypoint_avoiding(from, to, avoid)
 		else:
 			wp = pf.next_waypoint(from, to)
 		assert_approx(wp.x, float(expected.x), TOLERANCE, "%s q%d: waypoint x" % [sname, i])

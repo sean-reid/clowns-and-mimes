@@ -195,6 +195,20 @@ export function pathClearsWalls(
   return true;
 }
 
+/**
+ * Distance from (x, z) to the nearest wall centerline, or Infinity when there
+ * are no walls. Feeds the bot pathfinder's continuous wall-avoidance cost
+ * field; mirrored by wall_geometry.gd's nearest_wall_distance.
+ */
+export function nearestWallDistance(walls: readonly WallSegment[], x: number, z: number): number {
+  let best = Infinity;
+  for (const w of walls) {
+    const d = pointToSegmentDistance(x, z, w);
+    if (d < best) best = d;
+  }
+  return best;
+}
+
 export function topologyExpectedWidth(_t: Topology): number {
   return WORLD_WIDTH;
 }

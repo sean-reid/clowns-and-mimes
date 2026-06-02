@@ -115,6 +115,17 @@ const SOURCES = [
       'CLOAK_DURATION_MS',
     ],
   },
+  {
+    file: 'backend/shared/src/portals.ts',
+    sourceUrl: 'backend/shared/src/portals.ts',
+    consts: [
+      'PORTAL_DURATION_MS',
+      'PORTAL_ENTER_RADIUS',
+      'PORTAL_EXIT_OFFSET',
+      'PORTAL_TELEPORT_COOLDOWN_MS',
+      'PORTAL_MOUTH_RADIUS',
+    ],
+  },
 ];
 
 // Source files + the string-array `export const`s to pull from each. These

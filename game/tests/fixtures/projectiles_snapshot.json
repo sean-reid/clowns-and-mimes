@@ -1,0 +1,178 @@
+{
+  "schemaVersion": 1,
+  "dt": 0.016666666666666666,
+  "ticks": 30,
+  "scenarios": [
+    {
+      "name": "plane_hit_enemy",
+      "topology": "plane",
+      "seed": -1,
+      "owner": {
+        "id": "shooter",
+        "team": "mime",
+        "position": {
+          "x": 0,
+          "y": 0.5,
+          "z": 0
+        }
+      },
+      "dir": {
+        "x": 1,
+        "y": 0,
+        "z": 0
+      },
+      "targets": [
+        {
+          "id": "enemy",
+          "team": "clown",
+          "position": {
+            "x": 6,
+            "y": 0.5,
+            "z": 0
+          },
+          "frozen": false
+        }
+      ],
+      "finalFrame": [],
+      "ticksLived": 18,
+      "hits": [
+        {
+          "projectileId": "p0",
+          "ownerId": "shooter",
+          "team": "mime",
+          "victimId": "enemy"
+        }
+      ]
+    },
+    {
+      "name": "plane_miss_high",
+      "topology": "plane",
+      "seed": -1,
+      "owner": {
+        "id": "shooter",
+        "team": "mime",
+        "position": {
+          "x": 0,
+          "y": 0.5,
+          "z": 0
+        }
+      },
+      "dir": {
+        "x": 1,
+        "y": 0,
+        "z": 0
+      },
+      "targets": [
+        {
+          "id": "enemy",
+          "team": "clown",
+          "position": {
+            "x": 6,
+            "y": 0.5,
+            "z": 6
+          },
+          "frozen": false
+        }
+      ],
+      "finalFrame": [
+        {
+          "x": 8.700000000000001,
+          "y": 2.1,
+          "z": 0
+        }
+      ],
+      "ticksLived": 30,
+      "hits": []
+    },
+    {
+      "name": "plane_skip_frozen_and_friendly",
+      "topology": "plane",
+      "seed": -1,
+      "owner": {
+        "id": "shooter",
+        "team": "mime",
+        "position": {
+          "x": 0,
+          "y": 0.5,
+          "z": 0
+        }
+      },
+      "dir": {
+        "x": 1,
+        "y": 0,
+        "z": 0
+      },
+      "targets": [
+        {
+          "id": "ally",
+          "team": "mime",
+          "position": {
+            "x": 4,
+            "y": 0.5,
+            "z": 0
+          },
+          "frozen": false
+        },
+        {
+          "id": "frozen",
+          "team": "clown",
+          "position": {
+            "x": 6,
+            "y": 0.5,
+            "z": 0
+          },
+          "frozen": true
+        },
+        {
+          "id": "live",
+          "team": "clown",
+          "position": {
+            "x": 9,
+            "y": 0.5,
+            "z": 0
+          },
+          "frozen": false
+        }
+      ],
+      "finalFrame": [],
+      "ticksLived": 30,
+      "hits": [
+        {
+          "projectileId": "p0",
+          "ownerId": "shooter",
+          "team": "mime",
+          "victimId": "live"
+        }
+      ]
+    },
+    {
+      "name": "maze_wall_stop",
+      "topology": "plane",
+      "seed": 12345,
+      "owner": {
+        "id": "shooter",
+        "team": "mime",
+        "position": {
+          "x": -36,
+          "y": 0.5,
+          "z": -36
+        }
+      },
+      "dir": {
+        "x": 1,
+        "y": 0,
+        "z": 1
+      },
+      "targets": [],
+      "finalFrame": [
+        {
+          "x": -29.848171003677017,
+          "y": 2.1,
+          "z": -29.848171003677017
+        }
+      ],
+      "ticksLived": 30,
+      "hits": []
+    }
+  ]
+}

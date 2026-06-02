@@ -36,6 +36,9 @@ const SOURCES = [
       'BOUNCE_E_GROUNDED',
       'BOUNCE_E_AERIAL',
       'BOUNCE_E_WALL',
+      'EYE_HEIGHT',
+      'HEAD_CENTER_HEIGHT',
+      'HEAD_RADIUS',
     ],
   },
   {
@@ -55,7 +58,12 @@ const SOURCES = [
   {
     file: 'backend/shared/src/projectiles.ts',
     sourceUrl: 'backend/shared/src/projectiles.ts',
-    consts: ['PROJECTILE_RADIUS', 'SHOOT_COOLDOWN_MS'],
+    consts: [
+      'PROJECTILE_RADIUS',
+      'SHOOT_COOLDOWN_MS',
+      'PROJECTILE_SPEED',
+      'PROJECTILE_LIFETIME_MS',
+    ],
   },
   {
     file: 'backend/shared/src/botTuning.ts',

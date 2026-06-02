@@ -127,6 +127,12 @@ func _apply_item_effect(node: Node, item_type: String) -> void:
 			var p: Dictionary = arena.rules.players.get(arena.local_player_id, {})
 			if not p.is_empty():
 				p["radarUntil"] = now_ms + OfflineItemsScript.RADAR_DURATION_MS
+		"overcharge":
+			# Arm the next shot (read in _shoot off the rules dict): it pierces
+			# and skips the cooldown.
+			var p2: Dictionary = arena.rules.players.get(arena.local_player_id, {})
+			if not p2.is_empty():
+				p2["overchargeArmed"] = true
 
 # The local player fired (rising edge of the shoot button). Same gating as the
 # server: not frozen, only on the shooter's turn, and off cooldown (unless
@@ -135,6 +141,11 @@ func _apply_item_effect(node: Node, item_type: String) -> void:
 func shoot_local(dir: Vector3) -> bool:
 	return _shoot(arena.local_player_id, dir)
 
+# Fire on a bot's behalf (its AI decided to shoot). Same gating as the local
+# shot; aim jitter is applied by the caller.
+func bot_shoot(shooter_id: String, dir: Vector3) -> bool:
+	return _shoot(shooter_id, dir)
+
 func _shoot(shooter_id: String, dir: Vector3) -> bool:
 	var p: Dictionary = arena.rules.players.get(shooter_id, {})
 	if p.is_empty() or p.get("frozen", false):
@@ -142,8 +153,9 @@ func _shoot(shooter_id: String, dir: Vector3) -> bool:
 	if arena.rules.active_team() != p.team:
 		return false
 	var now_ms := int(Time.get_unix_time_from_system() * 1000.0)
+	var overcharged: bool = p.get("overchargeArmed", false)
 	var last: int = _last_shot_ms.get(shooter_id, -1)
-	if last >= 0 and now_ms - last < OfflineProjectilesScript.SHOOT_COOLDOWN_MS:
+	if not overcharged and last >= 0 and now_ms - last < OfflineProjectilesScript.SHOOT_COOLDOWN_MS:
 		return false
 	var owner := {"id": shooter_id, "team": p.team, "position": p.position}
 	_proj_seq += 1
@@ -152,6 +164,10 @@ func _shoot(shooter_id: String, dir: Vector3) -> bool:
 	)
 	if proj.is_empty():
 		return false
+	if overcharged:
+		# Overcharge: this shot pierces walls and skips the cooldown gate.
+		proj.piercing = true
+		p.erase("overchargeArmed")
 	_last_shot_ms[shooter_id] = now_ms
 	_projectiles.append(proj)
 	return true

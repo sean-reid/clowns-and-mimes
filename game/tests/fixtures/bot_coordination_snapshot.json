@@ -1,0 +1,175 @@
+{
+  "schemaVersion": 1,
+  "vision": 22,
+  "scenarios": [
+    {
+      "name": "lone",
+      "players": [
+        {
+          "id": "b",
+          "team": "mime",
+          "x": 0,
+          "z": 0
+        },
+        {
+          "id": "a",
+          "team": "mime",
+          "x": 5,
+          "z": 0,
+          "frozen": true
+        }
+      ],
+      "expected": {
+        "b": "a"
+      }
+    },
+    {
+      "name": "spread_two",
+      "players": [
+        {
+          "id": "b1",
+          "team": "mime",
+          "x": 0,
+          "z": 0
+        },
+        {
+          "id": "b2",
+          "team": "mime",
+          "x": 1,
+          "z": 0
+        },
+        {
+          "id": "a1",
+          "team": "mime",
+          "x": 3,
+          "z": 0,
+          "frozen": true
+        },
+        {
+          "id": "a2",
+          "team": "mime",
+          "x": 12,
+          "z": 0,
+          "frozen": true
+        }
+      ],
+      "expected": {
+        "b2": "a1",
+        "b1": "a2"
+      }
+    },
+    {
+      "name": "surplus_bot_unassigned",
+      "players": [
+        {
+          "id": "b1",
+          "team": "mime",
+          "x": 0,
+          "z": 0
+        },
+        {
+          "id": "b2",
+          "team": "mime",
+          "x": 2,
+          "z": 0
+        },
+        {
+          "id": "a1",
+          "team": "mime",
+          "x": 1,
+          "z": 0,
+          "frozen": true
+        }
+      ],
+      "expected": {
+        "b1": "a1"
+      }
+    },
+    {
+      "name": "excludes_enemy_awake_and_frozen_rescuer",
+      "players": [
+        {
+          "id": "b",
+          "team": "mime",
+          "x": 0,
+          "z": 0
+        },
+        {
+          "id": "e",
+          "team": "clown",
+          "x": 2,
+          "z": 0,
+          "frozen": true
+        },
+        {
+          "id": "w",
+          "team": "mime",
+          "x": 2,
+          "z": 0
+        },
+        {
+          "id": "fb",
+          "team": "mime",
+          "x": 30,
+          "z": 0,
+          "frozen": true
+        }
+      ],
+      "expected": {}
+    },
+    {
+      "name": "out_of_vision",
+      "players": [
+        {
+          "id": "b",
+          "team": "mime",
+          "x": 0,
+          "z": 0
+        },
+        {
+          "id": "a",
+          "team": "mime",
+          "x": 30,
+          "z": 0,
+          "frozen": true
+        }
+      ],
+      "expected": {}
+    },
+    {
+      "name": "tie_broken_by_id",
+      "players": [
+        {
+          "id": "b1",
+          "team": "mime",
+          "x": 0,
+          "z": 0
+        },
+        {
+          "id": "b2",
+          "team": "mime",
+          "x": 0,
+          "z": 0
+        },
+        {
+          "id": "a1",
+          "team": "mime",
+          "x": 5,
+          "z": 0,
+          "frozen": true
+        },
+        {
+          "id": "a2",
+          "team": "mime",
+          "x": -5,
+          "z": 0,
+          "frozen": true
+        }
+      ],
+      "expected": {
+        "b1": "a1",
+        "b2": "a2"
+      }
+    }
+  ]
+}

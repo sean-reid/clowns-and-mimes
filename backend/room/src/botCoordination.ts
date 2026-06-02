@@ -46,7 +46,15 @@ export function assignRescues(
       if (dist < visionRadius) pairs.push({ botId: bot.id, ally, dist });
     }
   }
-  pairs.sort((a, b) => a.dist - b.dist);
+  // Total order: distance, then bot id, then ally id. The id tiebreaks make the
+  // result independent of sort stability, so the offline GDScript port (whose
+  // sort_custom is not stable) resolves exact-distance ties identically.
+  pairs.sort(
+    (a, b) =>
+      a.dist - b.dist ||
+      (a.botId < b.botId ? -1 : a.botId > b.botId ? 1 : 0) ||
+      (a.ally.id < b.ally.id ? -1 : a.ally.id > b.ally.id ? 1 : 0),
+  );
 
   const claimedBots = new Set<string>();
   const claimedAllies = new Set<string>();

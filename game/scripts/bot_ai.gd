@@ -30,6 +30,7 @@ const BotDecisionScript := preload("res://scripts/bot_decision.gd")
 const BotGoalsScript := preload("res://scripts/bot_goals.gd")
 const BotItemsScript := preload("res://scripts/bot_items.gd")
 const BotPerception := preload("res://scripts/bot_perception.gd")
+const BotCoordinationScript := preload("res://scripts/bot_coordination.gd")
 
 enum State { PATROL, CHASE, FLEE, RESCUE, INVESTIGATE, COLLECT }
 
@@ -158,6 +159,12 @@ func _run_decision() -> Dictionary:
 		"retarget_hysteresis": SharedConstants.RETARGET_HYSTERESIS,
 		"investigate_ms": SharedConstants.BOT_INVESTIGATE_MS,
 	}
+	# Team rescue claims: each bot recomputes the same global assignment (pure +
+	# deterministic) and consults its own entry, so two bots never swarm one
+	# frozen ally. No entry -> null -> rescue suppressed this tick.
+	var claims := BotCoordinationScript.assign_rescues(
+		rules.players.values(), topology, SharedConstants.BOT_VISION_RADIUS
+	)
 	return BotDecisionScript.decide(
 		bot,
 		rules.players.values(),
@@ -167,7 +174,9 @@ func _run_decision() -> Dictionary:
 		rules.active_team(),
 		engagement,
 		params,
-		_collect_target(bot)
+		_collect_target(bot),
+		claims.get(player_id, null),
+		true
 	)
 
 # Nearest reachable floor item, but only while empty-handed (a held item blocks

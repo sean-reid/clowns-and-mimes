@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   gapJitter,
   generateWalls,
+  pathClearsWalls,
   pathCrossesWall,
   pointBlockedByWall,
   PLAYER_RADIUS,
@@ -106,6 +107,38 @@ describe('pathCrossesWall', () => {
     // Tunneling straight through to the other side: blocked by segment
     // intersection, not by start-position.
     expect(inside(0, -1.0)).toBe(true);
+  });
+});
+
+describe('pathClearsWalls', () => {
+  // A vertical wall whose top tip is at (5, 0).
+  const tipWall: WallSegment = { ax: 5, az: -10, bx: 5, bz: 0 };
+
+  it('rejects a path that skims a wall tip within the body radius', () => {
+    // The line z = 0.5 never crosses the wall (which ends at z = 0), so the
+    // plain crossing test accepts it - but the body passes 0.5 m from the tip,
+    // inside WALL_CLEARANCE, so it would scrape. This is the corner-cut the bot
+    // funnel must stop handing out.
+    expect(pathCrossesWall([tipWall], 0, 0.5, 10, 0.5)).toBe(false);
+    expect(pathClearsWalls([tipWall], 0, 0.5, 10, 0.5)).toBe(false);
+  });
+
+  it('accepts a path that stays well clear of every wall', () => {
+    expect(pathClearsWalls([tipWall], 0, 5, 10, 5)).toBe(true);
+  });
+
+  it('rejects a path that crosses a wall outright', () => {
+    expect(pathClearsWalls([tipWall], 0, -5, 10, -5)).toBe(false);
+  });
+
+  it('honors a custom clearance', () => {
+    // Same skim at 0.5 m: clears a 0.4 m body but not a 0.9 m one.
+    expect(pathClearsWalls([tipWall], 0, 0.5, 10, 0.5, 0.4)).toBe(true);
+    expect(pathClearsWalls([tipWall], 0, 0.5, 10, 0.5, 0.9)).toBe(false);
+  });
+
+  it('always clears when there are no walls', () => {
+    expect(pathClearsWalls([], 0, 0, 100, 100)).toBe(true);
   });
 });
 

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { Vec2 } from '@cm/shared';
-import { pathCrossesWall, type WallSegment } from '@cm/shared/labyrinth';
+import { pathClearsWalls, pathCrossesWall, type WallSegment } from '@cm/shared/labyrinth';
 import { BotPathfinder } from './botPathfinder.ts';
 
 // Plane grid: 10x10 cells over an 80-wide world, so each cell is 8 units and
@@ -44,6 +44,23 @@ describe('BotPathfinder string-pulling', () => {
     // otherwise it would aim through the wall.
     expect(wp).not.toBe(to);
     expect(pathCrossesWall(walls, from.x, from.z, wp.x, wp.z)).toBe(false);
+    // Stronger: the body must clear the wall along the whole line, not merely
+    // avoid crossing it. A waypoint that only skims the tip would pin the bot.
+    expect(pathClearsWalls(walls, from.x, from.z, wp.x, wp.z)).toBe(true);
+  });
+
+  it('does not shortcut to a waypoint that skims a wall tip within the body radius', () => {
+    // Wall on the x = 0 boundary with a gap up top (tip at z = HALF - 2*CELL).
+    // A bot below-left aiming at a cell up-right would, with a crossing-only
+    // funnel, shortcut a diagonal that grazes the tip; the clearance-aware
+    // funnel must instead return a nearer waypoint the body can actually reach.
+    const tipZ = HALF - 2 * CELL;
+    const walls: WallSegment[] = [{ ax: 0, az: -HALF, bx: 0, bz: tipZ }];
+    const pf = new BotPathfinder(walls, 'plane');
+    const from = center(3, 6); // left of the wall, below the tip
+    const to = center(6, 8); // right of the wall, above the tip
+    const wp = pf.nextWaypoint(from, to);
+    expect(pathClearsWalls(walls, from.x, from.z, wp.x, wp.z)).toBe(true);
   });
 
   it('falls back to the target when it is walled off entirely', () => {

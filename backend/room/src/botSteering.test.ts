@@ -54,6 +54,19 @@ describe('stepWithSlide', () => {
     expect(r.z).toBe(0);
   });
 
+  it('rounds a wall tip with a rotated heading when the axis slides are blocked', () => {
+    // Vertical wall x = 0 spanning z in [-10, 0], tip at (0, 0). The bot is just
+    // left of it and wants to cross to the right (+x). The full move and the
+    // x-only slide both tunnel through the wall, and dir has no z component to
+    // slide on - so the only way through is the rotated fallback, which veers
+    // +z to get around the tip.
+    const walls: WallSegment[] = [{ ax: 0, az: -10, bx: 0, bz: 0 }];
+    const r = stepWithSlide({ x: -0.3, z: -2 }, { x: 1, z: 0 }, 2, walls, 'plane', 80);
+    expect(r.moved).toBe(true);
+    expect(r.x).toBeLessThanOrEqual(0); // did not tunnel through to the far side
+    expect(r.z).toBeGreaterThan(-2); // veered toward the tip to round it
+  });
+
   it('wraps the resulting position to canonical coords on a torus', () => {
     // Near the +x edge (half-width 40), step past it; torus wraps to -x side.
     const r = stepWithSlide({ x: 39.5, z: 0 }, { x: 1, z: 0 }, 2, [], 'torus', 80);

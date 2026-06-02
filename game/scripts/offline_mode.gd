@@ -86,7 +86,10 @@ func drive_hud(delta: float) -> void:
 	if arena.rules == null:
 		return
 	for id in arena.player_nodes.keys():
-		arena.rules.update_position(id, arena.player_nodes[id].global_position)
+		# Bodies render at a camera-nearest seam copy; feed the rules engine the
+		# canonical position so tags, perception, and the minimap stay correct.
+		var pos: Vector3 = arena.player_nodes[id].global_position
+		arena.rules.update_position(id, arena.topology.wrap(pos) if arena.topology != null else pos)
 	arena.rules.tick(Time.get_unix_time_from_system())
 	_step_items(delta)
 	_step_projectiles(delta)

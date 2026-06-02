@@ -7,6 +7,7 @@ extends Node
 
 const TopologyScript := preload("res://scripts/topology/topology.gd")
 const PhysicsScript := preload("res://scripts/physics.gd")
+const WallGeometry := preload("res://scripts/wall_geometry.gd")
 
 enum Phase { LOBBY, FREE_ROAM, TURN_MIME, TURN_CLOWN, ENDED }
 
@@ -16,6 +17,9 @@ const TURN_STEP_S := 30.0
 const TURN_CAP_S := 300.0
 const TAG_RADIUS := 1.4
 const UNFREEZE_RADIUS := 1.4
+# Re-tag grace after a save: a just-unfrozen player can't be re-tagged for this
+# long. Mirrors room.ts UNFREEZE_GRACE_MS.
+const UNFREEZE_GRACE_MS := 1500.0
 
 signal phase_changed(phase: int)
 signal tagged(victim_id: String, attacker_id: String, team: String)
@@ -29,6 +33,13 @@ var round_number: int = 0
 var first_team: String = "mime"
 var topology: TopologyScript
 var players: Dictionary = {}
+# Maze wall segments for the tag/unfreeze line-of-sight check. Set by
+# offline_mode after the labyrinth is built; empty disables the check.
+var walls: Array = []
+# player_id -> wall-clock ms when last unfrozen, for the re-tag grace window.
+# Also fed to the projectile sim so a just-saved ally is briefly immune there
+# too. Mirrors the server's lastSavedAt map.
+var saved_at: Dictionary = {}
 
 func register_player(id: String, team: String, position: Vector3, p_name: String, is_bot: bool) -> void:
 	players[id] = {
@@ -42,6 +53,7 @@ func register_player(id: String, team: String, position: Vector3, p_name: String
 
 func remove_player(id: String) -> void:
 	players.erase(id)
+	saved_at.erase(id)
 
 func update_position(id: String, position: Vector3) -> void:
 	if not players.has(id):
@@ -99,7 +111,11 @@ func try_unfreeze(savior_id: String, victim_id: String) -> bool:
 		return false
 	if _distance(savior["position"], victim["position"]) > UNFREEZE_RADIUS:
 		return false
+	if _wall_between(savior["position"], victim["position"]):
+		return false
 	victim["frozen"] = false
+	# Start the re-tag grace so an opponent can't instantly re-freeze the ally.
+	saved_at[victim_id] = Time.get_unix_time_from_system() * 1000.0
 	saved.emit(victim_id, savior_id)
 	return true
 
@@ -141,13 +157,28 @@ func _tag_rejection_reason(attacker: Dictionary, victim: Dictionary) -> String:
 		return "frozen_participant"
 	if active_team() != attacker["team"]:
 		return "wrong_turn"
+	if _in_save_grace(victim["id"]):
+		return "just_saved"
 	if _distance(attacker["position"], victim["position"]) > TAG_RADIUS:
 		return "out_of_range"
 	var a_pos: Vector3 = attacker["position"]
 	var v_pos: Vector3 = victim["position"]
+	if _wall_between(a_pos, v_pos):
+		return "wall_in_way"
 	if not PhysicsScript.vertically_overlapping(a_pos.y, v_pos.y):
 		return "vertical_separation"
 	return ""
+
+# True while a just-unfrozen victim is still inside the re-tag grace window.
+func _in_save_grace(victim_id: String) -> bool:
+	if not saved_at.has(victim_id):
+		return false
+	return Time.get_unix_time_from_system() * 1000.0 - float(saved_at[victim_id]) < UNFREEZE_GRACE_MS
+
+# True if a maze wall crosses the straight line between two bodies, so a tag /
+# unfreeze can't reach through it. Mirrors the server's wall_in_way check.
+func _wall_between(a: Vector3, b: Vector3) -> bool:
+	return not walls.is_empty() and WallGeometry.path_crosses_wall(walls, a.x, a.z, b.x, b.z)
 
 func _distance(a: Vector3, b: Vector3) -> float:
 	if topology == null:

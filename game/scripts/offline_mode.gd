@@ -59,6 +59,8 @@ func start() -> void:
 	var seed_value := _derive_seed()
 	arena._build_labyrinth(seed_value)
 	_setup_rules()
+	# Give the rules the maze walls so tag / unfreeze honor line-of-sight.
+	arena.rules.walls = arena.labyrinth.wall_endpoints() if arena.labyrinth != null else []
 	_spawn_players()
 	# Same seed as the maze so the item layout matches what the server would
 	# spawn for this room (the shared deterministic layout).
@@ -322,8 +324,10 @@ func _step_projectiles(delta: float) -> void:
 			"walls": walls,
 			"topology": arena.topology,
 			"hit_radius": OfflineProjectilesScript.PROJECTILE_HIT_RADIUS,
-			"saved_at": {},
-			"unfreeze_grace_ms": 0,
+			# Honor the re-tag grace so a just-saved ally is briefly projectile-
+			# immune too, matching the server.
+			"saved_at": arena.rules.saved_at,
+			"unfreeze_grace_ms": GameRulesScript.UNFREEZE_GRACE_MS,
 		}
 	)
 	_projectiles = res.survivors

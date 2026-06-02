@@ -409,7 +409,11 @@ func _apply_bot_movement(delta: float) -> void:
 	# predicate, wrap, and player-player push - so offline bots bump off walls
 	# and each other instead of sliding/intersecting.
 	var walls := _offline_walls()
-	var prev_xz := Vector2(global_position.x, global_position.z)
+	# The body may render at a camera-nearest seam copy (see below), so recover
+	# the canonical sim position before stepping - the movement step + wall
+	# predicate reason in canonical world coords.
+	var canonical_prev: Vector3 = arena.topology.wrap(global_position) if arena.topology != null else global_position
+	var prev_xz := Vector2(canonical_prev.x, canonical_prev.z)
 	var step: Dictionary = MovementScript.step(
 		{"position": prev_xz, "sprint_energy": sprint_energy, "sprinting": _offline_sprinting},
 		{"move": Vector2(intent.x, intent.z), "sprint": bot_sprint, "dt": delta, "surge": false},
@@ -420,7 +424,11 @@ func _apply_bot_movement(delta: float) -> void:
 	var new_xz: Vector2 = MovementScript.resolve_overlap(
 		step.position, _other_xz(), walls, arena.topology
 	)
-	global_position = Vector3(new_xz.x, body_y, new_xz.y)
+	# Render at the wrapped image nearest the local camera so a bot across a
+	# topology seam stays visible instead of vanishing until the camera also
+	# crosses (mirrors the online remote-body path). wrap() recovers canonical
+	# next frame, so the simulation is unaffected.
+	global_position = _to_camera_nearest_copy(Vector3(new_xz.x, body_y, new_xz.y))
 	sprint_energy = step.sprint_energy
 	_offline_sprinting = step.sprinting
 	var planar_speed: float = (new_xz - prev_xz).length() / delta if delta > 0.0 else 0.0
@@ -432,14 +440,18 @@ func _offline_walls() -> Array:
 		return []
 	return arena.labyrinth.wall_endpoints()
 
-# Other bodies' XZ for resolve_overlap (everyone but this one).
+# Other bodies' XZ for resolve_overlap (everyone but this one). Bodies may
+# render at a camera-nearest seam copy, so wrap each back to canonical to compare
+# true positions.
 func _other_xz() -> Array:
 	var out: Array = []
 	if arena == null:
 		return out
 	for n in arena.player_nodes.values():
-		if n != self:
-			out.append(Vector2(n.global_position.x, n.global_position.z))
+		if n == self:
+			continue
+		var c: Vector3 = arena.topology.wrap(n.global_position) if arena.topology != null else n.global_position
+		out.append(Vector2(c.x, c.z))
 	return out
 
 func set_external_motion(planar_speed: float, sprinting: bool) -> void:

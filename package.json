@@ -34,7 +34,8 @@
     "gen:bot-items-fixture": "tsx scripts/gen-bot-items-fixture.ts",
     "gen:bot-coordination-fixture": "tsx scripts/gen-bot-coordination-fixture.ts",
     "gen:projectiles-fixture": "tsx scripts/gen-projectiles-fixture.ts",
-    "gen:portals-fixture": "tsx scripts/gen-portals-fixture.ts"
+    "gen:portals-fixture": "tsx scripts/gen-portals-fixture.ts",
+    "gen:all": "node scripts/gen-all.mjs"
   },
   "devDependencies": {
     "prettier": "3.8.3",

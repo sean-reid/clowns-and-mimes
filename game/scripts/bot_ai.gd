@@ -6,29 +6,29 @@ extends Node
 ## state, so the bot is topology-aware and always reasons about the same
 ## positions the server does.
 
+const SharedConstants := preload("res://scripts/shared_constants.gd")
+
 const TICK_HZ := 5.0
 const TICK_PERIOD := 1.0 / TICK_HZ
-const VISION_RADIUS := 14.0
-const RESCUE_RADIUS := 22.0
 const CLOSE_RADIUS := 1.4
 const STUCK_SPEED := 0.5
 const STUCK_TIME := 1.0
-# Jump triggers. Mirror the server's bot path in backend/room/src/room.ts
-# so offline bots evade tags, decorner themselves, and add tactical noise
-# on the same predicates online bots use. Constants chosen to match the
-# server's BOT_JUMP_* values; any change should land on both sides.
-const TAG_RADIUS_BOT := 1.4
-const BOT_JUMP_EVADE_BUFFER := 0.5
-const BOT_JUMP_CORNER_THREAT_RADIUS := 4.0
-const BOT_JUMP_NOISE_PER_SECOND := 0.05
-const BOT_JUMP_REFRACTORY_S := 1.5
-const BOT_NO_PROGRESS_WINDOW_S := 0.8
+# Bot tuning is shared with the server via @cm/shared/botTuning -> SharedConstants
+# (single source of truth; no hand-copied drift). Jump triggers work in seconds
+# offline, derived from the canonical ms values.
+const TAG_RADIUS_BOT := SharedConstants.TAG_RADIUS_BOT
+const BOT_JUMP_EVADE_BUFFER := SharedConstants.BOT_JUMP_EVADE_BUFFER
+const BOT_JUMP_CORNER_THREAT_RADIUS := SharedConstants.BOT_JUMP_CORNER_THREAT_RADIUS
+const BOT_JUMP_NOISE_PER_SECOND := SharedConstants.BOT_JUMP_NOISE_PER_SECOND
+const BOT_JUMP_REFRACTORY_S := SharedConstants.BOT_JUMP_REFRACTORY_MS / 1000.0
+const BOT_NO_PROGRESS_WINDOW_S := SharedConstants.BOT_NO_PROGRESS_WINDOW_MS / 1000.0
 const TopologyScript := preload("res://scripts/topology/topology.gd")
 const GameRulesScript := preload("res://scripts/game_rules.gd")
 const PhysicsScript := preload("res://scripts/physics.gd")
 const BotPathfinderScript := preload("res://scripts/bot_pathfinder.gd")
+const BotDecisionScript := preload("res://scripts/bot_decision.gd")
 
-enum State { PATROL, CHASE, FLEE, RESCUE }
+enum State { PATROL, CHASE, FLEE, RESCUE, INVESTIGATE }
 
 @export var player_id: String = ""
 
@@ -47,6 +47,12 @@ var last_position: Vector3 = Vector3.ZERO
 # attach). Null when there's no labyrinth, in which case the bot steers
 # straight at its target.
 var pathfinder: RefCounted = null
+# Engagement state the decision layer carries across ticks (engaged target,
+# last-known position, investigate deadline). Mutated in place by BotDecision.
+var engagement: Dictionary = BotDecisionScript.new_engagement()
+# The most recent decision result, computed in _choose_state and consumed by
+# _choose_target the same tick.
+var _decision: Dictionary = {}
 # Seconds since this bot last triggered a jump. Initialised to a value
 # well past the refractory window so the very first eligible tick can
 # jump if the trigger fires.
@@ -93,31 +99,61 @@ func _update_stuck(delta: float) -> void:
 		stuck_clock = 0.0
 	last_position = player.global_position
 
+# Run the shared scored decision and map its mode to the offline State enum.
 func _choose_state() -> void:
-	var active_team: String = rules.active_team()
-	var enemy_id: String = _nearest_enemy_id()
-	var enemy_dist: float = _dist_to_id(enemy_id)
-	var frozen_teammate_id: String = _nearest_frozen_teammate_id()
-	var rescue_dist: float = _dist_to_id(frozen_teammate_id)
-	if frozen_teammate_id != "" and rescue_dist < RESCUE_RADIUS and active_team != _opposing_team():
-		state = State.RESCUE
-	elif enemy_id != "" and enemy_dist < VISION_RADIUS:
-		state = State.CHASE if active_team == _team() else State.FLEE
-	else:
-		state = State.PATROL
+	_decision = _run_decision()
+	match _decision.get("mode", "patrol"):
+		"chase":
+			state = State.CHASE
+		"flee":
+			state = State.FLEE
+		"rescue":
+			state = State.RESCUE
+		"investigate":
+			state = State.INVESTIGATE
+		_:
+			state = State.PATROL
+
+func _run_decision() -> Dictionary:
+	var bot: Dictionary = rules.players.get(player_id, {})
+	if bot.is_empty():
+		return {}
+	var walls: Array = labyrinth.wall_endpoints() if labyrinth != null else []
+	var params := {
+		"vision_radius": SharedConstants.BOT_VISION_RADIUS,
+		"shoot_range": SharedConstants.BOT_SHOOT_RANGE,
+		"retarget_hysteresis": SharedConstants.RETARGET_HYSTERESIS,
+		"investigate_ms": SharedConstants.BOT_INVESTIGATE_MS,
+	}
+	return BotDecisionScript.decide(
+		bot,
+		rules.players.values(),
+		walls,
+		topology,
+		float(Time.get_ticks_msec()),
+		rules.active_team(),
+		engagement,
+		params
+	)
 
 func _choose_target() -> void:
 	match state:
 		State.CHASE:
-			patrol_target = _position_of(_nearest_enemy_id())
+			patrol_target = _decision.target.position
 		State.FLEE:
-			var threat: Vector3 = _position_of(_nearest_enemy_id())
-			var away: Vector3 = player.global_position - threat
+			var threat: Vector3 = _decision.target.position
+			# Wrap-aware away vector (from threat toward us), projected out.
+			var away: Vector3 = topology.delta(threat, player.global_position)
+			away.y = 0.0
 			if away.length() < 0.001:
 				away = Vector3(rng.randf_range(-1.0, 1.0), 0.0, rng.randf_range(-1.0, 1.0))
-			patrol_target = player.global_position + away.normalized() * 10.0
+			patrol_target = topology.wrap(
+				player.global_position + away.normalized() * SharedConstants.BOT_FLEE_PROJECTION
+			)
 		State.RESCUE:
-			patrol_target = _position_of(_nearest_frozen_teammate_id())
+			patrol_target = _decision.rescue_target.position
+		State.INVESTIGATE:
+			patrol_target = engagement.last_known_pos
 		State.PATROL:
 			if patrol_target == Vector3.ZERO or (player.global_position - patrol_target).length() < 1.5:
 				_pick_patrol_target()
@@ -241,9 +277,6 @@ func _pick_patrol_target() -> void:
 func _team() -> String:
 	return player.team
 
-func _opposing_team() -> String:
-	return "clown" if _team() == "mime" else "mime"
-
 func _nearest_enemy_id() -> String:
 	var best: String = ""
 	var best_d: float = INF
@@ -284,7 +317,3 @@ func _dist_to(p: Vector3) -> float:
 		return Vector2(p.x - player.global_position.x, p.z - player.global_position.z).length()
 	return topology.distance(player.global_position, p)
 
-func _position_of(id: String) -> Vector3:
-	if id == "" or not rules.players.has(id):
-		return Vector3.ZERO
-	return rules.players[id]["position"]

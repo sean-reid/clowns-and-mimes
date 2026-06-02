@@ -1,0 +1,456 @@
+{
+  "schemaVersion": 1,
+  "scenarios": [
+    {
+      "name": "patrol",
+      "bot": {
+        "id": "bot",
+        "team": "mime",
+        "x": 0,
+        "z": 0
+      },
+      "players": [],
+      "walls": [],
+      "now": 1000,
+      "active": "mime",
+      "engagementIn": {
+        "engagedTargetId": null,
+        "lastKnownPos": null,
+        "investigateUntil": 0
+      },
+      "expected": {
+        "mode": "patrol",
+        "targetId": null,
+        "enemyDist": null,
+        "rescueTargetId": null,
+        "chasing": false,
+        "fleeing": false,
+        "rescuing": false,
+        "investigating": false,
+        "canShoot": false,
+        "engagementOut": {
+          "engagedTargetId": null,
+          "lastKnownPos": null,
+          "investigateUntil": 0
+        }
+      }
+    },
+    {
+      "name": "chase",
+      "bot": {
+        "id": "bot",
+        "team": "mime",
+        "x": 0,
+        "z": 0
+      },
+      "players": [
+        {
+          "id": "e",
+          "team": "clown",
+          "x": 5,
+          "z": 0
+        }
+      ],
+      "walls": [],
+      "now": 1000,
+      "active": "mime",
+      "engagementIn": {
+        "engagedTargetId": null,
+        "lastKnownPos": null,
+        "investigateUntil": 0
+      },
+      "expected": {
+        "mode": "chase",
+        "targetId": "e",
+        "enemyDist": 5,
+        "rescueTargetId": null,
+        "chasing": true,
+        "fleeing": false,
+        "rescuing": false,
+        "investigating": false,
+        "canShoot": true,
+        "engagementOut": {
+          "engagedTargetId": "e",
+          "lastKnownPos": {
+            "x": 5,
+            "z": 0
+          },
+          "investigateUntil": 0
+        }
+      }
+    },
+    {
+      "name": "flee",
+      "bot": {
+        "id": "bot",
+        "team": "mime",
+        "x": 0,
+        "z": 0
+      },
+      "players": [
+        {
+          "id": "e",
+          "team": "clown",
+          "x": 5,
+          "z": 0
+        }
+      ],
+      "walls": [],
+      "now": 1000,
+      "active": "clown",
+      "engagementIn": {
+        "engagedTargetId": null,
+        "lastKnownPos": null,
+        "investigateUntil": 0
+      },
+      "expected": {
+        "mode": "flee",
+        "targetId": "e",
+        "enemyDist": 5,
+        "rescueTargetId": null,
+        "chasing": false,
+        "fleeing": true,
+        "rescuing": false,
+        "investigating": false,
+        "canShoot": false,
+        "engagementOut": {
+          "engagedTargetId": "e",
+          "lastKnownPos": {
+            "x": 5,
+            "z": 0
+          },
+          "investigateUntil": 0
+        }
+      }
+    },
+    {
+      "name": "rescue",
+      "bot": {
+        "id": "bot",
+        "team": "mime",
+        "x": 0,
+        "z": 0
+      },
+      "players": [
+        {
+          "id": "a",
+          "team": "mime",
+          "x": 4,
+          "z": 0,
+          "frozen": true
+        }
+      ],
+      "walls": [],
+      "now": 1000,
+      "active": "mime",
+      "engagementIn": {
+        "engagedTargetId": null,
+        "lastKnownPos": null,
+        "investigateUntil": 0
+      },
+      "expected": {
+        "mode": "rescue",
+        "targetId": null,
+        "enemyDist": null,
+        "rescueTargetId": "a",
+        "chasing": false,
+        "fleeing": false,
+        "rescuing": true,
+        "investigating": false,
+        "canShoot": false,
+        "engagementOut": {
+          "engagedTargetId": null,
+          "lastKnownPos": null,
+          "investigateUntil": 0
+        }
+      }
+    },
+    {
+      "name": "flee_over_rescue",
+      "bot": {
+        "id": "bot",
+        "team": "mime",
+        "x": 0,
+        "z": 0
+      },
+      "players": [
+        {
+          "id": "e",
+          "team": "clown",
+          "x": 5,
+          "z": 0
+        },
+        {
+          "id": "a",
+          "team": "mime",
+          "x": 4,
+          "z": 0,
+          "frozen": true
+        }
+      ],
+      "walls": [],
+      "now": 1000,
+      "active": "clown",
+      "engagementIn": {
+        "engagedTargetId": null,
+        "lastKnownPos": null,
+        "investigateUntil": 0
+      },
+      "expected": {
+        "mode": "flee",
+        "targetId": "e",
+        "enemyDist": 5,
+        "rescueTargetId": "a",
+        "chasing": false,
+        "fleeing": true,
+        "rescuing": true,
+        "investigating": false,
+        "canShoot": false,
+        "engagementOut": {
+          "engagedTargetId": "e",
+          "lastKnownPos": {
+            "x": 5,
+            "z": 0
+          },
+          "investigateUntil": 0
+        }
+      }
+    },
+    {
+      "name": "hysteresis_keep",
+      "bot": {
+        "id": "bot",
+        "team": "mime",
+        "x": 0,
+        "z": 0
+      },
+      "players": [
+        {
+          "id": "A",
+          "team": "clown",
+          "x": 10,
+          "z": 0
+        },
+        {
+          "id": "B",
+          "team": "clown",
+          "x": 8,
+          "z": 0
+        }
+      ],
+      "walls": [],
+      "now": 1000,
+      "active": "mime",
+      "engagementIn": {
+        "engagedTargetId": "A",
+        "lastKnownPos": null,
+        "investigateUntil": 0
+      },
+      "expected": {
+        "mode": "chase",
+        "targetId": "A",
+        "enemyDist": 10,
+        "rescueTargetId": null,
+        "chasing": true,
+        "fleeing": false,
+        "rescuing": false,
+        "investigating": false,
+        "canShoot": true,
+        "engagementOut": {
+          "engagedTargetId": "A",
+          "lastKnownPos": {
+            "x": 10,
+            "z": 0
+          },
+          "investigateUntil": 0
+        }
+      }
+    },
+    {
+      "name": "retarget",
+      "bot": {
+        "id": "bot",
+        "team": "mime",
+        "x": 0,
+        "z": 0
+      },
+      "players": [
+        {
+          "id": "A",
+          "team": "clown",
+          "x": 10,
+          "z": 0
+        },
+        {
+          "id": "B",
+          "team": "clown",
+          "x": 6,
+          "z": 0
+        }
+      ],
+      "walls": [],
+      "now": 1000,
+      "active": "mime",
+      "engagementIn": {
+        "engagedTargetId": "A",
+        "lastKnownPos": null,
+        "investigateUntil": 0
+      },
+      "expected": {
+        "mode": "chase",
+        "targetId": "B",
+        "enemyDist": 6,
+        "rescueTargetId": null,
+        "chasing": true,
+        "fleeing": false,
+        "rescuing": false,
+        "investigating": false,
+        "canShoot": true,
+        "engagementOut": {
+          "engagedTargetId": "B",
+          "lastKnownPos": {
+            "x": 6,
+            "z": 0
+          },
+          "investigateUntil": 0
+        }
+      }
+    },
+    {
+      "name": "occlusion_investigate",
+      "bot": {
+        "id": "bot",
+        "team": "mime",
+        "x": 0,
+        "z": 0
+      },
+      "players": [
+        {
+          "id": "e",
+          "team": "clown",
+          "x": 10,
+          "z": 0
+        }
+      ],
+      "walls": [
+        {
+          "ax": 3,
+          "az": -6,
+          "bx": 3,
+          "bz": 6
+        }
+      ],
+      "now": 1000,
+      "active": "mime",
+      "engagementIn": {
+        "engagedTargetId": "e",
+        "lastKnownPos": null,
+        "investigateUntil": 0
+      },
+      "expected": {
+        "mode": "investigate",
+        "targetId": null,
+        "enemyDist": null,
+        "rescueTargetId": null,
+        "chasing": false,
+        "fleeing": false,
+        "rescuing": false,
+        "investigating": true,
+        "canShoot": false,
+        "engagementOut": {
+          "engagedTargetId": "e",
+          "lastKnownPos": {
+            "x": 10,
+            "z": 0
+          },
+          "investigateUntil": 4000
+        }
+      }
+    },
+    {
+      "name": "occlusion_drop",
+      "bot": {
+        "id": "bot",
+        "team": "mime",
+        "x": 0,
+        "z": 0
+      },
+      "players": [
+        {
+          "id": "e",
+          "team": "clown",
+          "x": 10,
+          "z": 0
+        }
+      ],
+      "walls": [
+        {
+          "ax": 3,
+          "az": -6,
+          "bx": 3,
+          "bz": 6
+        }
+      ],
+      "now": 1000,
+      "active": "clown",
+      "engagementIn": {
+        "engagedTargetId": "e",
+        "lastKnownPos": null,
+        "investigateUntil": 0
+      },
+      "expected": {
+        "mode": "patrol",
+        "targetId": null,
+        "enemyDist": null,
+        "rescueTargetId": null,
+        "chasing": false,
+        "fleeing": false,
+        "rescuing": false,
+        "investigating": false,
+        "canShoot": false,
+        "engagementOut": {
+          "engagedTargetId": null,
+          "lastKnownPos": null,
+          "investigateUntil": 0
+        }
+      }
+    },
+    {
+      "name": "investigate_expiry",
+      "bot": {
+        "id": "bot",
+        "team": "mime",
+        "x": 0,
+        "z": 0
+      },
+      "players": [],
+      "walls": [],
+      "now": 1000,
+      "active": "mime",
+      "engagementIn": {
+        "engagedTargetId": null,
+        "lastKnownPos": {
+          "x": 10,
+          "z": 0
+        },
+        "investigateUntil": 500
+      },
+      "expected": {
+        "mode": "patrol",
+        "targetId": null,
+        "enemyDist": null,
+        "rescueTargetId": null,
+        "chasing": false,
+        "fleeing": false,
+        "rescuing": false,
+        "investigating": false,
+        "canShoot": false,
+        "engagementOut": {
+          "engagedTargetId": null,
+          "lastKnownPos": null,
+          "investigateUntil": 0
+        }
+      }
+    }
+  ]
+}

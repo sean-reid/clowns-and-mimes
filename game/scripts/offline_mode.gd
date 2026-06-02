@@ -25,6 +25,8 @@ const SharedConstants := preload("res://scripts/shared_constants.gd")
 const OfflineProjectilesScript := preload("res://scripts/offline_projectiles.gd")
 const ProjectileRendererScript := preload("res://scripts/projectile_renderer.gd")
 const WallGeometry := preload("res://scripts/wall_geometry.gd")
+const OfflinePortalsScript := preload("res://scripts/offline_portals.gd")
+const PortalRendererScript := preload("res://scripts/portal_renderer.gd")
 
 # Per-team bot fill target. 3 bots per side gives a 4-vs-4 (with the
 # local human on one side) which the playtest landed on as the right
@@ -42,6 +44,12 @@ var _proj_seq: int = 0
 # Live Clone-power-up allies: id -> expiry (ms). Despawned when it elapses.
 var _clone_expires: Dictionary = {}
 var _clone_seq: int = 0
+# Live portal pairs + per-player blocked/cooldown state + exit-wall rng.
+var _portals: Array = []
+var _portal_blocked: Dictionary = {}
+var _portal_cooldown: Dictionary = {}
+var _portal_seq: int = 0
+var _portal_rng := RandomNumberGenerator.new()
 
 func attach(arena_ref: Node) -> void:
 	arena = arena_ref
@@ -64,6 +72,9 @@ func start() -> void:
 	arena.item_renderer.render_from_snapshot(_item_wire())
 	if arena.projectile_renderer == null:
 		arena.projectile_renderer = ProjectileRendererScript.new(arena)
+	if arena.portal_renderer == null:
+		arena.portal_renderer = PortalRendererScript.new(arena)
+	_portal_rng.randomize()
 	# Offline can shoot now, so show the aiming crosshair like the online path.
 	arena.hud.set_crosshair_visible(true)
 	arena.rules.start(arena.topology)
@@ -80,6 +91,7 @@ func drive_hud(delta: float) -> void:
 	_step_items(delta)
 	_step_projectiles(delta)
 	_sweep_clones()
+	_step_portals(delta)
 	arena.hud.set_countdown_seconds(arena.rules.phase_time_remaining(Time.get_unix_time_from_system()))
 	# The minimap plots live positions, so refresh it every frame here rather
 	# than only on tag/save events (which sufficed for the old status bars).
@@ -140,6 +152,88 @@ func _apply_item_effect(node: Node, item_type: String) -> void:
 				p2["overchargeArmed"] = true
 		"clone":
 			_spawn_clone(node)
+		"portal":
+			_open_portal(node)
+
+# Open a portal pair for the opener (entry mouth on the wall they face, exit on
+# a random other wall) and block them from it until they step clear. Mirrors
+# itemManager.openPortal.
+func _open_portal(owner: Node) -> void:
+	var walls: Array = arena.labyrinth.wall_endpoints() if arena.labyrinth != null else []
+	if walls.is_empty():
+		return
+	var geom: Dictionary = OfflinePortalsScript.build_portal_pair(
+		owner.global_position.x, owner.global_position.z, owner.rotation.y, walls, arena.topology, _portal_rng.randf
+	)
+	if geom.is_empty():
+		return
+	_portal_seq += 1
+	geom["id"] = "portal_%d" % _portal_seq
+	geom["expires_at"] = (
+		int(Time.get_unix_time_from_system() * 1000.0) + OfflinePortalsScript.PORTAL_DURATION_MS
+	)
+	_portals.append(geom)
+	# The opener stands on the entry mouth; block them until they step clear so
+	# the pair doesn't instantly teleport them off it.
+	_portal_blocked[arena.local_player_id] = true
+
+# Expire elapsed pairs, then teleport any player standing on a live mouth to the
+# opposite exit. Blocked-until-clear + per-player cooldown stop the bounce.
+# Mirrors itemManager.stepPortals.
+func _step_portals(delta: float) -> void:
+	var now_ms := int(Time.get_unix_time_from_system() * 1000.0)
+	var survivors: Array = []
+	for portal in _portals:
+		if portal.expires_at <= now_ms:
+			if arena.portal_renderer != null:
+				arena.portal_renderer.on_close(portal.id)
+		else:
+			survivors.append(portal)
+	_portals = survivors
+	if _portals.is_empty():
+		_portal_blocked.clear()
+		_portal_cooldown.clear()
+		if arena.portal_renderer != null:
+			arena.portal_renderer.render_from_snapshot([])
+		return
+	for pid in arena.player_nodes:
+		var node: Node = arena.player_nodes[pid]
+		var dest = null
+		var dest_yaw := 0.0
+		for portal in _portals:
+			if arena.topology.distance(node.global_position, portal.a) <= OfflinePortalsScript.PORTAL_ENTER_RADIUS:
+				dest = portal.b_exit
+				dest_yaw = portal.b_exit_yaw
+				break
+			if arena.topology.distance(node.global_position, portal.b) <= OfflinePortalsScript.PORTAL_ENTER_RADIUS:
+				dest = portal.a_exit
+				dest_yaw = portal.a_exit_yaw
+				break
+		if dest == null:
+			_portal_blocked.erase(pid)
+			continue
+		if _portal_blocked.has(pid):
+			continue
+		if now_ms < int(_portal_cooldown.get(pid, 0)):
+			continue
+		node.global_position = Vector3(dest.x, node.global_position.y, dest.z)
+		node.rotation.y = dest_yaw
+		_portal_blocked[pid] = true
+		_portal_cooldown[pid] = now_ms + OfflinePortalsScript.PORTAL_TELEPORT_COOLDOWN_MS
+	if arena.portal_renderer != null:
+		arena.portal_renderer.render_from_snapshot(_portal_wire())
+		arena.portal_renderer.tick(delta)
+
+# Live pairs in the {id, a:{x,y,z}, b:{x,y,z}} wire shape the renderer reads.
+func _portal_wire() -> Array:
+	var out: Array = []
+	for portal in _portals:
+		var a: Vector3 = portal.a
+		var b: Vector3 = portal.b
+		out.append(
+			{"id": portal.id, "a": {"x": a.x, "y": a.y, "z": a.z}, "b": {"x": b.x, "y": b.y, "z": b.z}}
+		)
+	return out
 
 # Spawn a temporary ally bot next to the owner, registered + AI-attached like a
 # normal offline bot, that despawns after CLONE_DURATION_MS. Mirrors the

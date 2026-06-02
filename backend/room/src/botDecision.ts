@@ -74,6 +74,10 @@ export function decideBotAction(
   engagement: Engagement,
   params: DecisionParams,
   collectTarget: Vec2 | null = null,
+  // Team-coordinated rescue assignment. When omitted, the bot falls back to its
+  // own nearest frozen ally; pass null to suppress rescue, or a claim to force
+  // a specific ally (so two bots don't swarm one). See botCoordination.
+  rescueOverride?: { target: PlayerState; dist: number } | null,
 ): BotDecision {
   const roster = [...players];
   const candidate = nearestVisibleEnemy(bot, roster, walls, topology, worldWidth, now);
@@ -129,7 +133,10 @@ export function decideBotAction(
   const investigating =
     target === null && engagement.lastKnownPos !== null && now < engagement.investigateUntil;
 
-  const rescue = nearestFrozenAlly(bot, roster, topology, worldWidth, params.visionRadius);
+  const rescue: { target: PlayerState | null; dist: number } =
+    rescueOverride === undefined
+      ? nearestFrozenAlly(bot, roster, topology, worldWidth, params.visionRadius)
+      : (rescueOverride ?? { target: null, dist: Infinity });
 
   const enemyInRange = target !== null && enemyDist < params.visionRadius;
   const chasing = enemyInRange && activeTurnTeam === bot.team;

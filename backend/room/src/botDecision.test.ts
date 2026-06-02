@@ -115,6 +115,67 @@ describe('decideBotAction collect mode', () => {
   });
 });
 
+describe('decideBotAction rescue override', () => {
+  const PARAMS_OK = PARAMS; // reuse
+
+  it('uses a supplied rescue claim instead of the bot’s own nearest ally', () => {
+    const b = bot();
+    // A nearer frozen ally exists, but the coordinator assigned a farther one.
+    const near = player({
+      id: 'near',
+      team: 'mime',
+      position: { x: 2, y: 0.5, z: 0 },
+      frozen: true,
+    });
+    const assigned = player({
+      id: 'assigned',
+      team: 'mime',
+      position: { x: 9, y: 0.5, z: 0 },
+      frozen: true,
+    });
+    const d = decideBotAction(
+      b,
+      [b, near, assigned],
+      [],
+      'plane',
+      80,
+      1000,
+      'mime',
+      freshEngagement(),
+      PARAMS_OK,
+      null,
+      {
+        target: assigned,
+        dist: 9,
+      },
+    );
+    expect(d.mode).toBe('rescue');
+    expect(d.rescueTarget?.id).toBe('assigned');
+    expect(d.rescueDist).toBeCloseTo(9, 6);
+  });
+
+  it('suppresses rescue entirely when the override is null', () => {
+    const b = bot();
+    const ally = player({ id: 'a', team: 'mime', position: { x: 3, y: 0.5, z: 0 }, frozen: true });
+    const d = decideBotAction(
+      b,
+      [b, ally],
+      [],
+      'plane',
+      80,
+      1000,
+      'mime',
+      freshEngagement(),
+      PARAMS_OK,
+      null,
+      null,
+    );
+    expect(d.rescuing).toBe(false);
+    expect(d.rescueTarget).toBeNull();
+    expect(d.mode).toBe('patrol');
+  });
+});
+
 describe('decideBotAction engagement hysteresis', () => {
   it('stays locked on the engaged target when a new one is not meaningfully closer', () => {
     const b = bot();

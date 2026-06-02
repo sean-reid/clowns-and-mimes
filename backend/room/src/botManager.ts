@@ -25,6 +25,7 @@ import { decideBotAction } from './botDecision.ts';
 import { decideItemUse } from './botItems.ts';
 import { nearestEnemy } from './botPerception.ts';
 import { nearestItemTarget, portalEscapeTarget } from './botGoals.ts';
+import { assignRescues } from './botCoordination.ts';
 
 // World half-extent (kept private here; Room owns the canonical constant).
 const WORLD_WIDTH = 80;
@@ -359,6 +360,14 @@ export class BotManager {
     const DIR_SMOOTHING = 0.5;
     const MAX_YAW_RATE = 9.0;
     const RETARGET_HYSTERESIS = 0.75;
+    // One rescue claim per frozen teammate, so bots spread across distinct
+    // allies instead of swarming the nearest one. Computed once per tick.
+    const rescueClaims = assignRescues(
+      this.host.players.values(),
+      topology,
+      WORLD_WIDTH,
+      BOT_VISION_RADIUS,
+    );
 
     for (const bot of this.botPlayers()) {
       if (bot.frozen) continue;
@@ -406,6 +415,7 @@ export class BotManager {
           investigateMs: BOT_INVESTIGATE_MS,
         },
         collectTarget,
+        rescueClaims.get(bot.id) ?? null,
       );
       const { target, enemyDist, rescueTarget, rescueDist, chasing, fleeing, rescuing, canShoot } =
         decision;

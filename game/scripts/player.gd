@@ -396,7 +396,10 @@ func _apply_bot_movement(delta: float) -> void:
 		intent = intent.normalized()
 	if intent.length() > 0.01:
 		var target_yaw := atan2(-intent.x, -intent.z)
-		rotation.y = lerp_angle(rotation.y, target_yaw, clampf(8.0 * delta, 0.0, 1.0))
+		# Fixed-rate turn toward the heading (mirrors botSteering.ts turnToward /
+		# MAX_YAW_RATE) instead of a proportional lerp, so offline bot facing
+		# matches the online model.
+		rotation.y = _turn_toward(rotation.y, target_yaw, SharedConstants.MAX_YAW_RATE, delta)
 	# Consume the bot's rising-edge jump request. bot_ai.gd flips bot_jump
 	# true for one tick when its 3-trigger predicate fires; resetting here
 	# prevents step_jump from re-firing every physics tick.
@@ -433,6 +436,13 @@ func _apply_bot_movement(delta: float) -> void:
 	_offline_sprinting = step.sprinting
 	var planar_speed: float = (new_xz - prev_xz).length() / delta if delta > 0.0 else 0.0
 	_update_footsteps(planar_speed, _offline_sprinting)
+
+# Rotate `current` toward `target` by at most max_rate*dt along the shortest
+# angular path. Mirrors botSteering.ts turnToward (offline bot facing model).
+func _turn_toward(current: float, target: float, max_rate: float, dt: float) -> float:
+	var d: float = wrapf(target - current, -PI, PI)
+	var max_step: float = max_rate * dt
+	return current + clampf(d, -max_step, max_step)
 
 # Maze wall segments for the shared movement step (empty when no labyrinth).
 func _offline_walls() -> Array:

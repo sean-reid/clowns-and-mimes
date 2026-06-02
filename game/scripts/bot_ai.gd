@@ -54,6 +54,12 @@ var rng := RandomNumberGenerator.new()
 var state: int = State.PATROL
 var accumulated: float = 0.0
 var patrol_target: Vector3 = Vector3.ZERO
+# Steering computed once per tick (mirrors the online bot loop): the smoothed
+# heading + sprint flag the per-frame _drive applies. last_dir carries the
+# previous tick's heading for smoothDir.
+var last_dir: Vector3 = Vector3.ZERO
+var _intent: Vector3 = Vector3.ZERO
+var _sprint: bool = false
 # Recently chosen patrol points (Vector3); a fresh pick avoids landing near
 # these so the bot spreads out. Capped at BOT_RECENT_TARGETS_KEEP.
 var recent_targets: Array = []
@@ -108,6 +114,7 @@ func _physics_process(delta: float) -> void:
 		accumulated = 0.0
 		_choose_state()
 		_choose_target()
+		_choose_steering()
 		_maybe_shoot()
 	# Compute the jump intent once per frame (after the tick refreshes state) and
 	# reuse it: a held Leap arms the very jump it triggers, so item-use needs to
@@ -270,13 +277,17 @@ func _avoid_positions() -> Array:
 		out.append(rules.players[pid].get("position", Vector3.ZERO))
 	return out
 
-func _drive() -> void:
+# Per-tick steering (matches the online bot loop): pick the next waypoint, smooth
+# the heading across ticks (smoothDir), and decide sprint. Done at the tick rate
+# - not per frame - so DIR_SMOOTHING damps jitter the way it does online instead
+# of over-damping at the frame rate.
+func _choose_steering() -> void:
 	if topology == null:
-		player.bot_intent = Vector3.ZERO
+		_intent = Vector3.ZERO
+		_sprint = false
 		return
-	# Ask the shared A* pathfinder for the next waypoint toward patrol_target,
-	# routing around other players; physics (move_and_slide) handles the actual
-	# wall sliding. Falls back to steering straight when there's no labyrinth.
+	# Next waypoint toward patrol_target, routing around other players; the
+	# movement step handles wall sliding. Straight at the target with no maze.
 	var target: Vector3 = patrol_target
 	if pathfinder != null:
 		target = pathfinder.next_waypoint_avoiding(
@@ -285,10 +296,36 @@ func _drive() -> void:
 	var to_target: Vector3 = topology.delta(player.global_position, target)
 	to_target.y = 0.0
 	if to_target.length() < 0.05:
-		player.bot_intent = Vector3.ZERO
-		return
-	player.bot_intent = to_target.normalized()
-	player.bot_sprint = (state == State.CHASE or state == State.FLEE) and player.sprint_energy > 25.0
+		_intent = Vector3.ZERO
+	else:
+		_intent = _smooth_dir(last_dir, to_target.normalized(), SharedConstants.DIR_SMOOTHING)
+	last_dir = _intent
+	# Sprint only when closing on an engagement within the trigger radius and
+	# there's energy to spend (mirrors online's closeEnemyOrRescue gate).
+	var trigger: float = SharedConstants.BOT_SPRINT_TRIGGER_RADIUS
+	var ed: float = _decision.get("enemy_dist", INF)
+	var rd: float = _decision.get("rescue_dist", INF)
+	var close: bool = (
+		(_decision.get("chasing", false) and ed < trigger)
+		or (_decision.get("fleeing", false) and ed < trigger)
+		or (_decision.get("rescuing", false) and rd < trigger)
+	)
+	_sprint = close and player.sprint_energy > SharedConstants.MAX_SPRINT * 0.15
+
+# Exponential heading smoothing across ticks, re-normalized; zero when the
+# blended heading collapses. Mirrors botSteering.ts smoothDir.
+func _smooth_dir(last: Vector3, raw: Vector3, smoothing: float) -> Vector3:
+	var blended := Vector3(
+		last.x * smoothing + raw.x * (1.0 - smoothing),
+		0.0,
+		last.z * smoothing + raw.z * (1.0 - smoothing),
+	)
+	var l: float = blended.length()
+	return blended / l if l > 1e-3 else Vector3.ZERO
+
+func _drive() -> void:
+	player.bot_intent = _intent
+	player.bot_sprint = _sprint
 	if state == State.CHASE:
 		_try_close_tag()
 	elif state == State.RESCUE:

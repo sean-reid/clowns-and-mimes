@@ -15,6 +15,8 @@ import type { Vec2 } from '@cm/shared';
 export interface ExplorationParams {
   decayMs: number; // staleness saturates at this age
   momentumBonus: number; // weight of the keep-going-forward term vs staleness (0..1)
+  spreadRadius: number; // teammates within this far penalize a candidate
+  spreadWeight: number; // max teammate-repulsion penalty (at zero distance)
 }
 
 // Record that the bot occupied `cell` (a pathfinder cell index) at nowMs.
@@ -23,10 +25,12 @@ export function markVisited(visited: Map<number, number>, cell: number, nowMs: n
   if (cell >= 0) visited.set(cell, nowMs);
 }
 
-// Score a candidate patrol point. Staleness of its cell (0..1, 1 = never or
+// Score a candidate patrol point: staleness of its cell (0..1, 1 = never or
 // long-ago visited) plus a forward bonus for heading the way the bot already
-// faces. Higher is better; heading may be zero (no preference). candidateCell is
-// the pathfinder cell of the candidate (negative when there's no grid).
+// faces, minus a repulsion penalty for sitting near a teammate (so the team
+// fans out). Higher is better; heading may be zero (no preference). candidateCell
+// is the pathfinder cell of the candidate (negative when there's no grid);
+// teammates are same-team player positions to spread away from.
 export function patrolCandidateScore(
   candidate: Vec2,
   candidateCell: number,
@@ -35,6 +39,7 @@ export function patrolCandidateScore(
   visited: ReadonlyMap<number, number>,
   nowMs: number,
   params: ExplorationParams,
+  teammates: readonly Vec2[] = [],
 ): number {
   const last = candidateCell >= 0 ? visited.get(candidateCell) : undefined;
   const age = last === undefined ? params.decayMs : nowMs - last;
@@ -47,5 +52,18 @@ export function patrolCandidateScore(
   if (len > 1e-6 && hlen > 1e-6) {
     forward = Math.max(0, (dx * heading.x + dz * heading.z) / (len * hlen));
   }
-  return staleness + params.momentumBonus * forward;
+  // Team-spread: nearest teammate within the spread radius penalizes this
+  // candidate, ramping to spreadWeight at zero distance.
+  let crowd = 0;
+  if (params.spreadRadius > 0) {
+    let nearest = Infinity;
+    for (const t of teammates) {
+      const d = Math.hypot(candidate.x - t.x, candidate.z - t.z);
+      if (d < nearest) nearest = d;
+    }
+    if (nearest < params.spreadRadius) {
+      crowd = params.spreadWeight * (1 - nearest / params.spreadRadius);
+    }
+  }
+  return staleness + params.momentumBonus * forward - crowd;
 }

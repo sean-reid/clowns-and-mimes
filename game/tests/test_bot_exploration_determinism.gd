@@ -24,6 +24,9 @@ func _assert_scenario(sc: Dictionary, now: float, params: Dictionary) -> void:
 	var visited: Dictionary = {}
 	for k in sc.visited:
 		visited[int(k)] = float(sc.visited[k])
+	var teammates: Array = []
+	for t in sc.get("teammates", []):
+		teammates.append(Vector3(float(t.x), 0.0, float(t.z)))
 	var score := BotExploration.patrol_candidate_score(
 		Vector3(float(sc.candidateX), 0.0, float(sc.candidateZ)),
 		int(sc.candidateCell),
@@ -32,7 +35,10 @@ func _assert_scenario(sc: Dictionary, now: float, params: Dictionary) -> void:
 		visited,
 		now,
 		float(params.decayMs),
-		float(params.momentumBonus)
+		float(params.momentumBonus),
+		teammates,
+		float(params.spreadRadius),
+		float(params.spreadWeight)
 	)
 	assert_approx(score, float(sc.expected), TOLERANCE, "%s: score" % name)
 

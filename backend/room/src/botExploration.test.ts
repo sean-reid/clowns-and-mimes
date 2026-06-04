@@ -1,7 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import { markVisited, patrolCandidateScore, type ExplorationParams } from './botExploration.ts';
 
-const PARAMS: ExplorationParams = { decayMs: 12000, momentumBonus: 0.5 };
+const PARAMS: ExplorationParams = {
+  decayMs: 12000,
+  momentumBonus: 0.5,
+  spreadRadius: 24,
+  spreadWeight: 0.7,
+};
 const NOW = 100000;
 
 describe('markVisited', () => {
@@ -51,5 +56,21 @@ describe('patrolCandidateScore', () => {
     const v = new Map([[5, NOW]]);
     const s = patrolCandidateScore(at(0, 0), -1, at(0, 0), noHeading, v, NOW, PARAMS);
     expect(s).toBeCloseTo(1, 6);
+  });
+
+  it('penalizes candidates near a teammate, ramping with distance', () => {
+    const fresh = new Map<number, number>(); // staleness 1, isolate spread
+    const far = patrolCandidateScore(at(0, 0), 5, at(0, 0), noHeading, fresh, NOW, PARAMS, [
+      at(40, 0),
+    ]);
+    const near = patrolCandidateScore(at(0, 0), 5, at(0, 0), noHeading, fresh, NOW, PARAMS, [
+      at(12, 0),
+    ]);
+    const onTop = patrolCandidateScore(at(0, 0), 5, at(0, 0), noHeading, fresh, NOW, PARAMS, [
+      at(0, 0),
+    ]);
+    expect(far).toBeCloseTo(1, 6); // beyond radius -> no penalty
+    expect(near).toBeCloseTo(0.65, 6); // 1 - 0.7*(1 - 12/24)
+    expect(onTop).toBeCloseTo(0.3, 6); // 1 - 0.7
   });
 });

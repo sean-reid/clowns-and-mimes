@@ -17,7 +17,12 @@ import {
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const OUTPUT = resolve(repoRoot, 'game/tests/fixtures/bot_exploration_snapshot.json');
 
-const PARAMS: ExplorationParams = { decayMs: 12000, momentumBonus: 0.5 };
+const PARAMS: ExplorationParams = {
+  decayMs: 12000,
+  momentumBonus: 0.5,
+  spreadRadius: 24,
+  spreadWeight: 0.7,
+};
 const NOW = 100000;
 
 interface Scenario {
@@ -31,6 +36,8 @@ interface Scenario {
   headingZ: number;
   // cell -> last-visited ms
   visited: Record<number, number>;
+  // same-team positions to spread away from (default none)
+  teammates?: Array<{ x: number; z: number }>;
 }
 
 const SCENARIOS: Scenario[] = [
@@ -118,6 +125,45 @@ const SCENARIOS: Scenario[] = [
     headingZ: 0,
     visited: { 5: NOW },
   },
+  // Team-spread: a fresh cell with a teammate beyond the radius -> no penalty.
+  {
+    name: 'teammate_far',
+    candidateX: 0,
+    candidateZ: 0,
+    candidateCell: 5,
+    botX: 0,
+    botZ: 0,
+    headingX: 0,
+    headingZ: 0,
+    visited: {},
+    teammates: [{ x: 40, z: 0 }],
+  },
+  // Teammate halfway inside the spread radius -> partial penalty.
+  {
+    name: 'teammate_near',
+    candidateX: 0,
+    candidateZ: 0,
+    candidateCell: 5,
+    botX: 0,
+    botZ: 0,
+    headingX: 0,
+    headingZ: 0,
+    visited: {},
+    teammates: [{ x: 12, z: 0 }],
+  },
+  // Teammate right on the candidate -> full spread penalty.
+  {
+    name: 'teammate_on_top',
+    candidateX: 0,
+    candidateZ: 0,
+    candidateCell: 5,
+    botX: 0,
+    botZ: 0,
+    headingX: 0,
+    headingZ: 0,
+    visited: {},
+    teammates: [{ x: 0, z: 0 }],
+  },
 ];
 
 function run(s: Scenario) {
@@ -132,6 +178,7 @@ function run(s: Scenario) {
     visited,
     NOW,
     PARAMS,
+    s.teammates ?? [],
   );
   return { ...s, expected: score };
 }

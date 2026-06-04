@@ -65,6 +65,10 @@ func drive_keepalive(delta: float) -> void:
 ## Called from arena._on_room_connected. Clears reconnect state and
 ## hides the banner. Idempotent.
 func handle_connected() -> void:
+	# Telemetry only when a reconnect was actually in flight; this is also called
+	# on the normal first connect (fallback path), which isn't a reconnect.
+	if _reconnect_active:
+		Telemetry.track_reconnect("success")
 	_reconnect_attempt = 0
 	_reconnect_active = false
 	hide_banner()
@@ -152,6 +156,8 @@ func hide_banner() -> void:
 		_reconnect_label.visible = false
 
 func show_failed_popup() -> void:
+	# The reconnect ladder exhausted its backoff without recovering.
+	Telemetry.track_reconnect("expired")
 	hide_banner()
 	# Surface the last disconnect reason now that the ladder gave up.
 	# Held back from handle_disconnected so the side log isn't spammed

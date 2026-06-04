@@ -204,6 +204,8 @@ var local_player_id: String = ""
 # Winning team once the match ends, "" while live. Lets a host_changed
 # promotion that lands on the end screen re-show the overlay with Play Again.
 var _ended_win_team: String = ""
+# Telemetry: emit match_start at most once per match (reset on win / Play Again).
+var _match_telemetry_emitted: bool = false
 var player_nodes: Dictionary = {}
 var contacts: ContactInteractionsScript = null
 # OfflineMode owns the offline match lifecycle: rules wiring, bot
@@ -429,6 +431,24 @@ func _on_snapshot(snapshot: Dictionary, you_are: String) -> void:
 	phase_label = snapshot.get("phase", "")
 	turn_ends_at_ms = int(snapshot.get("turnEndsAt", 0))
 	snapshot_received = true
+	# Telemetry: the first play-phase snapshot marks the match start (once per
+	# match; reset on win / Play Again).
+	if (
+		not _match_telemetry_emitted
+		and phase_label != ""
+		and phase_label != "filling"
+		and phase_label != "ended"
+	):
+		_match_telemetry_emitted = true
+		var humans := 0
+		var bots := 0
+		for e in snapshot.get("players", []):
+			if e.get("bot", false):
+				bots += 1
+			else:
+				humans += 1
+		var mode_str := "open" if GameState.mode == GameState.Mode.OPEN else "private"
+		Telemetry.track_match_start(topology_name, mode_str, humans, bots)
 	# Adopt the server's authoritative spawn coordinates for the local player.
 	# Without this the client-jittered spawn from _spawn_player can sit a few
 	# units off the server's jitter, and the first deltas would dump us
@@ -613,12 +633,14 @@ const VersionCheck := preload("res://scripts/network/version_check.gd")
 
 func _on_room_error(code: String, message: String) -> void:
 	if code == "version_mismatch":
+		Telemetry.track_connect_result("rejected", "version_mismatch")
 		_show_version_mismatch_popup(message)
 		return
 	if code == "session_expired":
 		# Reconnect grace window expired before our ladder got a session
 		# token back to the server. The player's slot is gone; the match
 		# may still be running. Send them back to the menu cleanly.
+		Telemetry.track_connect_result("rejected", "session_expired")
 		_show_rejected_popup(
 			"Match ended",
 			"You were disconnected for too long. Returning to the menu.",
@@ -629,6 +651,7 @@ func _on_room_error(code: String, message: String) -> void:
 		# session token. Most often hit when the matchmaker has not yet
 		# reaped a now-running room from its open pool, or when a stale
 		# private code is shared after the host started the match.
+		Telemetry.track_connect_result("rejected", "match_in_progress")
 		_show_rejected_popup(
 			"Match already running",
 			"This room is already mid-match. Try Find Match again for a new one.",
@@ -783,6 +806,7 @@ func _stream_input(delta: float) -> void:
 	if not frozen and _input_active() and Input.is_action_pressed("use_item"):
 		if not _use_item_was_held:
 			room_client.send_use_item()
+			Telemetry.track_item_used(_held_item)
 			# Arm the local leap prediction in the same frame the server arms
 			# leapArmed, so the next predicted jump uses the boosted arc
 			# without waiting a round-trip for the authoritative leaping flag.
@@ -891,7 +915,12 @@ func _apply_player_state(entry: Dictionary) -> void:
 		# a use_item clears it. Empty/absent string hides the slot. Cache the
 		# type so the use_item key can arm a type-specific local prediction
 		# (leap) in the same frame it sends the message.
+		var _prev_held := _held_item
 		_held_item = String(entry.get("activeItem", ""))
+		# Telemetry: a held-item slot filling from empty is a floor-item pickup
+		# (a use clears it the other way, emitted on the input edge).
+		if _prev_held.is_empty() and not _held_item.is_empty():
+			Telemetry.track_item_pickup(_held_item)
 		hud.set_held_item(_held_item)
 		# Local body's jumpStartedAt comes from the predictor, not the
 		# server snapshot - the predictor is one tick ahead and stays
@@ -917,6 +946,12 @@ func _handle_tagged(event: Dictionary) -> void:
 	hud.append_log("%s was %s by %s" % [_name_for(victim_id), verb, _name_for(attacker_id)])
 	if victim_id == local_player_id:
 		hud.flash_frozen(team, _name_for(attacker_id))
+	# Telemetry: our shot froze someone - a successful projectile hit. Bucket by
+	# our distance to the victim (the freeze is the only client-visible hit).
+	if attacker_id == local_player_id and local_player != null and node != null and topology != null:
+		Telemetry.track_projectile_hit(
+			topology.distance(local_player.global_position, node.global_position)
+		)
 
 func _handle_saved(event: Dictionary) -> void:
 	var victim_id: String = event.get("victimId", "")
@@ -932,6 +967,10 @@ func _handle_win(event: Dictionary) -> void:
 	var team: String = event.get("team", "")
 	_ended_win_team = team
 	var victory: bool = local_player != null and team == local_player.team
+	if local_player != null:
+		Telemetry.track_match_end("won" if victory else "lost", local_player.team)
+	# Allow the next match (Play Again / new round) to emit its own match_start.
+	_match_telemetry_emitted = false
 	# Only the private-lobby host gets Play Again; the server gates the
 	# restart_room message to the host player anyway, so a non-host who
 	# never sees the button can't trigger a restart. OPEN matches have no
@@ -1057,6 +1096,13 @@ func _play_stinger(victory: bool) -> void:
 	)
 
 func _on_back_to_menu() -> void:
+	# Telemetry: leaving while a match is still live (not won) is an abandon -
+	# covers menu-quit, reconnect give-up, and rejected-popup exits, which all
+	# funnel here. The win path resets the flag first, so a finished match never
+	# counts as abandoned. Offline sets the same flag in OfflineMode.start.
+	if _match_telemetry_emitted:
+		_match_telemetry_emitted = false
+		Telemetry.track_match_abandoned(phase_label)
 	Input.set_mouse_mode(Input.MOUSE_MODE_VISIBLE)
 	# The RoomClient is parented under the NetClient autoload now (so it
 	# could survive the lobby -> arena scene swap). Tearing down through

@@ -80,6 +80,15 @@ func start() -> void:
 	# Offline can shoot now, so show the aiming crosshair like the online path.
 	arena.hud.set_crosshair_visible(true)
 	arena.rules.start(arena.topology)
+	# Telemetry: the offline match begins now (one human, the rest bots).
+	var bots := 0
+	for pid in arena.rules.players:
+		if arena.rules.players[pid].get("bot", false):
+			bots += 1
+	Telemetry.track_match_start(arena.topology.name(), "offline", 1, bots)
+	# Mark the match live so leaving before a win counts as match_abandoned
+	# (arena._on_back_to_menu reads this flag; _on_won clears it).
+	arena._match_telemetry_emitted = true
 
 ## Called from arena._process during offline play. Pushes live positions
 ## to the rules engine, runs the item pickup/respawn pass, and refreshes the
@@ -112,6 +121,7 @@ func _step_items(delta: float) -> void:
 		if ev.player_id == arena.local_player_id:
 			var held: String = arena.rules.players[ev.player_id].get("active_item", "")
 			arena.hud.set_held_item(held)
+			Telemetry.track_item_pickup(held)
 	if arena.item_renderer != null:
 		arena.item_renderer.render_from_snapshot(_item_wire())
 		arena.item_renderer.tick(delta)
@@ -128,6 +138,7 @@ func use_item_local() -> void:
 	var item_type: String = _items.use_item(p)
 	if item_type == "":
 		return
+	Telemetry.track_item_used(item_type)
 	arena.hud.set_held_item("")
 	_apply_item_effect(arena.local_player, item_type, id)
 
@@ -197,6 +208,11 @@ func _open_portal(owner: Node, player_id: String) -> void:
 	_portal_blocked[player_id] = true
 
 # Entry (a) + exit (b) mouths of the live portal `player_id` opened, or null.
+# Live projectiles, so a bot can see incoming enemy fire. Mirrors the server's
+# getProjectiles exposed to the bot manager.
+func live_projectiles() -> Array:
+	return _projectiles
+
 # A fleeing bot heads into its own entry mouth via BotGoals.portal_escape_target.
 # Mirrors the server's botPortalEntry.
 func bot_portal_entry(player_id: String) -> Variant:
@@ -334,6 +350,13 @@ func _step_projectiles(delta: float) -> void:
 	for hit in res.hits:
 		if hit.has("victim_id"):
 			arena.rules.freeze_by_projectile(hit.victim_id, hit.owner_id)
+			# Telemetry: our shot connected. Bucket by our distance to the victim.
+			if hit.owner_id == arena.local_player_id and arena.local_player != null:
+				var victim: Dictionary = arena.rules.players.get(hit.victim_id, {})
+				if not victim.is_empty():
+					Telemetry.track_projectile_hit(
+						arena.topology.distance(arena.local_player.global_position, victim.position)
+					)
 	if arena.projectile_renderer != null:
 		arena.projectile_renderer.render_from_delta(_projectile_wire())
 		arena.projectile_renderer.tick(delta)
@@ -447,6 +470,10 @@ func _on_saved(victim_id: String, savior_id: String) -> void:
 
 func _on_won(team: String) -> void:
 	var victory: bool = team == arena.local_player.team
+	Telemetry.track_match_end("won" if victory else "lost", arena.local_player.team)
+	# Match completed cleanly - clear the live flag so the trip back to the menu
+	# isn't counted as an abandon.
+	arena._match_telemetry_emitted = false
 	arena.hud.show_end(victory)
 	arena._play_stinger(victory)
 

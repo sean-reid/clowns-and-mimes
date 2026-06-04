@@ -13,14 +13,54 @@ export const UNFREEZE_RADIUS_BOT = 1.4;
 
 // Perception + engagement.
 export const BOT_VISION_RADIUS = 22;
+// Tag-value target scoring: among visible enemies the bot engages the most
+// catchable, not just the nearest. value = -distance + cornered*CORNER_WEIGHT +
+// isolated*ISOLATION_WEIGHT, where cornered (0..1) is the fraction of sampled
+// directions blocked by a wall within CORNER_SAMPLE_DIST, and isolated (0..1) is
+// how far the enemy is from its nearest teammate (capped at vision). Weights are
+// in distance units: a fully cornered enemy is worth chasing as if it were
+// CORNER_WEIGHT closer; a fully isolated one, ISOLATION_WEIGHT closer.
+export const BOT_TARGET_CORNER_WEIGHT = 4;
+export const BOT_TARGET_ISOLATION_WEIGHT = 6;
+export const BOT_TARGET_CORNER_SAMPLE_DIST = 5;
 export const BOT_SHOOT_RANGE = 18;
 export const BOT_SHOOT_AIM_JITTER = 0.09;
 export const RETARGET_HYSTERESIS = 0.75;
 export const BOT_INVESTIGATE_MS = 3000;
+// Seen incoming fire (botProjectileThreat.nearestProjectileThreat). A bot can
+// see an enemy projectile in flight (within BOT_VISION_RADIUS, line of sight) -
+// not the muzzle flash - so it infers only the line of fire, not the exact
+// source. The threat bearing is a point this far back along the projectile's
+// reverse trajectory; the prey flees away from it. Kept short so the point stays
+// local (no wrap-around ambiguity on a torus/Klein bottle).
+export const BOT_FIRE_THREAT_LOOKBACK = 12;
+// Projectile dodge (botProjectileThreat.shouldDodgeProjectile). When a visible
+// enemy shot's straight-line closest approach to the bot lands within
+// DODGE_RADIUS and is less than DODGE_LEAD_S away, the bot jumps to let it pass
+// under - the reactive complement to fleeing the line of fire.
+export const BOT_DODGE_RADIUS = 1;
+export const BOT_DODGE_LEAD_S = 0.35;
+// Chase coordination (botCoordination.assignChases). When two or more bots hunt
+// the same enemy they're fanned out onto a ring of this radius around it at
+// evenly-spaced angles, so they pincer from different sides instead of
+// conga-lining in from one. The flank goal only steers the approach while the
+// bot is farther than FLANK_RELEASE_DIST from the target; inside that it drives
+// straight in for the tag (RELEASE > RADIUS leaves a convergence zone).
+export const BOT_CHASE_FLANK_RADIUS = 4;
+export const BOT_CHASE_FLANK_RELEASE_DIST = 6;
 
 // Movement / steering.
 export const BOT_SPRINT_TRIGGER_RADIUS = 10;
 export const BOT_FLEE_PROJECTION = 12;
+// Smart flee (botFlee.bestFleeTarget). Instead of bolting straight away from the
+// threat, the bot scores a fan of CANDIDATES escape points (anchored on the
+// straight-away direction) and picks the one farthest from the nearest enemy
+// after penalties: WALL_PENALTY scales the dead-end cost (a wall-cornered
+// destination, 0..1), BLOCKED_PENALTY all but rules out a direction with a wall
+// straight in the way. On open ground the straight-away candidate still wins.
+export const BOT_FLEE_CANDIDATES = 12;
+export const BOT_FLEE_WALL_PENALTY = 12;
+export const BOT_FLEE_BLOCKED_PENALTY = 1000;
 export const DIR_SMOOTHING = 0.5;
 export const MAX_YAW_RATE = 9.0;
 
@@ -32,8 +72,44 @@ export const BOT_NO_PROGRESS_MIN_DIST = 0.5;
 export const BOT_RECENT_TARGETS_KEEP = 6;
 export const BOT_RECENT_TARGET_RADIUS = 10;
 
+// Coverage-aware patrol. A patrolling bot remembers when it last visited each
+// pathfinder cell and favors cells it hasn't seen in a while, plus a bias toward
+// continuing its heading, so it sweeps the map instead of pacing one spot. A
+// cell's staleness saturates at VISIT_DECAY_MS; MOMENTUM_BONUS weights the
+// keep-going-forward term against staleness (which is 0..1).
+export const BOT_PATROL_VISIT_DECAY_MS = 12000;
+export const BOT_PATROL_MOMENTUM_BONUS = 0.5;
+// Team-spread: a patrol candidate is penalized for sitting within SPREAD_RADIUS
+// of a teammate (penalty ramps to SPREAD_WEIGHT at zero distance), so the team
+// fans out across distinct regions instead of clustering.
+export const BOT_PATROL_SPREAD_RADIUS = 24;
+export const BOT_PATROL_SPREAD_WEIGHT = 0.7;
+
 // Item seeking.
 export const BOT_ITEM_SEEK_RADIUS = 16;
+// Item denial: a reachable floor item an enemy is contesting (within
+// CONTEST_RADIUS of it, and the bot no farther from it than that enemy) is worth
+// a DENY_WEIGHT detour over a marginally closer uncontested item, so the bot
+// snatches power-ups out from under the enemy.
+export const BOT_ITEM_CONTEST_RADIUS = 12;
+export const BOT_ITEM_DENY_WEIGHT = 8;
+
+// Leap traversal (botLeap.shouldLeapTraverse). Only a leap clears a wall (its
+// arc peaks above WALL_HEIGHT; a normal jump doesn't), so a chasing/rescuing bot
+// that holds a leap will hop a wall in its way instead of pathing around when
+// the far side is open. REACH is roughly a leap's horizontal travel - kept short
+// (a leap only covers ~3 units, and is wall-blocked until it clears 6 m) so the
+// bot only commits to a wall it can actually clear. Playtest-tuned.
+export const BOT_LEAP_REACH = 3;
+
+// Turn-flip anticipation (botTurnFlip.turnFlipReposition). Within ANTICIPATE_MS
+// of the turn flipping, a bot pre-positions for its next role: a hunter who
+// can't land the tag in time opens a gap (head start as prey), and a prey closes
+// to a standoff ring - tagRadius + STANDOFF_BUFFER plus how far the still-active
+// hunter can sprint in the remaining time, so it can't be tagged before the flip
+// yet is poised to pounce the instant it becomes the hunter.
+export const BOT_TURN_ANTICIPATE_MS = 800;
+export const BOT_TURN_STANDOFF_BUFFER = 1;
 
 // Jump triggers.
 export const BOT_JUMP_REFRACTORY_MS = 1500;

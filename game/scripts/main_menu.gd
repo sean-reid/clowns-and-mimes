@@ -63,6 +63,9 @@ func _ready() -> void:
 # Independent of the version-check popup; both can stack if both fire.
 func _maybe_show_telemetry_opt_in() -> void:
 	if not Settings.telemetry_consent.is_empty():
+		# Already decided. If opted in, record this launch's session_start
+		# (guarded so it fires at most once per run).
+		Telemetry.track_session_start()
 		return
 	var dialog := ConfirmationDialog.new()
 	dialog.title = "Share gameplay stats?"
@@ -84,12 +87,7 @@ func _maybe_show_telemetry_opt_in() -> void:
 func _accept_telemetry() -> void:
 	Settings.set_telemetry_consent("yes")
 	Telemetry.ensure_id()
-	Telemetry.event({
-		"t": "session_start",
-		"v": ProjectSettings.get_setting("application/config/version", "0.0.0"),
-		"platform": OS.get_name(),
-		"telemetryId": Settings.telemetry_id,
-	})
+	Telemetry.track_session_start()
 
 func _check_for_updates() -> void:
 	var checker := VersionCheck.new()

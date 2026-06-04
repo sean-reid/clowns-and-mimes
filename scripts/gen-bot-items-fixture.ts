@@ -67,6 +67,12 @@ const SCENARIOS: Scenario[] = [
     item: 'surge',
     ctx: { ...base, fleeing: true, enemyDist: 14, sprintEnergy: 10 },
   },
+  {
+    // In extremis: a tag is imminent, so surge fires even at full energy.
+    name: 'surge_spend_imminent',
+    item: 'surge',
+    ctx: { ...base, chasing: true, enemyDist: 1.5, sprintEnergy: 90 },
+  },
   { name: 'overcharge_spend', item: 'overcharge', ctx: { ...base, canShoot: true } },
   { name: 'overcharge_hold', item: 'overcharge', ctx: { ...base, canShoot: false } },
   { name: 'cloak_spend', item: 'cloak', ctx: { ...base, fleeing: true, enemyDist: 8 } },

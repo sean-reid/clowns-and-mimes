@@ -76,6 +76,14 @@ export function bucketLabel(ev: TelemetryEvent): string {
       return ev.itemType;
     case 'projectile_hit':
       return ev.distanceBucket;
+    case 'match_abandoned':
+      return `phase ${ev.phase}`;
+    case 'connect_result':
+      return ev.outcome === 'rejected' ? `rejected: ${ev.reason}` : ev.outcome;
+    case 'reconnect':
+      return ev.outcome;
+    case 'menu_funnel':
+      return ev.action;
   }
 }
 

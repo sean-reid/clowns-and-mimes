@@ -87,6 +87,14 @@ describe('BotPathfinder string-pulling', () => {
     expect(c.x).toBeCloseTo(center(0, 0).x, 6);
     expect(c.z).toBeCloseTo(center(0, 0).z, 6);
   });
+
+  it('exposes cellCount + cellCenterAt for full-extent patrol sampling', () => {
+    const pf = new BotPathfinder([], 'plane');
+    expect(pf.cellCount()).toBe(100); // 10x10 plane grid
+    const c = pf.cellCenterAt(2 + 5 * 10); // cell (2, 5)
+    expect(c.x).toBeCloseTo(center(2, 5).x, 6);
+    expect(c.z).toBeCloseTo(center(2, 5).z, 6);
+  });
 });
 
 describe('BotPathfinder avoidance', () => {

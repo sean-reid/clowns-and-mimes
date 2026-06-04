@@ -8,8 +8,11 @@
 // single rescuer (the closest free bot), spreading the bots across distinct
 // allies instead.
 
-import type { PlayerState, Topology } from '@cm/shared';
-import { topologyDistance } from '@cm/shared/topology';
+import type { PlayerState, Topology, Vec2 } from '@cm/shared';
+import { topologyDistance, wrapPosition, wrappedDeltaVec } from '@cm/shared/topology';
+import { bestVisibleEnemy } from './botPerception.ts';
+import type { WallSegment } from '@cm/shared/labyrinth';
+import { BOT_CHASE_FLANK_RADIUS, BOT_VISION_RADIUS } from '@cm/shared/botTuning';
 
 export interface RescueClaim {
   target: PlayerState;
@@ -64,6 +67,82 @@ export function assignRescues(
     out.set(p.botId, { target: p.ally, dist: p.dist });
     claimedBots.add(p.botId);
     claimedAllies.add(p.ally.id);
+  }
+  return out;
+}
+
+// A flank slot for a bot chasing a target also being chased by a teammate: the
+// bot should approach `goal` (a point on a ring around the target) rather than
+// the target's exact position, so co-chasers converge from spread angles.
+export interface ChaseClaim {
+  targetId: string;
+  goal: Vec2;
+}
+
+/**
+ * Second responsibility: chase coordination. Left alone every bot drives at the
+ * exact position of the enemy it's chasing, so a pack hunting one target
+ * conga-lines in behind it from a single direction and the target just runs.
+ * assignChases finds each target chased by two or more bots and fans those bots
+ * out around it: each is given a `goal` on a ring of radius `flankRadius` at a
+ * distinct angular slot, turning the pack into a pincer that cuts off escape.
+ *
+ * Each bot's chased target is recomputed here with bestVisibleEnemy (the same
+ * pick the decision layer makes), so this stays a pure function of the roster +
+ * walls - no per-bot engagement state is threaded in. A bot whose decision
+ * later locks a different target (hysteresis) simply won't match its claim's
+ * targetId and falls back to a direct chase. Solo chasers get no claim, so their
+ * behavior is unchanged. The slots are anchored at the first bot's bearing and
+ * spaced evenly; bots are ranked by bearing (then id) so the assignment is
+ * stable, order-independent, and matches the offline GDScript port.
+ */
+export function assignChases(
+  players: Iterable<PlayerState>,
+  walls: readonly WallSegment[],
+  topology: Topology,
+  worldWidth: number,
+  now: number,
+  visionRadius: number = BOT_VISION_RADIUS,
+  flankRadius: number = BOT_CHASE_FLANK_RADIUS,
+): Map<string, ChaseClaim> {
+  const roster = [...players];
+  // Group bot chasers by the enemy each would engage.
+  const groups = new Map<string, { target: PlayerState; bots: PlayerState[] }>();
+  for (const bot of roster) {
+    if (!bot.bot || bot.frozen) continue;
+    const target = bestVisibleEnemy(bot, roster, walls, topology, worldWidth, now);
+    if (!target) continue;
+    if (topologyDistance(bot.position, target.position, topology, worldWidth) >= visionRadius) {
+      continue;
+    }
+    const group = groups.get(target.id) ?? { target, bots: [] };
+    group.bots.push(bot);
+    groups.set(target.id, group);
+  }
+
+  const out = new Map<string, ChaseClaim>();
+  for (const { target, bots } of groups.values()) {
+    if (bots.length < 2) continue; // a lone chaser drives straight at the target
+    const ranked = bots
+      .map((b) => {
+        const d = wrappedDeltaVec(target.position, b.position, topology, worldWidth);
+        return { bot: b, bearing: Math.atan2(d.z, d.x) };
+      })
+      .sort((a, b) => a.bearing - b.bearing || (a.bot.id < b.bot.id ? -1 : 1));
+    const base = ranked[0].bearing;
+    const k = ranked.length;
+    for (let r = 0; r < k; r++) {
+      const slot = base + (r * 2 * Math.PI) / k;
+      const goal = wrapPosition(
+        {
+          x: target.position.x + Math.cos(slot) * flankRadius,
+          z: target.position.z + Math.sin(slot) * flankRadius,
+        },
+        topology,
+        worldWidth,
+      );
+      out.set(ranked[r].bot.id, { targetId: target.id, goal });
+    }
   }
   return out;
 }

@@ -1,0 +1,162 @@
+{
+  "schemaVersion": 1,
+  "now": 100000,
+  "params": {
+    "decayMs": 12000,
+    "momentumBonus": 0.5,
+    "spreadRadius": 24,
+    "spreadWeight": 0.7
+  },
+  "scenarios": [
+    {
+      "name": "unvisited",
+      "candidateX": 0,
+      "candidateZ": 0,
+      "candidateCell": 5,
+      "botX": 0,
+      "botZ": 0,
+      "headingX": 0,
+      "headingZ": 0,
+      "visited": {},
+      "expected": 1
+    },
+    {
+      "name": "just_visited",
+      "candidateX": 0,
+      "candidateZ": 0,
+      "candidateCell": 5,
+      "botX": 0,
+      "botZ": 0,
+      "headingX": 0,
+      "headingZ": 0,
+      "visited": {
+        "5": 100000
+      },
+      "expected": 0
+    },
+    {
+      "name": "half_stale",
+      "candidateX": 0,
+      "candidateZ": 0,
+      "candidateCell": 5,
+      "botX": 0,
+      "botZ": 0,
+      "headingX": 0,
+      "headingZ": 0,
+      "visited": {
+        "5": 94000
+      },
+      "expected": 0.5
+    },
+    {
+      "name": "momentum_forward",
+      "candidateX": 10,
+      "candidateZ": 0,
+      "candidateCell": 5,
+      "botX": 0,
+      "botZ": 0,
+      "headingX": 1,
+      "headingZ": 0,
+      "visited": {
+        "5": 100000
+      },
+      "expected": 0.5
+    },
+    {
+      "name": "momentum_backward",
+      "candidateX": 10,
+      "candidateZ": 0,
+      "candidateCell": 5,
+      "botX": 0,
+      "botZ": 0,
+      "headingX": -1,
+      "headingZ": 0,
+      "visited": {
+        "5": 100000
+      },
+      "expected": 0
+    },
+    {
+      "name": "momentum_diagonal",
+      "candidateX": 10,
+      "candidateZ": 10,
+      "candidateCell": 5,
+      "botX": 0,
+      "botZ": 0,
+      "headingX": 1,
+      "headingZ": 0,
+      "visited": {
+        "5": 100000
+      },
+      "expected": 0.35355339059327373
+    },
+    {
+      "name": "no_grid",
+      "candidateX": 0,
+      "candidateZ": 0,
+      "candidateCell": -1,
+      "botX": 0,
+      "botZ": 0,
+      "headingX": 0,
+      "headingZ": 0,
+      "visited": {
+        "5": 100000
+      },
+      "expected": 1
+    },
+    {
+      "name": "teammate_far",
+      "candidateX": 0,
+      "candidateZ": 0,
+      "candidateCell": 5,
+      "botX": 0,
+      "botZ": 0,
+      "headingX": 0,
+      "headingZ": 0,
+      "visited": {},
+      "teammates": [
+        {
+          "x": 40,
+          "z": 0
+        }
+      ],
+      "expected": 1
+    },
+    {
+      "name": "teammate_near",
+      "candidateX": 0,
+      "candidateZ": 0,
+      "candidateCell": 5,
+      "botX": 0,
+      "botZ": 0,
+      "headingX": 0,
+      "headingZ": 0,
+      "visited": {},
+      "teammates": [
+        {
+          "x": 12,
+          "z": 0
+        }
+      ],
+      "expected": 0.65
+    },
+    {
+      "name": "teammate_on_top",
+      "candidateX": 0,
+      "candidateZ": 0,
+      "candidateCell": 5,
+      "botX": 0,
+      "botZ": 0,
+      "headingX": 0,
+      "headingZ": 0,
+      "visited": {},
+      "teammates": [
+        {
+          "x": 0,
+          "z": 0
+        }
+      ],
+      "expected": 0.30000000000000004
+    }
+  ]
+}

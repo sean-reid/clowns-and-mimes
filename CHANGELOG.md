@@ -6,6 +6,22 @@ When cutting a release: rename the `[Unreleased]` heading below to the version b
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-06-03
+
+The smarter-bots release. Bots now play with real tactics instead of always charging the nearest opponent: they pick the most catchable target, surround a runner from two sides rather than trailing it in a line, flee around walls and away from a second chaser, lead their freeze shots and cut off where you are heading, react to fire they can see by relocating off the line and hopping a shot about to land, contest floor power-ups and spend them to seal a tag or an escape, leap over a wall to reach you, and pre-position for the next turn right as it flips. On patrol they roam the whole arena on every topology instead of pacing one spot or clustering together. Opt-in anonymous gameplay stats are now recorded (when you accept the prompt) to help tune the game. Online play is unchanged on the wire (protocol v4).
+
+### Added
+
+- Opt-in anonymous gameplay telemetry: when you accept the stats prompt, the game records sessions, matches, item use, shot hits, and connection/abandon signals — no personal info — to guide tuning and UX.
+
+### Changed
+
+- Bots chase the most catchable opponent — one backed into a corner or cut off from its team — rather than simply the nearest, and when several bots hunt the same target they fan out to pincer it instead of queuing up behind it.
+- Fleeing bots score their escape route to avoid dead-ends and a second chaser instead of bolting straight back, and they lead their freeze shots and cut to where a target is heading rather than aiming where it just was.
+- Bots react to incoming fire they can see — sidestepping off the line of fire and jumping a shot that is about to hit.
+- Bots contest floor power-ups they can reach first, burn Surge to land a tag or break away when it counts, use Leap to clear a wall between them and their target, and reposition for their next role just before the turn flips.
+- On patrol, bots cover the whole arena across every topology and spread out as a team, instead of pacing one spot or following each other.
+
 ## [0.7.1] - 2026-06-02
 
 Patch release for two title-to-menu rough edges. The ENTER button is now clickable the instant it appears, and an online player's menu buttons are live right away.

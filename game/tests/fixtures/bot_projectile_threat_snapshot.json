@@ -1,0 +1,291 @@
+{
+  "schemaVersion": 2,
+  "sight": 22,
+  "lookback": 12,
+  "dodgeRadius": 1,
+  "dodgeLeadS": 0.35,
+  "scenarios": [
+    {
+      "name": "incoming_visible",
+      "bot": {
+        "id": "b",
+        "team": "mime",
+        "x": 0,
+        "z": 0
+      },
+      "projectiles": [
+        {
+          "ownerId": "e",
+          "team": "clown",
+          "px": 8,
+          "pz": 0,
+          "vx": -16,
+          "vz": 0
+        }
+      ],
+      "walls": [],
+      "expected": {
+        "x": 20,
+        "z": 0
+      }
+    },
+    {
+      "name": "occluded",
+      "bot": {
+        "id": "b",
+        "team": "mime",
+        "x": 0,
+        "z": 0
+      },
+      "projectiles": [
+        {
+          "ownerId": "e",
+          "team": "clown",
+          "px": 8,
+          "pz": 0,
+          "vx": -16,
+          "vz": 0
+        }
+      ],
+      "walls": [
+        {
+          "ax": 4,
+          "az": -3,
+          "bx": 4,
+          "bz": 3
+        }
+      ],
+      "expected": null
+    },
+    {
+      "name": "out_of_sight",
+      "bot": {
+        "id": "b",
+        "team": "mime",
+        "x": 0,
+        "z": 0
+      },
+      "projectiles": [
+        {
+          "ownerId": "e",
+          "team": "clown",
+          "px": 30,
+          "pz": 0,
+          "vx": -16,
+          "vz": 0
+        }
+      ],
+      "walls": [],
+      "expected": null
+    },
+    {
+      "name": "flying_away",
+      "bot": {
+        "id": "b",
+        "team": "mime",
+        "x": 0,
+        "z": 0
+      },
+      "projectiles": [
+        {
+          "ownerId": "e",
+          "team": "clown",
+          "px": 8,
+          "pz": 0,
+          "vx": 16,
+          "vz": 0
+        }
+      ],
+      "walls": [],
+      "expected": null
+    },
+    {
+      "name": "friendly_ignored",
+      "bot": {
+        "id": "b",
+        "team": "mime",
+        "x": 0,
+        "z": 0
+      },
+      "projectiles": [
+        {
+          "ownerId": "ally",
+          "team": "mime",
+          "px": 8,
+          "pz": 0,
+          "vx": -16,
+          "vz": 0
+        }
+      ],
+      "walls": [],
+      "expected": null
+    },
+    {
+      "name": "nearest_of_two",
+      "bot": {
+        "id": "b",
+        "team": "mime",
+        "x": 0,
+        "z": 0
+      },
+      "projectiles": [
+        {
+          "ownerId": "e1",
+          "team": "clown",
+          "px": 15,
+          "pz": 0,
+          "vx": -16,
+          "vz": 0
+        },
+        {
+          "ownerId": "e2",
+          "team": "clown",
+          "px": 6,
+          "pz": 0,
+          "vx": -16,
+          "vz": 0
+        }
+      ],
+      "walls": [],
+      "expected": {
+        "x": 18,
+        "z": 0
+      }
+    }
+  ],
+  "dodgeScenarios": [
+    {
+      "name": "hit_imminent",
+      "bot": {
+        "id": "b",
+        "team": "mime",
+        "x": 0,
+        "z": 0
+      },
+      "projectiles": [
+        {
+          "ownerId": "e",
+          "team": "clown",
+          "px": 4,
+          "pz": 0,
+          "vx": -16,
+          "vz": 0
+        }
+      ],
+      "walls": [],
+      "expected": true
+    },
+    {
+      "name": "passing_wide",
+      "bot": {
+        "id": "b",
+        "team": "mime",
+        "x": 0,
+        "z": 0
+      },
+      "projectiles": [
+        {
+          "ownerId": "e",
+          "team": "clown",
+          "px": 4,
+          "pz": 5,
+          "vx": -16,
+          "vz": 0
+        }
+      ],
+      "walls": [],
+      "expected": false
+    },
+    {
+      "name": "not_imminent",
+      "bot": {
+        "id": "b",
+        "team": "mime",
+        "x": 0,
+        "z": 0
+      },
+      "projectiles": [
+        {
+          "ownerId": "e",
+          "team": "clown",
+          "px": 10,
+          "pz": 0,
+          "vx": -16,
+          "vz": 0
+        }
+      ],
+      "walls": [],
+      "expected": false
+    },
+    {
+      "name": "moving_away",
+      "bot": {
+        "id": "b",
+        "team": "mime",
+        "x": 0,
+        "z": 0
+      },
+      "projectiles": [
+        {
+          "ownerId": "e",
+          "team": "clown",
+          "px": 4,
+          "pz": 0,
+          "vx": 16,
+          "vz": 0
+        }
+      ],
+      "walls": [],
+      "expected": false
+    },
+    {
+      "name": "occluded",
+      "bot": {
+        "id": "b",
+        "team": "mime",
+        "x": 0,
+        "z": 0
+      },
+      "projectiles": [
+        {
+          "ownerId": "e",
+          "team": "clown",
+          "px": 4,
+          "pz": 0,
+          "vx": -16,
+          "vz": 0
+        }
+      ],
+      "walls": [
+        {
+          "ax": 2,
+          "az": -3,
+          "bx": 2,
+          "bz": 3
+        }
+      ],
+      "expected": false
+    },
+    {
+      "name": "friendly_ignored",
+      "bot": {
+        "id": "b",
+        "team": "mime",
+        "x": 0,
+        "z": 0
+      },
+      "projectiles": [
+        {
+          "ownerId": "ally",
+          "team": "mime",
+          "px": 4,
+          "pz": 0,
+          "vx": -16,
+          "vz": 0
+        }
+      ],
+      "walls": [],
+      "expected": false
+    }
+  ]
+}

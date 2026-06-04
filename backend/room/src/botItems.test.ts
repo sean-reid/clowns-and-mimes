@@ -39,12 +39,20 @@ describe('decideItemUse per-item policies', () => {
 
   it('spends surge when engaged, close, and low on energy', () => {
     expect(use('surge', { chasing: true, enemyDist: 5, sprintEnergy: 40 }).use).toBe(true);
-    // Full energy: no need.
+    // Full energy at mid-range: no need.
     expect(use('surge', { chasing: true, enemyDist: 5, sprintEnergy: 90 }).use).toBe(false);
     // Too far.
     expect(use('surge', { fleeing: true, enemyDist: 15, sprintEnergy: 10 }).use).toBe(false);
     // Not engaged.
     expect(use('surge', { enemyDist: 5, sprintEnergy: 10 }).use).toBe(false);
+  });
+
+  it('spends surge in extremis (imminent tag) regardless of energy', () => {
+    // Within tagRadius + jumpEvadeBuffer (1.9): burn it even at full energy.
+    expect(use('surge', { chasing: true, enemyDist: 1.5, sprintEnergy: 100 }).use).toBe(true);
+    expect(use('surge', { fleeing: true, enemyDist: 1.5, sprintEnergy: 100 }).use).toBe(true);
+    // Still nothing when not engaged.
+    expect(use('surge', { enemyDist: 1.5, sprintEnergy: 100 }).use).toBe(false);
   });
 
   it('spends overcharge only when a shot is lined up', () => {

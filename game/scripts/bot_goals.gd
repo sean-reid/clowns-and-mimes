@@ -7,20 +7,41 @@ extends RefCounted
 
 const TopologyScript := preload("res://scripts/topology/topology.gd")
 
-# Nearest floor item within `seek_radius`, or null when none is close enough.
-# The caller only seeks while holding no item (a held item blocks pickup, so
-# there's no stacking). `items` are the offline_items dicts, each with a
-# `position` Vector3. Returns a Vector3 destination (y zeroed) or null.
+# Best floor item to seek within `seek_radius`, or null when none is close
+# enough. The caller only seeks while holding no item (a held item blocks
+# pickup). By default the nearest item; pass `enemies` (Array of Vector3) + a
+# positive `deny_weight` for item denial - an item an enemy is contesting (within
+# `contest_radius`) that the bot can still reach first gets the bonus, so the bot
+# snatches it instead of a marginally closer uncontested one. Mirrors
+# botGoals.ts nearestItemTarget. Returns a Vector3 destination (y zeroed) or null.
 static func nearest_item_target(
-	bot_pos: Vector3, items: Array, topology: TopologyScript, seek_radius: float
+	bot_pos: Vector3,
+	items: Array,
+	topology: TopologyScript,
+	seek_radius: float,
+	enemies: Array = [],
+	contest_radius: float = 0.0,
+	deny_weight: float = 0.0
 ) -> Variant:
 	var best: Variant = null
-	var best_dist: float = INF
+	var best_score: float = -INF
 	for item in items:
 		var pos: Vector3 = item.position
 		var d: float = topology.distance(bot_pos, pos)
-		if d <= seek_radius and d < best_dist:
-			best_dist = d
+		if d > seek_radius:
+			continue
+		var bonus: float = 0.0
+		if deny_weight > 0.0 and contest_radius > 0.0:
+			var nearest_enemy: float = INF
+			for e in enemies:
+				var ed: float = topology.distance(e, pos)
+				if ed < nearest_enemy:
+					nearest_enemy = ed
+			if nearest_enemy < contest_radius and d <= nearest_enemy:
+				bonus = deny_weight
+		var score: float = bonus - d
+		if score > best_score:
+			best_score = score
 			best = Vector3(pos.x, 0.0, pos.z)
 	return best
 

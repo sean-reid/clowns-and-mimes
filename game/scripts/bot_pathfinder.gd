@@ -77,6 +77,16 @@ func cell_center_of(pos: Vector3) -> Vector3:
 	var c := _cell_center(_world_to_cell(pos.x, pos.z))
 	return Vector3(c.x, pos.y, c.y)
 
+# Total cell count + world center of a cell index. Patrol picks a random index
+# in [0, cell_count) so candidates span the whole topology grid (incl. klein's
+# 2N x N double cover), not a fixed canonical box. Mirrors botPathfinder.ts.
+func cell_count() -> int:
+	return _cols * _rows
+
+func cell_center_at(index: int) -> Vector3:
+	var c := _cell_center(index)
+	return Vector3(c.x, 0.0, c.y)
+
 func _cached_chain(from_cell: int, to_cell: int) -> Array:
 	var key := from_cell * (_cols * _rows) + to_cell
 	if _chain_cache.has(key):

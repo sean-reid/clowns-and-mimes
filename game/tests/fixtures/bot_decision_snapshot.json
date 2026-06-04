@@ -317,6 +317,125 @@
       }
     },
     {
+      "name": "tag_value_prefers_isolated",
+      "bot": {
+        "id": "bot",
+        "team": "mime",
+        "x": 0,
+        "z": 0
+      },
+      "players": [
+        {
+          "id": "D",
+          "team": "clown",
+          "x": 6,
+          "z": 0
+        },
+        {
+          "id": "d2",
+          "team": "clown",
+          "x": 6,
+          "z": 1.5
+        },
+        {
+          "id": "L",
+          "team": "clown",
+          "x": 0,
+          "z": 6
+        }
+      ],
+      "walls": [],
+      "now": 1000,
+      "active": "mime",
+      "engagementIn": {
+        "engagedTargetId": null,
+        "lastKnownPos": null,
+        "investigateUntil": 0
+      },
+      "expected": {
+        "mode": "chase",
+        "targetId": "L",
+        "enemyDist": 6,
+        "rescueTargetId": null,
+        "chasing": true,
+        "fleeing": false,
+        "rescuing": false,
+        "investigating": false,
+        "canShoot": true,
+        "engagementOut": {
+          "engagedTargetId": "L",
+          "lastKnownPos": {
+            "x": 0,
+            "z": 6
+          },
+          "investigateUntil": 0
+        }
+      }
+    },
+    {
+      "name": "tag_value_prefers_cornered",
+      "bot": {
+        "id": "bot",
+        "team": "mime",
+        "x": 0,
+        "z": 0
+      },
+      "players": [
+        {
+          "id": "O",
+          "team": "clown",
+          "x": 8,
+          "z": 0
+        },
+        {
+          "id": "C",
+          "team": "clown",
+          "x": -8,
+          "z": 0
+        }
+      ],
+      "walls": [
+        {
+          "ax": -11,
+          "az": -2,
+          "bx": -5,
+          "bz": -2
+        },
+        {
+          "ax": -10,
+          "az": -3,
+          "bx": -10,
+          "bz": 3
+        }
+      ],
+      "now": 1000,
+      "active": "mime",
+      "engagementIn": {
+        "engagedTargetId": null,
+        "lastKnownPos": null,
+        "investigateUntil": 0
+      },
+      "expected": {
+        "mode": "chase",
+        "targetId": "C",
+        "enemyDist": 8,
+        "rescueTargetId": null,
+        "chasing": true,
+        "fleeing": false,
+        "rescuing": false,
+        "investigating": false,
+        "canShoot": true,
+        "engagementOut": {
+          "engagedTargetId": "C",
+          "lastKnownPos": {
+            "x": -8,
+            "z": 0
+          },
+          "investigateUntil": 0
+        }
+      }
+    },
+    {
       "name": "occlusion_investigate",
       "bot": {
         "id": "bot",

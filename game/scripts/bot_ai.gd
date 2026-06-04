@@ -25,8 +25,6 @@ const BOT_NO_PROGRESS_WINDOW_S := SharedConstants.BOT_NO_PROGRESS_WINDOW_MS / 10
 # Patrol exploration: how the bot scatters across the arena (matches the online
 # pickExplorationPatrolPoint so offline bots fan out instead of converging).
 const BOT_PATROL_CANDIDATE_ATTEMPTS := int(SharedConstants.BOT_PATROL_CANDIDATE_ATTEMPTS)
-const BOT_RECENT_TARGET_RADIUS := SharedConstants.BOT_RECENT_TARGET_RADIUS
-const BOT_RECENT_TARGETS_KEEP := int(SharedConstants.BOT_RECENT_TARGETS_KEEP)
 const BOT_PATROL_RETARGET_MS := SharedConstants.BOT_PATROL_RETARGET_MS
 # Inset from the playfield edge for patrol points (matches online's half-4).
 const PATROL_MARGIN := 4.0
@@ -39,6 +37,12 @@ const BotGoalsScript := preload("res://scripts/bot_goals.gd")
 const BotItemsScript := preload("res://scripts/bot_items.gd")
 const BotPerception := preload("res://scripts/bot_perception.gd")
 const BotCoordinationScript := preload("res://scripts/bot_coordination.gd")
+const BotExplorationScript := preload("res://scripts/bot_exploration.gd")
+const BotFleeScript := preload("res://scripts/bot_flee.gd")
+const BotInterceptScript := preload("res://scripts/bot_intercept.gd")
+const BotProjectileThreatScript := preload("res://scripts/bot_projectile_threat.gd")
+const BotLeapScript := preload("res://scripts/bot_leap.gd")
+const BotTurnFlipScript := preload("res://scripts/bot_turn_flip.gd")
 const WallGeometry := preload("res://scripts/wall_geometry.gd")
 
 enum State { PATROL, CHASE, FLEE, RESCUE, INVESTIGATE, COLLECT }
@@ -60,9 +64,9 @@ var patrol_target: Vector3 = Vector3.ZERO
 var last_dir: Vector3 = Vector3.ZERO
 var _intent: Vector3 = Vector3.ZERO
 var _sprint: bool = false
-# Recently chosen patrol points (Vector3); a fresh pick avoids landing near
-# these so the bot spreads out. Capped at BOT_RECENT_TARGETS_KEEP.
-var recent_targets: Array = []
+# Coverage visit grid (pathfinder cell -> last-visited ms); patrol favors stale
+# cells so the bot sweeps the map instead of pacing. Mirrors online BotMind.visited.
+var _visited: Dictionary = {}
 # Next-retarget deadline (ms) so patrol commits on a cadence like online, not
 # only on arrival.
 var patrol_until_ms: float = 0.0
@@ -78,6 +82,19 @@ var engagement: Dictionary = BotDecisionScript.new_engagement()
 # The most recent decision result, computed in _choose_state and consumed by
 # _choose_target the same tick.
 var _decision: Dictionary = {}
+# Engaged target's velocity (units/s), derived from its move since last tick, for
+# predictive aim + interception. Refreshed each tick in _choose_state.
+var _target_vel: Vector3 = Vector3.ZERO
+var _aim_prev_id: String = ""
+var _aim_prev_pos: Vector3 = Vector3.ZERO
+var _aim_prev_at: float = 0.0
+# When this prey bot sees incoming enemy fire but no hunter to flee from, this
+# holds the bearing (a point back along the shot's line) to flee away from; else
+# null. Refreshed each tick in _choose_state, consumed by the PATROL steering.
+var _fire_threat: Variant = null
+# True this tick when the bot is pre-positioning for the turn flip (so the
+# steering layer sprints into position rather than idling at chase/flee range).
+var _flip_active: bool = false
 # Seconds since this bot last triggered a jump. Initialised to a value
 # well past the refractory window so the very first eligible tick can
 # jump if the trigger fires.
@@ -112,6 +129,9 @@ func _physics_process(delta: float) -> void:
 	var ticked: bool = accumulated >= TICK_PERIOD
 	if ticked:
 		accumulated = 0.0
+		# Record the bot's current cell so patrol favors stale ones.
+		var cell: int = pathfinder.cell_at(player.global_position) if pathfinder != null else -1
+		BotExplorationScript.mark_visited(_visited, cell, float(Time.get_ticks_msec()))
 		_choose_state()
 		_choose_target()
 		_choose_steering()
@@ -136,7 +156,11 @@ func _maybe_shoot() -> void:
 	var target: Dictionary = _decision.get("target", {})
 	if target.is_empty() or player == null or player.arena == null or player.arena.offline == null:
 		return
-	var aim: Vector3 = topology.delta(player.global_position, target.position)
+	# Lead the shot: aim where the target will be when the projectile arrives.
+	var aim_point: Vector3 = BotInterceptScript.intercept_point(
+		player.global_position, target.position, _target_vel, SharedConstants.PROJECTILE_SPEED, topology
+	)
+	var aim: Vector3 = topology.delta(player.global_position, aim_point)
 	aim.y = 0.0
 	if aim.length() < 0.001:
 		return
@@ -155,7 +179,9 @@ func _update_stuck(delta: float) -> void:
 
 # Run the shared scored decision and map its mode to the offline State enum.
 func _choose_state() -> void:
+	_sense_incoming_fire()
 	_decision = _run_decision()
+	_update_target_velocity()
 	match _decision.get("mode", "patrol"):
 		"chase":
 			state = State.CHASE
@@ -169,6 +195,51 @@ func _choose_state() -> void:
 			state = State.COLLECT
 		_:
 			state = State.PATROL
+
+# Seen incoming fire: shots only come from the active hunter, so a visible enemy
+# projectile means this bot is the prey. If it can't see the hunter it can still
+# see the shot; _fire_threat is set to a bearing back along the shot's line and
+# the PATROL steering flees away from it. A visible enemy still wins (flee
+# outranks patrol). Don't distract a bot already locked on. Mirrors the online
+# fireThreat compute.
+func _sense_incoming_fire() -> void:
+	_fire_threat = null
+	if engagement.get("engaged_target_id", "") != "":
+		return
+	if rules == null or player == null or player.arena == null or player.arena.offline == null:
+		return
+	var bot: Dictionary = rules.players.get(player_id, {})
+	if bot.is_empty():
+		return
+	var walls: Array = labyrinth.wall_endpoints() if labyrinth != null else []
+	_fire_threat = BotProjectileThreatScript.nearest_projectile_threat(
+		bot,
+		player.arena.offline.live_projectiles(),
+		walls,
+		topology,
+		SharedConstants.BOT_VISION_RADIUS,
+		SharedConstants.BOT_FIRE_THREAT_LOOKBACK
+	)
+
+# Refresh _target_vel from the engaged target's move since last tick. A fresh
+# target id (or no target) yields zero velocity, so the lead only applies once
+# we have two samples of the same target. Mirrors the online aim-velocity derive.
+func _update_target_velocity() -> void:
+	_target_vel = Vector3.ZERO
+	var target: Dictionary = _decision.get("target", {})
+	if target.is_empty():
+		_aim_prev_id = ""
+		return
+	var now: float = float(Time.get_ticks_msec())
+	var tid: String = target.id
+	var tpos: Vector3 = target.position
+	if _aim_prev_id == tid and now > _aim_prev_at:
+		var dt_sec: float = (now - _aim_prev_at) / 1000.0
+		var d: Vector3 = topology.delta(_aim_prev_pos, tpos)
+		_target_vel = Vector3(d.x / dt_sec, 0.0, d.z / dt_sec)
+	_aim_prev_id = tid
+	_aim_prev_pos = tpos
+	_aim_prev_at = now
 
 func _run_decision() -> Dictionary:
 	var bot: Dictionary = rules.players.get(player_id, {})
@@ -209,11 +280,18 @@ func _collect_target(bot: Dictionary):
 		return null
 	if player == null or player.arena == null or player.arena.offline == null:
 		return null
+	# Contest items an enemy is going for ONLY on our own turn (then the enemy is
+	# prey and can't tag or shoot us). On the enemy's turn the bot is prey, so
+	# denial must not pull it toward a hunter - fall back to plain nearest.
+	var contest: bool = rules.active_team() == player.team
 	return BotGoalsScript.nearest_item_target(
 		bot.position,
 		player.arena.offline.available_items(),
 		topology,
-		SharedConstants.BOT_ITEM_SEEK_RADIUS
+		SharedConstants.BOT_ITEM_SEEK_RADIUS,
+		_enemy_positions(),
+		SharedConstants.BOT_ITEM_CONTEST_RADIUS if contest else 0.0,
+		SharedConstants.BOT_ITEM_DENY_WEIGHT if contest else 0.0
 	)
 
 # The entry mouth of a portal this bot opened, if heading into it furthers the
@@ -229,9 +307,34 @@ func _portal_escape(away: Vector3) -> Variant:
 	)
 
 func _choose_target() -> void:
+	_flip_active = false
 	match state:
 		State.CHASE:
-			patrol_target = _decision.target.position
+			# Drive at the assigned pincer slot while closing from range; inside
+			# FLANK_RELEASE_DIST intercept where the target is heading for the tag.
+			# Each bot recomputes the same global chase assignment and reads its own.
+			var goal: Vector3 = BotInterceptScript.intercept_point(
+				player.global_position,
+				_decision.target.position,
+				_target_vel,
+				SharedConstants.SPRINT_SPEED,
+				topology
+			)
+			var enemy_dist: float = _decision.get("enemy_dist", INF)
+			if enemy_dist > SharedConstants.BOT_CHASE_FLANK_RELEASE_DIST:
+				var walls: Array = labyrinth.wall_endpoints() if labyrinth != null else []
+				var claims := BotCoordinationScript.assign_chases(
+					rules.players.values(), walls, topology, float(Time.get_ticks_msec())
+				)
+				var claim: Variant = claims.get(player_id, null)
+				if claim != null and claim.target_id == _decision.target.id:
+					goal = claim.goal
+			patrol_target = goal
+			# Near the turn flip, pre-position for the next role instead.
+			var flip_c: Variant = _turn_flip_reposition()
+			if flip_c != null:
+				patrol_target = flip_c
+				_flip_active = true
 		State.FLEE:
 			var threat: Vector3 = _decision.target.position
 			# Wrap-aware away vector (from threat toward us), projected out.
@@ -243,10 +346,25 @@ func _choose_target() -> void:
 			# If this bot opened a portal, head into its own entry mouth instead
 			# of the open-field flee point - that's why it spent the item.
 			var mouth: Variant = _portal_escape(away)
-			patrol_target = (
-				mouth if mouth != null
-				else topology.wrap(player.global_position + away * SharedConstants.BOT_FLEE_PROJECTION)
-			)
+			if mouth != null:
+				patrol_target = mouth
+			else:
+				# Score escape directions instead of bolting straight away, so the
+				# bot doesn't flee into a dead-end or toward a second enemy.
+				var flee_walls: Array = labyrinth.wall_endpoints() if labyrinth != null else []
+				patrol_target = BotFleeScript.best_flee_target(
+					player.global_position,
+					threat,
+					_enemy_positions(),
+					flee_walls,
+					topology,
+					SharedConstants.BOT_FLEE_PROJECTION
+				)
+			# Near the turn flip, pre-position for the next role instead.
+			var flip_f: Variant = _turn_flip_reposition()
+			if flip_f != null:
+				patrol_target = flip_f
+				_flip_active = true
 		State.RESCUE:
 			patrol_target = _decision.rescue_target.position
 		State.COLLECT:
@@ -255,12 +373,28 @@ func _choose_target() -> void:
 		State.INVESTIGATE:
 			patrol_target = engagement.last_known_pos
 		State.PATROL:
-			# Retarget on a cadence or on arrival (mirrors online's drive loop),
-			# not only when we reach the point - so a bot keeps roaming.
-			var now_ms: float = float(Time.get_ticks_msec())
-			if now_ms >= patrol_until_ms or (player.global_position - patrol_target).length() < 1.5:
-				_commit_patrol_target()
-				patrol_until_ms = now_ms + BOT_PATROL_RETARGET_MS
+			if _fire_threat != null:
+				# Prey that can't see its hunter but sees its incoming fire: flee
+				# away from the line of fire (same scorer as a seen-threat flee).
+				var fire_walls: Array = labyrinth.wall_endpoints() if labyrinth != null else []
+				patrol_target = BotFleeScript.best_flee_target(
+					player.global_position,
+					_fire_threat,
+					[_fire_threat],
+					fire_walls,
+					topology,
+					SharedConstants.BOT_FLEE_PROJECTION
+				)
+			else:
+				# Retarget on a cadence or on arrival (mirrors online's drive loop),
+				# not only when we reach the point - so a bot keeps roaming.
+				var now_ms: float = float(Time.get_ticks_msec())
+				if (
+					now_ms >= patrol_until_ms
+					or (player.global_position - patrol_target).length() < 1.5
+				):
+					_commit_patrol_target()
+					patrol_until_ms = now_ms + BOT_PATROL_RETARGET_MS
 	if stuck_clock > STUCK_TIME:
 		_commit_patrol_target()
 		stuck_clock = 0.0
@@ -288,8 +422,11 @@ func _choose_steering() -> void:
 		return
 	# Next waypoint toward patrol_target, routing around other players; the
 	# movement step handles wall sliding. Straight at the target with no maze.
+	# While airborne from a leap, drive straight at the goal to carry over a wall;
+	# otherwise route around it. (The leap-traverse trigger only fires with a wall
+	# in the way, so committing straight is what gets the bot across.)
 	var target: Vector3 = patrol_target
-	if pathfinder != null:
+	if pathfinder != null and not player.leaping:
 		target = pathfinder.next_waypoint_avoiding(
 			player.global_position, patrol_target, _avoid_positions()
 		)
@@ -305,12 +442,18 @@ func _choose_steering() -> void:
 	var trigger: float = SharedConstants.BOT_SPRINT_TRIGGER_RADIUS
 	var ed: float = _decision.get("enemy_dist", INF)
 	var rd: float = _decision.get("rescue_dist", INF)
+	# Panic-sprint away when the incoming fire is close (mirrors online fireClose).
+	var fire_close: bool = (
+		_fire_threat != null and topology.distance(player.global_position, _fire_threat) < trigger
+	)
 	var close: bool = (
 		(_decision.get("chasing", false) and ed < trigger)
 		or (_decision.get("fleeing", false) and ed < trigger)
 		or (_decision.get("rescuing", false) and rd < trigger)
 	)
-	_sprint = close and player.sprint_energy > SharedConstants.MAX_SPRINT * 0.15
+	_sprint = (
+		(close or fire_close or _flip_active) and player.sprint_energy > SharedConstants.MAX_SPRINT * 0.15
+	)
 
 # Exponential heading smoothing across ticks, re-normalized; zero when the
 # blended heading collapses. Mirrors botSteering.ts smoothDir.
@@ -364,6 +507,21 @@ func _wants_jump(delta: float) -> bool:
 	var fleeing: bool = state == State.FLEE
 	var chasing: bool = state == State.CHASE
 	var want_jump: bool = false
+	# 0. Dodge incoming fire: a visible enemy shot about to hit is the most urgent
+	#    reason to jump - let it pass under. Highest priority.
+	if player.arena != null and player.arena.offline != null:
+		var me: Dictionary = rules.players.get(player_id, {})
+		if not me.is_empty():
+			var dodge_walls: Array = labyrinth.wall_endpoints() if labyrinth != null else []
+			if BotProjectileThreatScript.should_dodge_projectile(
+				me,
+				player.arena.offline.live_projectiles(),
+				dodge_walls,
+				topology,
+				SharedConstants.BOT_DODGE_RADIUS,
+				SharedConstants.BOT_DODGE_LEAD_S
+			):
+				return true
 	# 1. Tag-threat evasion. Run only when this bot is defending against
 	#    an active-turn opponent within reach. Skipping when the threat is
 	#    already airborne avoids both bodies dancing in sync (which would
@@ -392,6 +550,24 @@ func _wants_jump(delta: float) -> bool:
 	if not want_jump and chasing and active_team == _team():
 		if rng.randf() < BOT_JUMP_NOISE_PER_SECOND * delta:
 			want_jump = true
+	# 4. Leap traversal: holding a Leap, hop a wall between us and a fixed
+	#    objective (chase target / frozen ally) rather than pathing around. Only
+	#    a leap clears walls, so gate on holding one; the steering drives straight
+	#    at the goal while airborne to carry the bot over.
+	if not want_jump:
+		var me: Dictionary = rules.players.get(player_id, {})
+		if not me.is_empty() and me.get("active_item", "") == "leap":
+			var leap_goal: Variant = null
+			if state == State.CHASE and not _decision.get("target", {}).is_empty():
+				leap_goal = _decision.target.position
+			elif state == State.RESCUE and not _decision.get("rescue_target", {}).is_empty():
+				leap_goal = _decision.rescue_target.position
+			if leap_goal != null:
+				var lwalls: Array = labyrinth.wall_endpoints() if labyrinth != null else []
+				if BotLeapScript.should_leap_traverse(
+					player.global_position, leap_goal, lwalls, topology, SharedConstants.BOT_LEAP_REACH
+				):
+					want_jump = true
 	return want_jump
 
 # Decide whether to spend the held power-up this tick (item-value layer), then
@@ -444,38 +620,91 @@ func _maybe_use_item(want_jump: bool) -> void:
 # WORLD_WIDTH/2 - margin per axis). NOT a ring around the origin - that made
 # every bot head for the centre and bunch up.
 func _random_patrol_point() -> Vector3:
+	# A random pathfinder cell center spans the whole topology grid (incl. klein's
+	# double cover / mobius extents), so bots explore the full map. Falls back to
+	# the canonical box before attach (no pathfinder yet).
+	if pathfinder != null:
+		return pathfinder.cell_center_at(rng.randi() % pathfinder.cell_count())
 	var half: float = TopologyScript.WIDTH / 2.0 - PATROL_MARGIN
 	return Vector3(rng.randf_range(-half, half), 0.0, rng.randf_range(-half, half))
 
-# Try up to BOT_PATROL_CANDIDATE_ATTEMPTS points, skipping ones inside a wall or
-# near a recently chosen target, so the bot fans out rather than re-treading.
-# Falls back to the last candidate. Mirrors online pickExplorationPatrolPoint.
+# Sample candidates and keep the highest-scoring by coverage (least-recently-
+# visited cell) + heading momentum, skipping wall-blocked ones, so the bot
+# sweeps the map instead of pacing. Mirrors online pickExplorationPatrolPoint.
 func _pick_exploration_patrol_point() -> Vector3:
 	var walls: Array = labyrinth.wall_endpoints() if labyrinth != null else []
-	var last := _random_patrol_point()
+	var teammates := _teammate_positions()
+	var now_ms := float(Time.get_ticks_msec())
+	var best := _random_patrol_point()
+	var best_score := -INF
 	for _i in BOT_PATROL_CANDIDATE_ATTEMPTS:
 		var candidate := _random_patrol_point()
-		last = candidate
 		if not walls.is_empty() and WallGeometry.point_blocked_by_wall(walls, candidate.x, candidate.z):
 			continue
-		var too_close := false
-		for recent in recent_targets:
-			var dx: float = candidate.x - recent.x
-			var dz: float = candidate.z - recent.z
-			if dx * dx + dz * dz < BOT_RECENT_TARGET_RADIUS * BOT_RECENT_TARGET_RADIUS:
-				too_close = true
-				break
-		if not too_close:
-			return candidate
-	return last
+		var cell: int = pathfinder.cell_at(candidate) if pathfinder != null else -1
+		var score: float = BotExplorationScript.patrol_candidate_score(
+			candidate, cell, player.global_position, last_dir, _visited,
+			now_ms, SharedConstants.BOT_PATROL_VISIT_DECAY_MS,
+			SharedConstants.BOT_PATROL_MOMENTUM_BONUS,
+			teammates, SharedConstants.BOT_PATROL_SPREAD_RADIUS, SharedConstants.BOT_PATROL_SPREAD_WEIGHT
+		)
+		if score > best_score:
+			best_score = score
+			best = candidate
+	return best
 
-# Commit a fresh exploration target and remember it (capped) so the next pick
-# steers clear of it. Mirrors online commitPatrolTarget.
+# Same-team player positions to spread patrol away from (so the team covers
+# distinct regions instead of clustering). Includes the human teammate.
+func _teammate_positions() -> Array:
+	var out: Array = []
+	# _ready picks an initial patrol target before attach() wires rules/player,
+	# so guard against the un-attached state (the first pick just gets no spread).
+	if rules == null or player == null:
+		return out
+	for pid in rules.players:
+		if pid == player_id:
+			continue
+		var p: Dictionary = rules.players[pid]
+		if p.get("team", "") == player.team:
+			out.append(p.get("position", Vector3.ZERO))
+	return out
+
+# Positions of every active enemy, for smart-flee scoring (avoid fleeing toward
+# a second enemy). Mirrors the online flee branch's enemy gather.
+func _enemy_positions() -> Array:
+	var out: Array = []
+	for pid in rules.players:
+		var p: Dictionary = rules.players[pid]
+		if p.get("team", "") != player.team and not p.get("frozen", false):
+			out.append(p.get("position", Vector3.ZERO))
+	return out
+
+# Pre-position target for the imminent turn flip (retreat if about to be prey,
+# close to a safe striking ring if about to be hunter), or null. Mirrors the
+# online turnFlipReposition wiring; uses the engaged enemy (_decision.target).
+func _turn_flip_reposition() -> Variant:
+	var target: Dictionary = _decision.get("target", {})
+	if target.is_empty():
+		return null
+	var now_s: float = Time.get_unix_time_from_system()
+	var time_to_flip_ms: float = rules.phase_time_remaining(now_s) * 1000.0
+	var bot_is_hunter: bool = rules.active_team() == player.team
+	return BotTurnFlipScript.turn_flip_reposition(
+		player.global_position,
+		target.position,
+		time_to_flip_ms,
+		bot_is_hunter,
+		topology,
+		SharedConstants.BOT_TURN_ANTICIPATE_MS,
+		TAG_RADIUS_BOT,
+		SharedConstants.BOT_TURN_STANDOFF_BUFFER,
+		SharedConstants.SPRINT_SPEED,
+		SharedConstants.BOT_FLEE_PROJECTION
+	)
+
+# Commit a fresh exploration target. Mirrors online commitPatrolTarget.
 func _commit_patrol_target() -> void:
 	patrol_target = _pick_exploration_patrol_point()
-	recent_targets.append(patrol_target)
-	while recent_targets.size() > BOT_RECENT_TARGETS_KEEP:
-		recent_targets.pop_front()
 
 func _team() -> String:
 	return player.team

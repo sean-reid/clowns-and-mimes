@@ -313,6 +313,8 @@ export class Room implements DurableObject {
       useBotItem: (player) => this.items.useItemForBot(player),
       availableItems: () => this.items.available(),
       botPortalEntry: (playerId) => this.items.portalFor(playerId),
+      getProjectiles: () => this.projectiles.getProjectiles(),
+      getTurnEndsAt: () => this.turnEndsAt,
     };
     this.bots = new BotManager(botsHost);
     const simHost: GameSimulationHost = {

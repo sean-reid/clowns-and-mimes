@@ -60,6 +60,8 @@ import {
   BOT_PATROL_VISIT_DECAY_MS,
   BOT_SHOOT_AIM_JITTER,
   BOT_SHOOT_RANGE,
+  BOT_TURN_ANTICIPATE_MS,
+  BOT_TURN_STANDOFF_BUFFER,
   BOT_SPRINT_TRIGGER_RADIUS,
   BOT_VISION_RADIUS,
   CLONE_DURATION_MS,
@@ -80,6 +82,7 @@ import { assignChases, assignRescues } from './botCoordination.ts';
 import { bestFleeTarget } from './botFlee.ts';
 import { interceptPoint } from './botIntercept.ts';
 import { shouldLeapTraverse } from './botLeap.ts';
+import { turnFlipReposition } from './botTurnFlip.ts';
 import { nearestProjectileThreat, shouldDodgeProjectile } from './botProjectileThreat.ts';
 import { markVisited, patrolCandidateScore, type ExplorationParams } from './botExploration.ts';
 
@@ -172,6 +175,8 @@ export interface BotManagerHost {
   botPortalEntry(playerId: string): { a: Vec3; b: Vec3 } | null;
   // Live projectiles, so a bot can "hear" recent enemy shots.
   getProjectiles(): readonly Projectile[];
+  // Wall-clock ms the current turn ends, for turn-flip anticipation.
+  getTurnEndsAt(): number;
 }
 
 export class BotManager {
@@ -666,8 +671,37 @@ export class BotManager {
         }
       }
 
+      // Turn-flip anticipation: while engaged with an enemy and the turn is
+      // about to flip, pre-position for the next role (retreat if about to be
+      // prey, close to a safe striking ring if about to be hunter) instead of
+      // committing to the current chase/flee.
+      const flipReposition =
+        (decision.mode === 'chase' || decision.mode === 'flee') && target
+          ? turnFlipReposition(
+              bot.position,
+              target.position,
+              this.host.getTurnEndsAt() - now,
+              active === bot.team,
+              topology,
+              WORLD_WIDTH,
+              {
+                anticipateMs: BOT_TURN_ANTICIPATE_MS,
+                tagRadius: TAG_RADIUS_BOT,
+                standoffBuffer: BOT_TURN_STANDOFF_BUFFER,
+                sprintSpeed: SPRINT_SPEED,
+                fleeProjection: BOT_FLEE_PROJECTION,
+              },
+            )
+          : null;
+
       let dir = { x: 0, z: 0 };
-      if (decision.mode === 'flee' && target) {
+      if (flipReposition) {
+        const avoid = this.avoidPositionsForBot(bot);
+        const waypoint = pathfinder
+          ? pathfinder.nextWaypointAvoiding(bot.position, flipReposition, avoid)
+          : flipReposition;
+        dir = wrappedUnitDelta(bot.position, waypoint, topology, WORLD_WIDTH);
+      } else if (decision.mode === 'flee' && target) {
         const away = wrappedUnitDelta(target.position, bot.position, topology, WORLD_WIDTH);
         // If this bot opened a portal, head into its own entry mouth instead of
         // the open-field flee point - that's the whole reason it spent the item.
@@ -780,7 +814,9 @@ export class BotManager {
         (chasing && enemyDist < BOT_SPRINT_TRIGGER_RADIUS) ||
         (fleeing && enemyDist < BOT_SPRINT_TRIGGER_RADIUS) ||
         (rescuing && rescueDist < BOT_SPRINT_TRIGGER_RADIUS);
-      const wantSprint = (closeEnemyOrRescue || fireClose) && bot.sprintEnergy > MAX_SPRINT * 0.15;
+      const wantSprint =
+        (closeEnemyOrRescue || fireClose || flipReposition !== null) &&
+        bot.sprintEnergy > MAX_SPRINT * 0.15;
       const speed = wantSprint ? SPRINT_SPEED : WALK_SPEED;
       const step = speed * dt;
       const slid = stepWithSlide(bot.position, dir, step, walls, topology, WORLD_WIDTH);

@@ -264,7 +264,7 @@ jobs:
           # 6. The Godot .zip is intermediate; only the .dmg ships.
           rm -f "out/$GODOT_OUTPUT"
           test -e "$DMG_PATH"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: ${{ matrix.artifact }}
           path: out/${{ matrix.artifact }}

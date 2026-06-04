@@ -41,6 +41,7 @@ const BotExplorationScript := preload("res://scripts/bot_exploration.gd")
 const BotFleeScript := preload("res://scripts/bot_flee.gd")
 const BotInterceptScript := preload("res://scripts/bot_intercept.gd")
 const BotProjectileThreatScript := preload("res://scripts/bot_projectile_threat.gd")
+const BotLeapScript := preload("res://scripts/bot_leap.gd")
 const WallGeometry := preload("res://scripts/wall_geometry.gd")
 
 enum State { PATROL, CHASE, FLEE, RESCUE, INVESTIGATE, COLLECT }
@@ -406,8 +407,11 @@ func _choose_steering() -> void:
 		return
 	# Next waypoint toward patrol_target, routing around other players; the
 	# movement step handles wall sliding. Straight at the target with no maze.
+	# While airborne from a leap, drive straight at the goal to carry over a wall;
+	# otherwise route around it. (The leap-traverse trigger only fires with a wall
+	# in the way, so committing straight is what gets the bot across.)
 	var target: Vector3 = patrol_target
-	if pathfinder != null:
+	if pathfinder != null and not player.leaping:
 		target = pathfinder.next_waypoint_avoiding(
 			player.global_position, patrol_target, _avoid_positions()
 		)
@@ -529,6 +533,24 @@ func _wants_jump(delta: float) -> bool:
 	if not want_jump and chasing and active_team == _team():
 		if rng.randf() < BOT_JUMP_NOISE_PER_SECOND * delta:
 			want_jump = true
+	# 4. Leap traversal: holding a Leap, hop a wall between us and a fixed
+	#    objective (chase target / frozen ally) rather than pathing around. Only
+	#    a leap clears walls, so gate on holding one; the steering drives straight
+	#    at the goal while airborne to carry the bot over.
+	if not want_jump:
+		var me: Dictionary = rules.players.get(player_id, {})
+		if not me.is_empty() and me.get("active_item", "") == "leap":
+			var leap_goal: Variant = null
+			if state == State.CHASE and not _decision.get("target", {}).is_empty():
+				leap_goal = _decision.target.position
+			elif state == State.RESCUE and not _decision.get("rescue_target", {}).is_empty():
+				leap_goal = _decision.rescue_target.position
+			if leap_goal != null:
+				var lwalls: Array = labyrinth.wall_endpoints() if labyrinth != null else []
+				if BotLeapScript.should_leap_traverse(
+					player.global_position, leap_goal, lwalls, topology, SharedConstants.BOT_LEAP_REACH
+				):
+					want_jump = true
 	return want_jump
 
 # Decide whether to spend the held power-up this tick (item-value layer), then

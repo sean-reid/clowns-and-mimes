@@ -13,6 +13,16 @@ export const UNFREEZE_RADIUS_BOT = 1.4;
 
 // Perception + engagement.
 export const BOT_VISION_RADIUS = 22;
+// Tag-value target scoring: among visible enemies the bot engages the most
+// catchable, not just the nearest. value = -distance + cornered*CORNER_WEIGHT +
+// isolated*ISOLATION_WEIGHT, where cornered (0..1) is the fraction of sampled
+// directions blocked by a wall within CORNER_SAMPLE_DIST, and isolated (0..1) is
+// how far the enemy is from its nearest teammate (capped at vision). Weights are
+// in distance units: a fully cornered enemy is worth chasing as if it were
+// CORNER_WEIGHT closer; a fully isolated one, ISOLATION_WEIGHT closer.
+export const BOT_TARGET_CORNER_WEIGHT = 4;
+export const BOT_TARGET_ISOLATION_WEIGHT = 6;
+export const BOT_TARGET_CORNER_SAMPLE_DIST = 5;
 export const BOT_SHOOT_RANGE = 18;
 export const BOT_SHOOT_AIM_JITTER = 0.09;
 export const RETARGET_HYSTERESIS = 0.75;

@@ -19,7 +19,7 @@
 import type { PlayerState, Team, Topology, Vec2 } from '@cm/shared';
 import { topologyDistance } from '@cm/shared/topology';
 import type { WallSegment } from '@cm/shared/labyrinth';
-import { botCanSee, isCloaked, nearestFrozenAlly, nearestVisibleEnemy } from './botPerception.ts';
+import { bestVisibleEnemy, botCanSee, isCloaked, nearestFrozenAlly } from './botPerception.ts';
 
 export type MovementMode = 'flee' | 'rescue' | 'chase' | 'investigate' | 'collect' | 'patrol';
 
@@ -80,7 +80,7 @@ export function decideBotAction(
   rescueOverride?: { target: PlayerState; dist: number } | null,
 ): BotDecision {
   const roster = [...players];
-  const candidate = nearestVisibleEnemy(bot, roster, walls, topology, worldWidth, now);
+  const candidate = bestVisibleEnemy(bot, roster, walls, topology, worldWidth, now);
   const candidateDist = candidate
     ? topologyDistance(bot.position, candidate.position, topology, worldWidth)
     : Infinity;

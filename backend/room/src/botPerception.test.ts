@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { PlayerState } from '@cm/shared';
 import type { WallSegment } from '@cm/shared/labyrinth';
 import {
+  bestVisibleEnemy,
   botCanSee,
   isCloaked,
   nearestEnemy,
@@ -76,6 +77,62 @@ describe('nearestVisibleEnemy', () => {
     const walls: WallSegment[] = [{ ax: 5, az: -5, bx: 5, bz: 5 }];
     const behind = player({ id: 'behind', team: 'clown', position: { x: 10, y: 0.5, z: 0 } });
     expect(nearestVisibleEnemy(bot, [bot, behind], walls, 'plane', 80, 0)).toBeNull();
+  });
+});
+
+describe('bestVisibleEnemy', () => {
+  const bot = player({ id: 'bot', team: 'mime', position: { x: 0, y: 0.5, z: 0 } });
+
+  it('reduces to nearest in the open with no teammates to differentiate', () => {
+    const near = player({ id: 'near', team: 'clown', position: { x: 3, y: 0.5, z: 0 } });
+    const far = player({ id: 'far', team: 'clown', position: { x: 9, y: 0.5, z: 0 } });
+    expect(bestVisibleEnemy(bot, [bot, far, near], [], 'plane', 80, 0)?.id).toBe('near');
+  });
+
+  it('applies the same visibility filters as nearestVisibleEnemy', () => {
+    const ally = player({ id: 'ally', team: 'mime', position: { x: 1, y: 0.5, z: 0 } });
+    const frozen = player({
+      id: 'fz',
+      team: 'clown',
+      position: { x: 2, y: 0.5, z: 0 },
+      frozen: true,
+    });
+    const cloaked = player({
+      id: 'ck',
+      team: 'clown',
+      position: { x: 3, y: 0.5, z: 0 },
+      cloakUntil: 1000,
+    });
+    const real = player({ id: 'real', team: 'clown', position: { x: 8, y: 0.5, z: 0 } });
+    expect(bestVisibleEnemy(bot, [bot, ally, frozen, cloaked, real], [], 'plane', 80, 0)?.id).toBe(
+      'real',
+    );
+    const walls: WallSegment[] = [{ ax: 5, az: -5, bx: 5, bz: 5 }];
+    const behind = player({ id: 'behind', team: 'clown', position: { x: 10, y: 0.5, z: 0 } });
+    expect(bestVisibleEnemy(bot, [bot, behind], walls, 'plane', 80, 0)).toBeNull();
+  });
+
+  it('prefers an isolated enemy over an equidistant one shielded by a teammate', () => {
+    // Both 'shielded' and 'lone' are 6 away, but 'shielded' has an ally right
+    // beside it; 'lone' is on its own, so its isolation bonus breaks the tie.
+    const shielded = player({ id: 'shielded', team: 'clown', position: { x: 6, y: 0.5, z: 0 } });
+    const guard = player({ id: 'guard', team: 'clown', position: { x: 6, y: 0.5, z: 1.5 } });
+    const lone = player({ id: 'lone', team: 'clown', position: { x: 0, y: 0.5, z: 6 } });
+    expect(bestVisibleEnemy(bot, [bot, shielded, guard, lone], [], 'plane', 80, 0)?.id).toBe(
+      'lone',
+    );
+  });
+
+  it('prefers a wall-cornered enemy over an equidistant one in the open', () => {
+    const open = player({ id: 'open', team: 'clown', position: { x: 8, y: 0.5, z: 0 } });
+    const cornered = player({ id: 'cornered', team: 'clown', position: { x: -8, y: 0.5, z: 0 } });
+    const walls: WallSegment[] = [
+      { ax: -11, az: -2, bx: -5, bz: -2 },
+      { ax: -10, az: -3, bx: -10, bz: 3 },
+    ];
+    expect(bestVisibleEnemy(bot, [bot, open, cornered], walls, 'plane', 80, 0)?.id).toBe(
+      'cornered',
+    );
   });
 });
 

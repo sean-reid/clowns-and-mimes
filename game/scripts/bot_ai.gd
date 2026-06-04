@@ -25,8 +25,6 @@ const BOT_NO_PROGRESS_WINDOW_S := SharedConstants.BOT_NO_PROGRESS_WINDOW_MS / 10
 # Patrol exploration: how the bot scatters across the arena (matches the online
 # pickExplorationPatrolPoint so offline bots fan out instead of converging).
 const BOT_PATROL_CANDIDATE_ATTEMPTS := int(SharedConstants.BOT_PATROL_CANDIDATE_ATTEMPTS)
-const BOT_RECENT_TARGET_RADIUS := SharedConstants.BOT_RECENT_TARGET_RADIUS
-const BOT_RECENT_TARGETS_KEEP := int(SharedConstants.BOT_RECENT_TARGETS_KEEP)
 const BOT_PATROL_RETARGET_MS := SharedConstants.BOT_PATROL_RETARGET_MS
 # Inset from the playfield edge for patrol points (matches online's half-4).
 const PATROL_MARGIN := 4.0
@@ -39,6 +37,7 @@ const BotGoalsScript := preload("res://scripts/bot_goals.gd")
 const BotItemsScript := preload("res://scripts/bot_items.gd")
 const BotPerception := preload("res://scripts/bot_perception.gd")
 const BotCoordinationScript := preload("res://scripts/bot_coordination.gd")
+const BotExplorationScript := preload("res://scripts/bot_exploration.gd")
 const WallGeometry := preload("res://scripts/wall_geometry.gd")
 
 enum State { PATROL, CHASE, FLEE, RESCUE, INVESTIGATE, COLLECT }
@@ -60,9 +59,9 @@ var patrol_target: Vector3 = Vector3.ZERO
 var last_dir: Vector3 = Vector3.ZERO
 var _intent: Vector3 = Vector3.ZERO
 var _sprint: bool = false
-# Recently chosen patrol points (Vector3); a fresh pick avoids landing near
-# these so the bot spreads out. Capped at BOT_RECENT_TARGETS_KEEP.
-var recent_targets: Array = []
+# Coverage visit grid (pathfinder cell -> last-visited ms); patrol favors stale
+# cells so the bot sweeps the map instead of pacing. Mirrors online BotMind.visited.
+var _visited: Dictionary = {}
 # Next-retarget deadline (ms) so patrol commits on a cadence like online, not
 # only on arrival.
 var patrol_until_ms: float = 0.0
@@ -112,6 +111,9 @@ func _physics_process(delta: float) -> void:
 	var ticked: bool = accumulated >= TICK_PERIOD
 	if ticked:
 		accumulated = 0.0
+		# Record the bot's current cell so patrol favors stale ones.
+		var cell: int = pathfinder.cell_at(player.global_position) if pathfinder != null else -1
+		BotExplorationScript.mark_visited(_visited, cell, float(Time.get_ticks_msec()))
 		_choose_state()
 		_choose_target()
 		_choose_steering()
@@ -447,35 +449,31 @@ func _random_patrol_point() -> Vector3:
 	var half: float = TopologyScript.WIDTH / 2.0 - PATROL_MARGIN
 	return Vector3(rng.randf_range(-half, half), 0.0, rng.randf_range(-half, half))
 
-# Try up to BOT_PATROL_CANDIDATE_ATTEMPTS points, skipping ones inside a wall or
-# near a recently chosen target, so the bot fans out rather than re-treading.
-# Falls back to the last candidate. Mirrors online pickExplorationPatrolPoint.
+# Sample candidates and keep the highest-scoring by coverage (least-recently-
+# visited cell) + heading momentum, skipping wall-blocked ones, so the bot
+# sweeps the map instead of pacing. Mirrors online pickExplorationPatrolPoint.
 func _pick_exploration_patrol_point() -> Vector3:
 	var walls: Array = labyrinth.wall_endpoints() if labyrinth != null else []
-	var last := _random_patrol_point()
+	var best := _random_patrol_point()
+	var best_score := -INF
 	for _i in BOT_PATROL_CANDIDATE_ATTEMPTS:
 		var candidate := _random_patrol_point()
-		last = candidate
 		if not walls.is_empty() and WallGeometry.point_blocked_by_wall(walls, candidate.x, candidate.z):
 			continue
-		var too_close := false
-		for recent in recent_targets:
-			var dx: float = candidate.x - recent.x
-			var dz: float = candidate.z - recent.z
-			if dx * dx + dz * dz < BOT_RECENT_TARGET_RADIUS * BOT_RECENT_TARGET_RADIUS:
-				too_close = true
-				break
-		if not too_close:
-			return candidate
-	return last
+		var cell: int = pathfinder.cell_at(candidate) if pathfinder != null else -1
+		var score: float = BotExplorationScript.patrol_candidate_score(
+			candidate, cell, player.global_position, last_dir, _visited,
+			float(Time.get_ticks_msec()), SharedConstants.BOT_PATROL_VISIT_DECAY_MS,
+			SharedConstants.BOT_PATROL_MOMENTUM_BONUS
+		)
+		if score > best_score:
+			best_score = score
+			best = candidate
+	return best
 
-# Commit a fresh exploration target and remember it (capped) so the next pick
-# steers clear of it. Mirrors online commitPatrolTarget.
+# Commit a fresh exploration target. Mirrors online commitPatrolTarget.
 func _commit_patrol_target() -> void:
 	patrol_target = _pick_exploration_patrol_point()
-	recent_targets.append(patrol_target)
-	while recent_targets.size() > BOT_RECENT_TARGETS_KEEP:
-		recent_targets.pop_front()
 
 func _team() -> String:
 	return player.team

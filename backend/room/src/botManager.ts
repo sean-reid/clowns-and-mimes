@@ -30,9 +30,9 @@ import {
   BOT_NO_PROGRESS_MIN_DIST,
   BOT_NO_PROGRESS_WINDOW_MS,
   BOT_PATROL_CANDIDATE_ATTEMPTS,
+  BOT_PATROL_MOMENTUM_BONUS,
   BOT_PATROL_RETARGET_MS,
-  BOT_RECENT_TARGET_RADIUS,
-  BOT_RECENT_TARGETS_KEEP,
+  BOT_PATROL_VISIT_DECAY_MS,
   BOT_SHOOT_AIM_JITTER,
   BOT_SHOOT_RANGE,
   BOT_SPRINT_TRIGGER_RADIUS,
@@ -52,9 +52,15 @@ import { decideItemUse } from './botItems.ts';
 import { nearestEnemy } from './botPerception.ts';
 import { nearestItemTarget, portalEscapeTarget } from './botGoals.ts';
 import { assignRescues } from './botCoordination.ts';
+import { markVisited, patrolCandidateScore, type ExplorationParams } from './botExploration.ts';
 
 // World half-extent (kept private here; Room owns the canonical constant).
 const WORLD_WIDTH = 80;
+
+const EXPLORATION_PARAMS: ExplorationParams = {
+  decayMs: BOT_PATROL_VISIT_DECAY_MS,
+  momentumBonus: BOT_PATROL_MOMENTUM_BONUS,
+};
 
 // Server-only bot orchestration (slot fill). The behavioral tuning lives in
 // @cm/shared/botTuning so the offline GDScript brain reads the same values.
@@ -71,7 +77,10 @@ interface BotMind {
   progressSamplePos: { x: number; z: number };
   lastKnownPos: { x: number; z: number } | null;
   investigateUntil: number;
-  recentTargets: Array<{ x: number; z: number }>;
+  // Coarse visit grid (cell -> last-visited ms) for coverage-aware patrol, so
+  // the bot favors stale corners of the map over re-treading one spot. Replaces
+  // the old recentTargets rejection (this subsumes it).
+  visited: Map<number, number>;
   lastJumpedAt: number;
   // Fixed per-bot jitter in [0,1) that staggers the deterministic jump
   // triggers, so two bots in the same situation don't take off on the exact
@@ -214,7 +223,7 @@ export class BotManager {
       progressSamplePos: { x: pos.x, z: pos.z },
       lastKnownPos: null,
       investigateUntil: 0,
-      recentTargets: [],
+      visited: new Map(),
       lastJumpedAt: 0,
       jumpPhase: Math.random(),
     };
@@ -292,39 +301,44 @@ export class BotManager {
     };
   }
 
-  private pickExplorationPatrolPoint(recentTargets: ReadonlyArray<{ x: number; z: number }>): {
+  // Pick the next patrol point: sample candidates and keep the highest-scoring
+  // by coverage (least-recently-visited cell) + heading momentum, skipping
+  // wall-blocked ones. Sweeps the map instead of pacing one spot.
+  private pickExplorationPatrolPoint(
+    mind: BotMind,
+    bot: PlayerState,
+    now: number,
+  ): {
     x: number;
     z: number;
   } {
-    let last = this.randomPatrolPoint();
     const walls = this.host.getWalls();
+    const pathfinder = this.host.getPathfinder();
+    let best = this.randomPatrolPoint();
+    let bestScore = -Infinity;
     for (let attempt = 0; attempt < BOT_PATROL_CANDIDATE_ATTEMPTS; attempt += 1) {
       const candidate = this.randomPatrolPoint();
-      last = candidate;
-      if (walls.length > 0 && pointBlockedByWall(walls, candidate.x, candidate.z)) {
-        continue;
+      if (walls.length > 0 && pointBlockedByWall(walls, candidate.x, candidate.z)) continue;
+      const cell = pathfinder ? pathfinder.cellAt(candidate) : -1;
+      const score = patrolCandidateScore(
+        candidate,
+        cell,
+        bot.position,
+        mind.lastDir,
+        mind.visited,
+        now,
+        EXPLORATION_PARAMS,
+      );
+      if (score > bestScore) {
+        bestScore = score;
+        best = candidate;
       }
-      let tooClose = false;
-      for (const recent of recentTargets) {
-        const dx = candidate.x - recent.x;
-        const dz = candidate.z - recent.z;
-        if (dx * dx + dz * dz < BOT_RECENT_TARGET_RADIUS * BOT_RECENT_TARGET_RADIUS) {
-          tooClose = true;
-          break;
-        }
-      }
-      if (tooClose) continue;
-      return candidate;
     }
-    return last;
+    return best;
   }
 
-  private commitPatrolTarget(mind: BotMind): void {
-    mind.patrolTarget = this.pickExplorationPatrolPoint(mind.recentTargets);
-    mind.recentTargets.push({ x: mind.patrolTarget.x, z: mind.patrolTarget.z });
-    while (mind.recentTargets.length > BOT_RECENT_TARGETS_KEEP) {
-      mind.recentTargets.shift();
-    }
+  private commitPatrolTarget(mind: BotMind, bot: PlayerState, now: number): void {
+    mind.patrolTarget = this.pickExplorationPatrolPoint(mind, bot, now);
   }
 
   // Positions of every other player (both teams) for the pathfinder's dynamic
@@ -374,11 +388,13 @@ export class BotManager {
         progressSamplePos: { x: bot.position.x, z: bot.position.z },
         lastKnownPos: null,
         investigateUntil: 0,
-        recentTargets: [],
+        visited: new Map(),
         lastJumpedAt: 0,
         jumpPhase: Math.random(),
       };
       this.botMinds.set(bot.id, mind);
+      // Record the bot's current cell this tick so patrol can favor stale ones.
+      if (pathfinder) markVisited(mind.visited, pathfinder.cellAt(bot.position), now);
 
       // A held item blocks pickup, so only seek floor items when empty-handed.
       const collectTarget =
@@ -543,7 +559,7 @@ export class BotManager {
         dir = wrappedUnitDelta(bot.position, waypoint, topology, WORLD_WIDTH);
       } else {
         if (now >= mind.patrolUntil || nearTarget(bot.position, mind.patrolTarget)) {
-          this.commitPatrolTarget(mind);
+          this.commitPatrolTarget(mind, bot, now);
           mind.patrolUntil = now + BOT_PATROL_RETARGET_MS;
         }
         const avoid = this.avoidPositionsForBot(bot);
@@ -591,7 +607,7 @@ export class BotManager {
             bot.position = this.host.pickSpawnPosition(bot.team);
           }
         }
-        this.commitPatrolTarget(mind);
+        this.commitPatrolTarget(mind, bot, now);
         mind.patrolUntil = now + BOT_PATROL_RETARGET_MS;
       }
 
@@ -603,7 +619,7 @@ export class BotManager {
           WORLD_WIDTH,
         );
         if (covered < BOT_NO_PROGRESS_MIN_DIST) {
-          this.commitPatrolTarget(mind);
+          this.commitPatrolTarget(mind, bot, now);
           mind.patrolUntil = now + BOT_PATROL_RETARGET_MS;
           mind.engagedTargetId = null;
           mind.lastDir = { x: 0, z: 0 };

@@ -1,0 +1,106 @@
+{
+  "schemaVersion": 1,
+  "now": 100000,
+  "params": {
+    "decayMs": 12000,
+    "momentumBonus": 0.5
+  },
+  "scenarios": [
+    {
+      "name": "unvisited",
+      "candidateX": 0,
+      "candidateZ": 0,
+      "candidateCell": 5,
+      "botX": 0,
+      "botZ": 0,
+      "headingX": 0,
+      "headingZ": 0,
+      "visited": {},
+      "expected": 1
+    },
+    {
+      "name": "just_visited",
+      "candidateX": 0,
+      "candidateZ": 0,
+      "candidateCell": 5,
+      "botX": 0,
+      "botZ": 0,
+      "headingX": 0,
+      "headingZ": 0,
+      "visited": {
+        "5": 100000
+      },
+      "expected": 0
+    },
+    {
+      "name": "half_stale",
+      "candidateX": 0,
+      "candidateZ": 0,
+      "candidateCell": 5,
+      "botX": 0,
+      "botZ": 0,
+      "headingX": 0,
+      "headingZ": 0,
+      "visited": {
+        "5": 94000
+      },
+      "expected": 0.5
+    },
+    {
+      "name": "momentum_forward",
+      "candidateX": 10,
+      "candidateZ": 0,
+      "candidateCell": 5,
+      "botX": 0,
+      "botZ": 0,
+      "headingX": 1,
+      "headingZ": 0,
+      "visited": {
+        "5": 100000
+      },
+      "expected": 0.5
+    },
+    {
+      "name": "momentum_backward",
+      "candidateX": 10,
+      "candidateZ": 0,
+      "candidateCell": 5,
+      "botX": 0,
+      "botZ": 0,
+      "headingX": -1,
+      "headingZ": 0,
+      "visited": {
+        "5": 100000
+      },
+      "expected": 0
+    },
+    {
+      "name": "momentum_diagonal",
+      "candidateX": 10,
+      "candidateZ": 10,
+      "candidateCell": 5,
+      "botX": 0,
+      "botZ": 0,
+      "headingX": 1,
+      "headingZ": 0,
+      "visited": {
+        "5": 100000
+      },
+      "expected": 0.35355339059327373
+    },
+    {
+      "name": "no_grid",
+      "candidateX": 0,
+      "candidateZ": 0,
+      "candidateCell": -1,
+      "botX": 0,
+      "botZ": 0,
+      "headingX": 0,
+      "headingZ": 0,
+      "visited": {
+        "5": 100000
+      },
+      "expected": 1
+    }
+  ]
+}

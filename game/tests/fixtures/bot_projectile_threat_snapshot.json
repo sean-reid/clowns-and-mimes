@@ -1,0 +1,154 @@
+{
+  "schemaVersion": 1,
+  "sight": 22,
+  "lookback": 12,
+  "scenarios": [
+    {
+      "name": "incoming_visible",
+      "bot": {
+        "id": "b",
+        "team": "mime",
+        "x": 0,
+        "z": 0
+      },
+      "projectiles": [
+        {
+          "ownerId": "e",
+          "team": "clown",
+          "px": 8,
+          "pz": 0,
+          "vx": -16,
+          "vz": 0
+        }
+      ],
+      "walls": [],
+      "expected": {
+        "x": 20,
+        "z": 0
+      }
+    },
+    {
+      "name": "occluded",
+      "bot": {
+        "id": "b",
+        "team": "mime",
+        "x": 0,
+        "z": 0
+      },
+      "projectiles": [
+        {
+          "ownerId": "e",
+          "team": "clown",
+          "px": 8,
+          "pz": 0,
+          "vx": -16,
+          "vz": 0
+        }
+      ],
+      "walls": [
+        {
+          "ax": 4,
+          "az": -3,
+          "bx": 4,
+          "bz": 3
+        }
+      ],
+      "expected": null
+    },
+    {
+      "name": "out_of_sight",
+      "bot": {
+        "id": "b",
+        "team": "mime",
+        "x": 0,
+        "z": 0
+      },
+      "projectiles": [
+        {
+          "ownerId": "e",
+          "team": "clown",
+          "px": 30,
+          "pz": 0,
+          "vx": -16,
+          "vz": 0
+        }
+      ],
+      "walls": [],
+      "expected": null
+    },
+    {
+      "name": "flying_away",
+      "bot": {
+        "id": "b",
+        "team": "mime",
+        "x": 0,
+        "z": 0
+      },
+      "projectiles": [
+        {
+          "ownerId": "e",
+          "team": "clown",
+          "px": 8,
+          "pz": 0,
+          "vx": 16,
+          "vz": 0
+        }
+      ],
+      "walls": [],
+      "expected": null
+    },
+    {
+      "name": "friendly_ignored",
+      "bot": {
+        "id": "b",
+        "team": "mime",
+        "x": 0,
+        "z": 0
+      },
+      "projectiles": [
+        {
+          "ownerId": "ally",
+          "team": "mime",
+          "px": 8,
+          "pz": 0,
+          "vx": -16,
+          "vz": 0
+        }
+      ],
+      "walls": [],
+      "expected": null
+    },
+    {
+      "name": "nearest_of_two",
+      "bot": {
+        "id": "b",
+        "team": "mime",
+        "x": 0,
+        "z": 0
+      },
+      "projectiles": [
+        {
+          "ownerId": "e1",
+          "team": "clown",
+          "px": 15,
+          "pz": 0,
+          "vx": -16,
+          "vz": 0
+        },
+        {
+          "ownerId": "e2",
+          "team": "clown",
+          "px": 6,
+          "pz": 0,
+          "vx": -16,
+          "vz": 0
+        }
+      ],
+      "walls": [],
+      "expected": {
+        "x": 18,
+        "z": 0
+      }
+    }
+  ]
+}

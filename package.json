@@ -36,6 +36,7 @@
     "gen:bot-exploration-fixture": "tsx scripts/gen-bot-exploration-fixture.ts",
     "gen:bot-flee-fixture": "tsx scripts/gen-bot-flee-fixture.ts",
     "gen:bot-intercept-fixture": "tsx scripts/gen-bot-intercept-fixture.ts",
+    "gen:bot-projectile-threat-fixture": "tsx scripts/gen-bot-projectile-threat-fixture.ts",
     "gen:projectiles-fixture": "tsx scripts/gen-projectiles-fixture.ts",
     "gen:portals-fixture": "tsx scripts/gen-portals-fixture.ts",
     "gen:all": "node scripts/gen-all.mjs"

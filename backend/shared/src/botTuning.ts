@@ -27,6 +27,13 @@ export const BOT_SHOOT_RANGE = 18;
 export const BOT_SHOOT_AIM_JITTER = 0.09;
 export const RETARGET_HYSTERESIS = 0.75;
 export const BOT_INVESTIGATE_MS = 3000;
+// Seen incoming fire (botProjectileThreat.nearestProjectileThreat). A bot can
+// see an enemy projectile in flight (within BOT_VISION_RADIUS, line of sight) -
+// not the muzzle flash - so it infers only the line of fire, not the exact
+// source. The threat bearing is a point this far back along the projectile's
+// reverse trajectory; the prey flees away from it. Kept short so the point stays
+// local (no wrap-around ambiguity on a torus/Klein bottle).
+export const BOT_FIRE_THREAT_LOOKBACK = 12;
 // Chase coordination (botCoordination.assignChases). When two or more bots hunt
 // the same enemy they're fanned out onto a ring of this radius around it at
 // evenly-spaced angles, so they pincer from different sides instead of

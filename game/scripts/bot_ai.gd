@@ -483,6 +483,10 @@ func _pick_exploration_patrol_point() -> Vector3:
 # distinct regions instead of clustering). Includes the human teammate.
 func _teammate_positions() -> Array:
 	var out: Array = []
+	# _ready picks an initial patrol target before attach() wires rules/player,
+	# so guard against the un-attached state (the first pick just gets no spread).
+	if rules == null or player == null:
+		return out
 	for pid in rules.players:
 		if pid == player_id:
 			continue

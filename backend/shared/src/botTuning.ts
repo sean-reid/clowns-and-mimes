@@ -32,6 +32,14 @@ export const BOT_NO_PROGRESS_MIN_DIST = 0.5;
 export const BOT_RECENT_TARGETS_KEEP = 6;
 export const BOT_RECENT_TARGET_RADIUS = 10;
 
+// Coverage-aware patrol. A patrolling bot remembers when it last visited each
+// pathfinder cell and favors cells it hasn't seen in a while, plus a bias toward
+// continuing its heading, so it sweeps the map instead of pacing one spot. A
+// cell's staleness saturates at VISIT_DECAY_MS; MOMENTUM_BONUS weights the
+// keep-going-forward term against staleness (which is 0..1).
+export const BOT_PATROL_VISIT_DECAY_MS = 12000;
+export const BOT_PATROL_MOMENTUM_BONUS = 0.5;
+
 // Item seeking.
 export const BOT_ITEM_SEEK_RADIUS = 16;
 

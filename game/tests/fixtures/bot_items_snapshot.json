@@ -176,6 +176,24 @@
       }
     },
     {
+      "name": "surge_spend_imminent",
+      "item": "surge",
+      "ctx": {
+        "chasing": true,
+        "fleeing": false,
+        "wantJump": false,
+        "canShoot": false,
+        "enemyDist": 1.5,
+        "sprintEnergy": 90,
+        "hasActionableEnemy": false,
+        "nearestEnemyPos": null
+      },
+      "expected": {
+        "use": true,
+        "memorySeed": null
+      }
+    },
+    {
       "name": "overcharge_spend",
       "item": "overcharge",
       "ctx": {

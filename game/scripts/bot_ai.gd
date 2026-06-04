@@ -275,11 +275,18 @@ func _collect_target(bot: Dictionary):
 		return null
 	if player == null or player.arena == null or player.arena.offline == null:
 		return null
+	# Contest items an enemy is going for ONLY on our own turn (then the enemy is
+	# prey and can't tag or shoot us). On the enemy's turn the bot is prey, so
+	# denial must not pull it toward a hunter - fall back to plain nearest.
+	var contest: bool = rules.active_team() == player.team
 	return BotGoalsScript.nearest_item_target(
 		bot.position,
 		player.arena.offline.available_items(),
 		topology,
-		SharedConstants.BOT_ITEM_SEEK_RADIUS
+		SharedConstants.BOT_ITEM_SEEK_RADIUS,
+		_enemy_positions(),
+		SharedConstants.BOT_ITEM_CONTEST_RADIUS if contest else 0.0,
+		SharedConstants.BOT_ITEM_DENY_WEIGHT if contest else 0.0
 	)
 
 # The entry mouth of a portal this bot opened, if heading into it furthers the

@@ -26,8 +26,17 @@ func _assert_scenario(sc: Dictionary) -> void:
 	var items: Array = []
 	for it in sc.items:
 		items.append({"position": Vector3(float(it.x), 0.5, float(it.z))})
+	var enemies: Array = []
+	for e in sc.get("enemies", []):
+		enemies.append(Vector3(float(e.x), 0.0, float(e.z)))
 	var got: Variant = BotGoals.nearest_item_target(
-		Vector3(float(sc.botX), 0.5, float(sc.botZ)), items, topo, float(sc.seekRadius)
+		Vector3(float(sc.botX), 0.5, float(sc.botZ)),
+		items,
+		topo,
+		float(sc.seekRadius),
+		enemies,
+		float(sc.get("contestRadius", 0.0)),
+		float(sc.get("denyWeight", 0.0))
 	)
 	var ex: Variant = sc.expected
 	if ex == null:

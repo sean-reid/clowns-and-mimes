@@ -68,13 +68,20 @@ export function decideItemUse(
     case 'leap':
       // Boost the jump the bot is already taking this tick.
       return ctx.wantJump ? SPEND : HOLD;
-    case 'surge':
-      // Sprint boost when engaged at close range and running low on energy.
-      return (ctx.chasing || ctx.fleeing) &&
-        ctx.enemyDist < params.sprintTriggerRadius &&
-        ctx.sprintEnergy < params.maxSprint * 0.5
-        ? SPEND
-        : HOLD;
+    case 'surge': {
+      // Sprint boost while engaged. Normally only worth it when running low on
+      // energy at close range (top up to keep pace). But in extremis - a tag
+      // imminent either way - burn it regardless of energy: landing or dodging
+      // the tag beats conserving sprint (the gap the old policy left, where a
+      // full-energy bot never surged for the catch or the escape).
+      const engaged = ctx.chasing || ctx.fleeing;
+      if (!engaged) return HOLD;
+      if (ctx.enemyDist < params.sprintTriggerRadius && ctx.sprintEnergy < params.maxSprint * 0.5) {
+        return SPEND;
+      }
+      if (ctx.enemyDist <= params.tagRadius + params.jumpEvadeBuffer) return SPEND;
+      return HOLD;
+    }
     case 'overcharge':
       // Arm the shot the bot is about to fire.
       return ctx.canShoot ? SPEND : HOLD;

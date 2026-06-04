@@ -30,6 +30,51 @@ describe('nearestItemTarget', () => {
     const got = nearestItemTarget({ x: 0, z: 0 }, [item(3, 4)], 'plane', 80, 16);
     expect(got).toEqual({ x: 3, z: 4 });
   });
+
+  it('with no enemies/weight, denial is inert: still the nearest item', () => {
+    const got = nearestItemTarget(
+      { x: 0, z: 0 },
+      [item(3, 0), item(10, 0)],
+      'plane',
+      80,
+      16,
+      [],
+      12,
+      8,
+    );
+    expect(got).toEqual({ x: 3, z: 0 });
+  });
+
+  it('detours to a contested item the bot can still reach first', () => {
+    // A(3) uncontested; B(10) has an enemy at 21 (within 12 of B, bot at 10 beats
+    // it), so the deny bonus pulls the choice to B.
+    const got = nearestItemTarget(
+      { x: 0, z: 0 },
+      [item(3, 0), item(10, 0)],
+      'plane',
+      80,
+      16,
+      [{ x: 21, z: 0 }],
+      12,
+      8,
+    );
+    expect(got).toEqual({ x: 10, z: 0 });
+  });
+
+  it('does not chase a contested item the enemy will reach first', () => {
+    // The enemy sits on B(10); the bot can't win it, so no bonus - takes nearer A.
+    const got = nearestItemTarget(
+      { x: 0, z: 0 },
+      [item(3, 0), item(10, 0)],
+      'plane',
+      80,
+      16,
+      [{ x: 10.5, z: 0 }],
+      12,
+      8,
+    );
+    expect(got).toEqual({ x: 3, z: 0 });
+  });
 });
 
 describe('portalEscapeTarget', () => {

@@ -12,9 +12,15 @@ import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
   nearestProjectileThreat,
+  shouldDodgeProjectile,
   type SightedProjectile,
 } from '../backend/room/src/botProjectileThreat.ts';
-import { BOT_FIRE_THREAT_LOOKBACK, BOT_VISION_RADIUS } from '../backend/shared/src/botTuning.ts';
+import {
+  BOT_DODGE_LEAD_S,
+  BOT_DODGE_RADIUS,
+  BOT_FIRE_THREAT_LOOKBACK,
+  BOT_VISION_RADIUS,
+} from '../backend/shared/src/botTuning.ts';
 import type { PlayerState, Team } from '../backend/shared/src/protocol.ts';
 import type { WallSegment } from '../backend/shared/src/labyrinth.ts';
 
@@ -107,6 +113,46 @@ const SCENARIOS: Scenario[] = [
   },
 ];
 
+const DODGE_SCENARIOS: Scenario[] = [
+  {
+    // Shot heading dead-on, arriving inside the lead window: dodge.
+    name: 'hit_imminent',
+    bot: { id: 'b', team: 'mime', x: 0, z: 0 },
+    projectiles: [{ ownerId: 'e', team: 'clown', px: 4, pz: 0, vx: -16, vz: 0 }],
+  },
+  {
+    // Parallel shot offset well to the side: misses, no dodge.
+    name: 'passing_wide',
+    bot: { id: 'b', team: 'mime', x: 0, z: 0 },
+    projectiles: [{ ownerId: 'e', team: 'clown', px: 4, pz: 5, vx: -16, vz: 0 }],
+  },
+  {
+    // On a hit line but still too far out (impact beyond the lead window): wait.
+    name: 'not_imminent',
+    bot: { id: 'b', team: 'mime', x: 0, z: 0 },
+    projectiles: [{ ownerId: 'e', team: 'clown', px: 10, pz: 0, vx: -16, vz: 0 }],
+  },
+  {
+    // Already past, moving away: no dodge.
+    name: 'moving_away',
+    bot: { id: 'b', team: 'mime', x: 0, z: 0 },
+    projectiles: [{ ownerId: 'e', team: 'clown', px: 4, pz: 0, vx: 16, vz: 0 }],
+  },
+  {
+    // Dead-on hit, but a wall is between: not seen, no dodge.
+    name: 'occluded',
+    bot: { id: 'b', team: 'mime', x: 0, z: 0 },
+    projectiles: [{ ownerId: 'e', team: 'clown', px: 4, pz: 0, vx: -16, vz: 0 }],
+    walls: [{ ax: 2, az: -3, bx: 2, bz: 3 }],
+  },
+  {
+    // Friendly fire never triggers a dodge.
+    name: 'friendly_ignored',
+    bot: { id: 'b', team: 'mime', x: 0, z: 0 },
+    projectiles: [{ ownerId: 'ally', team: 'mime', px: 4, pz: 0, vx: -16, vz: 0 }],
+  },
+];
+
 function run(s: Scenario) {
   const threat = nearestProjectileThreat(
     bot(s.bot),
@@ -126,20 +172,43 @@ function run(s: Scenario) {
   };
 }
 
+function runDodge(s: Scenario) {
+  const dodge = shouldDodgeProjectile(
+    bot(s.bot),
+    s.projectiles.map(proj),
+    s.walls ?? [],
+    'plane',
+    80,
+    BOT_DODGE_RADIUS,
+    BOT_DODGE_LEAD_S,
+  );
+  return {
+    name: s.name,
+    bot: s.bot,
+    projectiles: s.projectiles,
+    walls: s.walls ?? [],
+    expected: dodge,
+  };
+}
+
 async function main(): Promise<void> {
   const fixture = {
-    schemaVersion: 1,
+    schemaVersion: 2,
     sight: SIGHT,
     lookback: LOOKBACK,
+    dodgeRadius: BOT_DODGE_RADIUS,
+    dodgeLeadS: BOT_DODGE_LEAD_S,
     scenarios: SCENARIOS.map(run),
+    dodgeScenarios: DODGE_SCENARIOS.map(runDodge),
   };
   await writeFile(OUTPUT, JSON.stringify(fixture, null, 2) + '\n');
   console.log(`wrote ${OUTPUT}`);
   console.log(
-    `scenarios: ${fixture.scenarios
+    `threat: ${fixture.scenarios
       .map((s) => `${s.name}=${s.expected ? `(${s.expected.x},${s.expected.z})` : 'null'}`)
       .join(' | ')}`,
   );
+  console.log(`dodge: ${fixture.dodgeScenarios.map((s) => `${s.name}=${s.expected}`).join(' | ')}`);
 }
 
 void main();

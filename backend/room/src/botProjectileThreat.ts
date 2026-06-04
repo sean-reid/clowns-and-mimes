@@ -11,7 +11,7 @@
 // game/scripts/bot_projectile_threat.gd and locked cross-language by the fixture.
 
 import type { PlayerState, Team, Topology, Vec2 } from '@cm/shared';
-import { topologyDistance, wrapPosition } from '@cm/shared/topology';
+import { topologyDistance, wrapPosition, wrappedDeltaVec } from '@cm/shared/topology';
 import { botCanSee } from './botPerception.ts';
 import type { WallSegment } from '@cm/shared/labyrinth';
 
@@ -62,4 +62,36 @@ export function nearestProjectileThreat(
     }
   }
   return best;
+}
+
+// True when a visible enemy shot is about to pass close enough to the bot to hit
+// it - the cue to jump and let it go under. Projects each projectile's straight
+// line to its closest approach to the bot: if that miss distance is within
+// dodgeRadius and the approach is less than leadTimeS away, dodge. (Lateral
+// relocation away from the line is nearestProjectileThreat's job; this is the
+// last-instant hop.)
+export function shouldDodgeProjectile(
+  bot: PlayerState,
+  projectiles: Iterable<SightedProjectile>,
+  walls: readonly WallSegment[],
+  topology: Topology,
+  worldWidth: number,
+  dodgeRadius: number,
+  leadTimeS: number,
+): boolean {
+  for (const p of projectiles) {
+    if (p.ownerId === bot.id) continue;
+    if (p.team === bot.team) continue;
+    if (!botCanSee(walls, bot.position, p.position)) continue;
+    // Projectile position relative to the bot, and its closest-approach time.
+    const rel = wrappedDeltaVec(bot.position, p.position, topology, worldWidth);
+    const vv = p.velocity.x * p.velocity.x + p.velocity.z * p.velocity.z;
+    if (vv < 1e-9) continue;
+    const tStar = -(rel.x * p.velocity.x + rel.z * p.velocity.z) / vv;
+    if (tStar <= 0 || tStar > leadTimeS) continue; // moving away, or not imminent
+    const cx = rel.x + p.velocity.x * tStar;
+    const cz = rel.z + p.velocity.z * tStar;
+    if (Math.hypot(cx, cz) <= dodgeRadius) return true;
+  }
+  return false;
 }

@@ -34,6 +34,12 @@ export const BOT_INVESTIGATE_MS = 3000;
 // reverse trajectory; the prey flees away from it. Kept short so the point stays
 // local (no wrap-around ambiguity on a torus/Klein bottle).
 export const BOT_FIRE_THREAT_LOOKBACK = 12;
+// Projectile dodge (botProjectileThreat.shouldDodgeProjectile). When a visible
+// enemy shot's straight-line closest approach to the bot lands within
+// DODGE_RADIUS and is less than DODGE_LEAD_S away, the bot jumps to let it pass
+// under - the reactive complement to fleeing the line of fire.
+export const BOT_DODGE_RADIUS = 1;
+export const BOT_DODGE_LEAD_S = 0.35;
 // Chase coordination (botCoordination.assignChases). When two or more bots hunt
 // the same enemy they're fanned out onto a ring of this radius around it at
 // evenly-spaced angles, so they pincer from different sides instead of

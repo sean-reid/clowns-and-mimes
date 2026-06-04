@@ -479,6 +479,21 @@ func _wants_jump(delta: float) -> bool:
 	var fleeing: bool = state == State.FLEE
 	var chasing: bool = state == State.CHASE
 	var want_jump: bool = false
+	# 0. Dodge incoming fire: a visible enemy shot about to hit is the most urgent
+	#    reason to jump - let it pass under. Highest priority.
+	if player.arena != null and player.arena.offline != null:
+		var me: Dictionary = rules.players.get(player_id, {})
+		if not me.is_empty():
+			var dodge_walls: Array = labyrinth.wall_endpoints() if labyrinth != null else []
+			if BotProjectileThreatScript.should_dodge_projectile(
+				me,
+				player.arena.offline.live_projectiles(),
+				dodge_walls,
+				topology,
+				SharedConstants.BOT_DODGE_RADIUS,
+				SharedConstants.BOT_DODGE_LEAD_S
+			):
+				return true
 	# 1. Tag-threat evasion. Run only when this bot is defending against
 	#    an active-turn opponent within reach. Skipping when the threat is
 	#    already airborne avoids both bodies dancing in sync (which would

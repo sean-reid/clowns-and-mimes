@@ -39,6 +39,7 @@ const BotPerception := preload("res://scripts/bot_perception.gd")
 const BotCoordinationScript := preload("res://scripts/bot_coordination.gd")
 const BotExplorationScript := preload("res://scripts/bot_exploration.gd")
 const BotFleeScript := preload("res://scripts/bot_flee.gd")
+const BotInterceptScript := preload("res://scripts/bot_intercept.gd")
 const WallGeometry := preload("res://scripts/wall_geometry.gd")
 
 enum State { PATROL, CHASE, FLEE, RESCUE, INVESTIGATE, COLLECT }
@@ -78,6 +79,12 @@ var engagement: Dictionary = BotDecisionScript.new_engagement()
 # The most recent decision result, computed in _choose_state and consumed by
 # _choose_target the same tick.
 var _decision: Dictionary = {}
+# Engaged target's velocity (units/s), derived from its move since last tick, for
+# predictive aim + interception. Refreshed each tick in _choose_state.
+var _target_vel: Vector3 = Vector3.ZERO
+var _aim_prev_id: String = ""
+var _aim_prev_pos: Vector3 = Vector3.ZERO
+var _aim_prev_at: float = 0.0
 # Seconds since this bot last triggered a jump. Initialised to a value
 # well past the refractory window so the very first eligible tick can
 # jump if the trigger fires.
@@ -139,7 +146,11 @@ func _maybe_shoot() -> void:
 	var target: Dictionary = _decision.get("target", {})
 	if target.is_empty() or player == null or player.arena == null or player.arena.offline == null:
 		return
-	var aim: Vector3 = topology.delta(player.global_position, target.position)
+	# Lead the shot: aim where the target will be when the projectile arrives.
+	var aim_point: Vector3 = BotInterceptScript.intercept_point(
+		player.global_position, target.position, _target_vel, SharedConstants.PROJECTILE_SPEED, topology
+	)
+	var aim: Vector3 = topology.delta(player.global_position, aim_point)
 	aim.y = 0.0
 	if aim.length() < 0.001:
 		return
@@ -159,6 +170,7 @@ func _update_stuck(delta: float) -> void:
 # Run the shared scored decision and map its mode to the offline State enum.
 func _choose_state() -> void:
 	_decision = _run_decision()
+	_update_target_velocity()
 	match _decision.get("mode", "patrol"):
 		"chase":
 			state = State.CHASE
@@ -172,6 +184,26 @@ func _choose_state() -> void:
 			state = State.COLLECT
 		_:
 			state = State.PATROL
+
+# Refresh _target_vel from the engaged target's move since last tick. A fresh
+# target id (or no target) yields zero velocity, so the lead only applies once
+# we have two samples of the same target. Mirrors the online aim-velocity derive.
+func _update_target_velocity() -> void:
+	_target_vel = Vector3.ZERO
+	var target: Dictionary = _decision.get("target", {})
+	if target.is_empty():
+		_aim_prev_id = ""
+		return
+	var now: float = float(Time.get_ticks_msec())
+	var tid: String = target.id
+	var tpos: Vector3 = target.position
+	if _aim_prev_id == tid and now > _aim_prev_at:
+		var dt_sec: float = (now - _aim_prev_at) / 1000.0
+		var d: Vector3 = topology.delta(_aim_prev_pos, tpos)
+		_target_vel = Vector3(d.x / dt_sec, 0.0, d.z / dt_sec)
+	_aim_prev_id = tid
+	_aim_prev_pos = tpos
+	_aim_prev_at = now
 
 func _run_decision() -> Dictionary:
 	var bot: Dictionary = rules.players.get(player_id, {})
@@ -235,9 +267,15 @@ func _choose_target() -> void:
 	match state:
 		State.CHASE:
 			# Drive at the assigned pincer slot while closing from range; inside
-			# FLANK_RELEASE_DIST go straight at the target for the tag. Each bot
-			# recomputes the same global chase assignment and reads its own claim.
-			var goal: Vector3 = _decision.target.position
+			# FLANK_RELEASE_DIST intercept where the target is heading for the tag.
+			# Each bot recomputes the same global chase assignment and reads its own.
+			var goal: Vector3 = BotInterceptScript.intercept_point(
+				player.global_position,
+				_decision.target.position,
+				_target_vel,
+				SharedConstants.SPRINT_SPEED,
+				topology
+			)
 			var enemy_dist: float = _decision.get("enemy_dist", INF)
 			if enemy_dist > SharedConstants.BOT_CHASE_FLANK_RELEASE_DIST:
 				var walls: Array = labyrinth.wall_endpoints() if labyrinth != null else []

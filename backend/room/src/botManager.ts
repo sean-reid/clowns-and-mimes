@@ -9,7 +9,12 @@
 // tests in this file cover the bot-specific paths.
 
 import type { ItemType, PlayerState, ServerToClient, Team, Topology, Vec2, Vec3 } from '@cm/shared';
-import { topologyDistance, wrapPosition, wrappedUnitDelta } from '@cm/shared/topology';
+import {
+  topologyDistance,
+  wrapPosition,
+  wrappedDeltaVec,
+  wrappedUnitDelta,
+} from '@cm/shared/topology';
 import { pathCrossesWall, pointBlockedByWall, type WallSegment } from '@cm/shared/labyrinth';
 import { generateRandomName } from '@cm/shared/names';
 import {
@@ -19,6 +24,7 @@ import {
   SPRINT_SPEED,
   WALK_SPEED,
 } from '@cm/shared/movement';
+import { PROJECTILE_SPEED } from '@cm/shared/projectiles';
 import {
   BOT_CHASE_FLANK_RADIUS,
   BOT_CHASE_FLANK_RELEASE_DIST,
@@ -57,6 +63,7 @@ import { nearestEnemy } from './botPerception.ts';
 import { nearestItemTarget, portalEscapeTarget } from './botGoals.ts';
 import { assignChases, assignRescues } from './botCoordination.ts';
 import { bestFleeTarget } from './botFlee.ts';
+import { interceptPoint } from './botIntercept.ts';
 import { markVisited, patrolCandidateScore, type ExplorationParams } from './botExploration.ts';
 
 // World half-extent (kept private here; Room owns the canonical constant).
@@ -94,6 +101,12 @@ interface BotMind {
   // same tick (the reactive evade / no-progress jumps would otherwise fire
   // simultaneously across a cluster).
   jumpPhase: number;
+  // Last tick's engaged-target id + position + time, to derive the target's
+  // velocity for predictive aim / interception. Cleared implicitly when the
+  // target id changes (a fresh id yields zero velocity until the next tick).
+  aimPrevId: string | null;
+  aimPrevPos: { x: number; z: number } | null;
+  aimPrevAt: number;
 }
 
 function clamp(v: number, lo: number, hi: number): number {
@@ -233,6 +246,9 @@ export class BotManager {
       visited: new Map(),
       lastJumpedAt: 0,
       jumpPhase: Math.random(),
+      aimPrevId: null,
+      aimPrevPos: null,
+      aimPrevAt: 0,
     };
   }
 
@@ -425,6 +441,9 @@ export class BotManager {
         visited: new Map(),
         lastJumpedAt: 0,
         jumpPhase: Math.random(),
+        aimPrevId: null,
+        aimPrevPos: null,
+        aimPrevAt: 0,
       };
       this.botMinds.set(bot.id, mind);
       // Record the bot's current cell this tick so patrol can favor stale ones.
@@ -462,6 +481,24 @@ export class BotManager {
       );
       const { target, enemyDist, rescueTarget, rescueDist, chasing, fleeing, rescuing, canShoot } =
         decision;
+
+      // Derive the engaged target's velocity from its move since last tick, for
+      // predictive aim + interception. A fresh target id (or first sighting)
+      // yields zero velocity, so the lead only applies once we have two samples.
+      let targetVel = { x: 0, z: 0 };
+      if (target) {
+        if (mind.aimPrevId === target.id && mind.aimPrevPos && now > mind.aimPrevAt) {
+          const dtSec = (now - mind.aimPrevAt) / 1000;
+          const d = wrappedDeltaVec(mind.aimPrevPos, target.position, topology, WORLD_WIDTH);
+          targetVel = { x: d.x / dtSec, z: d.z / dtSec };
+        }
+        mind.aimPrevId = target.id;
+        mind.aimPrevPos = { x: target.position.x, z: target.position.z };
+        mind.aimPrevAt = now;
+      } else {
+        mind.aimPrevId = null;
+        mind.aimPrevPos = null;
+      }
 
       const sinceLastJump = now - mind.lastJumpedAt;
       const jumpEligible = bot.jumpStartedAt === null && sinceLastJump >= BOT_JUMP_REFRACTORY_MS;
@@ -587,7 +624,16 @@ export class BotManager {
         const chaseGoal =
           claim && claim.targetId === target.id && enemyDist > BOT_CHASE_FLANK_RELEASE_DIST
             ? claim.goal
-            : target.position;
+            : // Direct approach: intercept where the target is heading rather
+              // than trailing its current spot.
+              interceptPoint(
+                bot.position,
+                target.position,
+                targetVel,
+                SPRINT_SPEED,
+                topology,
+                WORLD_WIDTH,
+              );
         const avoid = this.avoidPositionsForBot(bot);
         const waypoint = pathfinder
           ? pathfinder.nextWaypointAvoiding(bot.position, chaseGoal, avoid)
@@ -691,7 +737,17 @@ export class BotManager {
       }
 
       if (canShoot && target) {
-        const aim = wrappedUnitDelta(bot.position, target.position, topology, WORLD_WIDTH);
+        // Lead the shot: aim where the target will be when the projectile
+        // arrives, not where it is now.
+        const aimPoint = interceptPoint(
+          bot.position,
+          target.position,
+          targetVel,
+          PROJECTILE_SPEED,
+          topology,
+          WORLD_WIDTH,
+        );
+        const aim = wrappedUnitDelta(bot.position, aimPoint, topology, WORLD_WIDTH);
         const jitter = (Math.random() - 0.5) * 2 * BOT_SHOOT_AIM_JITTER;
         const cos = Math.cos(jitter);
         const sin = Math.sin(jitter);

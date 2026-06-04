@@ -1,0 +1,85 @@
+{
+  "schemaVersion": 1,
+  "scenarios": [
+    {
+      "name": "stationary",
+      "shooter": {
+        "x": 0,
+        "z": 0
+      },
+      "target": {
+        "x": 10,
+        "z": 0
+      },
+      "vel": {
+        "x": 0,
+        "z": 0
+      },
+      "speed": 16,
+      "expected": {
+        "x": 10,
+        "z": 0
+      }
+    },
+    {
+      "name": "crossing",
+      "shooter": {
+        "x": 0,
+        "z": 0
+      },
+      "target": {
+        "x": 10,
+        "z": 0
+      },
+      "vel": {
+        "x": 0,
+        "z": 4
+      },
+      "speed": 16,
+      "expected": {
+        "x": 10,
+        "z": 2.576941016011038
+      }
+    },
+    {
+      "name": "approaching",
+      "shooter": {
+        "x": 0,
+        "z": 0
+      },
+      "target": {
+        "x": 10,
+        "z": 0
+      },
+      "vel": {
+        "x": -4,
+        "z": 0
+      },
+      "speed": 16,
+      "expected": {
+        "x": 8.125,
+        "z": 0
+      }
+    },
+    {
+      "name": "slow_chaser",
+      "shooter": {
+        "x": 0,
+        "z": 0
+      },
+      "target": {
+        "x": 10,
+        "z": 0
+      },
+      "vel": {
+        "x": 0,
+        "z": 5
+      },
+      "speed": 6,
+      "expected": {
+        "x": 10,
+        "z": 10.847568994314798
+      }
+    }
+  ]
+}

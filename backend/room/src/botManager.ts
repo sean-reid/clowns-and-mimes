@@ -8,7 +8,16 @@
 // Phase A1 simulate fixture regression-tests the human side, and new
 // tests in this file cover the bot-specific paths.
 
-import type { ItemType, PlayerState, ServerToClient, Team, Topology, Vec2, Vec3 } from '@cm/shared';
+import type {
+  ItemType,
+  PlayerState,
+  Projectile,
+  ServerToClient,
+  Team,
+  Topology,
+  Vec2,
+  Vec3,
+} from '@cm/shared';
 import {
   topologyDistance,
   wrapPosition,
@@ -28,6 +37,7 @@ import { PROJECTILE_SPEED } from '@cm/shared/projectiles';
 import {
   BOT_CHASE_FLANK_RADIUS,
   BOT_CHASE_FLANK_RELEASE_DIST,
+  BOT_FIRE_THREAT_LOOKBACK,
   BOT_FLEE_PROJECTION,
   BOT_INVESTIGATE_MS,
   BOT_ITEM_SEEK_RADIUS,
@@ -64,6 +74,7 @@ import { nearestItemTarget, portalEscapeTarget } from './botGoals.ts';
 import { assignChases, assignRescues } from './botCoordination.ts';
 import { bestFleeTarget } from './botFlee.ts';
 import { interceptPoint } from './botIntercept.ts';
+import { nearestProjectileThreat } from './botProjectileThreat.ts';
 import { markVisited, patrolCandidateScore, type ExplorationParams } from './botExploration.ts';
 
 // World half-extent (kept private here; Room owns the canonical constant).
@@ -153,6 +164,8 @@ export interface BotManagerHost {
   availableItems(): readonly { type: ItemType; position: Vec3 }[];
   // Entry/exit mouths of a live portal this player opened, or null.
   botPortalEntry(playerId: string): { a: Vec3; b: Vec3 } | null;
+  // Live projectiles, so a bot can "hear" recent enemy shots.
+  getProjectiles(): readonly Projectile[];
 }
 
 export class BotManager {
@@ -425,6 +438,8 @@ export class BotManager {
       BOT_VISION_RADIUS,
       BOT_CHASE_FLANK_RADIUS,
     );
+    // Live projectiles this tick, so an idle bot can hear recent enemy fire.
+    const projectiles = this.host.getProjectiles();
 
     for (const bot of this.botPlayers()) {
       if (bot.frozen) continue;
@@ -448,6 +463,23 @@ export class BotManager {
       this.botMinds.set(bot.id, mind);
       // Record the bot's current cell this tick so patrol can favor stale ones.
       if (pathfinder) markVisited(mind.visited, pathfinder.cellAt(bot.position), now);
+
+      // Seen incoming fire: shots only come from the active hunter, so a visible
+      // enemy projectile means this bot is the prey. If it can't see the hunter
+      // (no target to flee) it can still see the shot and flee away from the line
+      // it came along - used below only when it has nothing visible to act on.
+      // Don't distract a bot already locked onto someone.
+      const fireThreat = mind.engagedTargetId
+        ? null
+        : nearestProjectileThreat(
+            bot,
+            projectiles,
+            walls,
+            topology,
+            WORLD_WIDTH,
+            BOT_VISION_RADIUS,
+            BOT_FIRE_THREAT_LOOKBACK,
+          );
 
       // A held item blocks pickup, so only seek floor items when empty-handed.
       const collectTarget =
@@ -651,6 +683,23 @@ export class BotManager {
           ? pathfinder.nextWaypointAvoiding(bot.position, decision.collectTarget, avoid)
           : decision.collectTarget;
         dir = wrappedUnitDelta(bot.position, waypoint, topology, WORLD_WIDTH);
+      } else if (fireThreat) {
+        // Prey that can't see its hunter but sees its incoming fire: flee away
+        // from the line of fire (same scorer as a seen-threat flee).
+        const fleeTarget = bestFleeTarget(
+          bot.position,
+          fireThreat,
+          [fireThreat],
+          walls,
+          topology,
+          WORLD_WIDTH,
+          BOT_FLEE_PROJECTION,
+        );
+        const avoid = this.avoidPositionsForBot(bot);
+        const waypoint = pathfinder
+          ? pathfinder.nextWaypointAvoiding(bot.position, fleeTarget, avoid)
+          : fleeTarget;
+        dir = wrappedUnitDelta(bot.position, waypoint, topology, WORLD_WIDTH);
       } else {
         if (now >= mind.patrolUntil || nearTarget(bot.position, mind.patrolTarget)) {
           this.commitPatrolTarget(mind, bot, now);
@@ -665,11 +714,17 @@ export class BotManager {
       dir = smoothDir(mind.lastDir, dir, DIR_SMOOTHING);
       mind.lastDir = dir;
 
+      // Panic-sprint away when the incoming fire is close, mirroring the
+      // close-threat sprint gate for a seen enemy.
+      const fireClose =
+        fireThreat !== null &&
+        topologyDistance(bot.position, fireThreat, topology, WORLD_WIDTH) <
+          BOT_SPRINT_TRIGGER_RADIUS;
       const closeEnemyOrRescue =
         (chasing && enemyDist < BOT_SPRINT_TRIGGER_RADIUS) ||
         (fleeing && enemyDist < BOT_SPRINT_TRIGGER_RADIUS) ||
         (rescuing && rescueDist < BOT_SPRINT_TRIGGER_RADIUS);
-      const wantSprint = closeEnemyOrRescue && bot.sprintEnergy > MAX_SPRINT * 0.15;
+      const wantSprint = (closeEnemyOrRescue || fireClose) && bot.sprintEnergy > MAX_SPRINT * 0.15;
       const speed = wantSprint ? SPRINT_SPEED : WALK_SPEED;
       const step = speed * dt;
       const slid = stepWithSlide(bot.position, dir, step, walls, topology, WORLD_WIDTH);

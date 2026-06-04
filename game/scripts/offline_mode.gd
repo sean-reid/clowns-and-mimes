@@ -197,6 +197,11 @@ func _open_portal(owner: Node, player_id: String) -> void:
 	_portal_blocked[player_id] = true
 
 # Entry (a) + exit (b) mouths of the live portal `player_id` opened, or null.
+# Live projectiles, so a bot can see incoming enemy fire. Mirrors the server's
+# getProjectiles exposed to the bot manager.
+func live_projectiles() -> Array:
+	return _projectiles
+
 # A fleeing bot heads into its own entry mouth via BotGoals.portal_escape_target.
 # Mirrors the server's botPortalEntry.
 func bot_portal_entry(player_id: String) -> Variant:

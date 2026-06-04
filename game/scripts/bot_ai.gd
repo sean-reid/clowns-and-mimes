@@ -40,6 +40,7 @@ const BotCoordinationScript := preload("res://scripts/bot_coordination.gd")
 const BotExplorationScript := preload("res://scripts/bot_exploration.gd")
 const BotFleeScript := preload("res://scripts/bot_flee.gd")
 const BotInterceptScript := preload("res://scripts/bot_intercept.gd")
+const BotProjectileThreatScript := preload("res://scripts/bot_projectile_threat.gd")
 const WallGeometry := preload("res://scripts/wall_geometry.gd")
 
 enum State { PATROL, CHASE, FLEE, RESCUE, INVESTIGATE, COLLECT }
@@ -85,6 +86,10 @@ var _target_vel: Vector3 = Vector3.ZERO
 var _aim_prev_id: String = ""
 var _aim_prev_pos: Vector3 = Vector3.ZERO
 var _aim_prev_at: float = 0.0
+# When this prey bot sees incoming enemy fire but no hunter to flee from, this
+# holds the bearing (a point back along the shot's line) to flee away from; else
+# null. Refreshed each tick in _choose_state, consumed by the PATROL steering.
+var _fire_threat: Variant = null
 # Seconds since this bot last triggered a jump. Initialised to a value
 # well past the refractory window so the very first eligible tick can
 # jump if the trigger fires.
@@ -169,6 +174,7 @@ func _update_stuck(delta: float) -> void:
 
 # Run the shared scored decision and map its mode to the offline State enum.
 func _choose_state() -> void:
+	_sense_incoming_fire()
 	_decision = _run_decision()
 	_update_target_velocity()
 	match _decision.get("mode", "patrol"):
@@ -184,6 +190,31 @@ func _choose_state() -> void:
 			state = State.COLLECT
 		_:
 			state = State.PATROL
+
+# Seen incoming fire: shots only come from the active hunter, so a visible enemy
+# projectile means this bot is the prey. If it can't see the hunter it can still
+# see the shot; _fire_threat is set to a bearing back along the shot's line and
+# the PATROL steering flees away from it. A visible enemy still wins (flee
+# outranks patrol). Don't distract a bot already locked on. Mirrors the online
+# fireThreat compute.
+func _sense_incoming_fire() -> void:
+	_fire_threat = null
+	if engagement.get("engaged_target_id", "") != "":
+		return
+	if rules == null or player == null or player.arena == null or player.arena.offline == null:
+		return
+	var bot: Dictionary = rules.players.get(player_id, {})
+	if bot.is_empty():
+		return
+	var walls: Array = labyrinth.wall_endpoints() if labyrinth != null else []
+	_fire_threat = BotProjectileThreatScript.nearest_projectile_threat(
+		bot,
+		player.arena.offline.live_projectiles(),
+		walls,
+		topology,
+		SharedConstants.BOT_VISION_RADIUS,
+		SharedConstants.BOT_FIRE_THREAT_LOOKBACK
+	)
 
 # Refresh _target_vel from the engaged target's move since last tick. A fresh
 # target id (or no target) yields zero velocity, so the lead only applies once
@@ -319,12 +350,28 @@ func _choose_target() -> void:
 		State.INVESTIGATE:
 			patrol_target = engagement.last_known_pos
 		State.PATROL:
-			# Retarget on a cadence or on arrival (mirrors online's drive loop),
-			# not only when we reach the point - so a bot keeps roaming.
-			var now_ms: float = float(Time.get_ticks_msec())
-			if now_ms >= patrol_until_ms or (player.global_position - patrol_target).length() < 1.5:
-				_commit_patrol_target()
-				patrol_until_ms = now_ms + BOT_PATROL_RETARGET_MS
+			if _fire_threat != null:
+				# Prey that can't see its hunter but sees its incoming fire: flee
+				# away from the line of fire (same scorer as a seen-threat flee).
+				var fire_walls: Array = labyrinth.wall_endpoints() if labyrinth != null else []
+				patrol_target = BotFleeScript.best_flee_target(
+					player.global_position,
+					_fire_threat,
+					[_fire_threat],
+					fire_walls,
+					topology,
+					SharedConstants.BOT_FLEE_PROJECTION
+				)
+			else:
+				# Retarget on a cadence or on arrival (mirrors online's drive loop),
+				# not only when we reach the point - so a bot keeps roaming.
+				var now_ms: float = float(Time.get_ticks_msec())
+				if (
+					now_ms >= patrol_until_ms
+					or (player.global_position - patrol_target).length() < 1.5
+				):
+					_commit_patrol_target()
+					patrol_until_ms = now_ms + BOT_PATROL_RETARGET_MS
 	if stuck_clock > STUCK_TIME:
 		_commit_patrol_target()
 		stuck_clock = 0.0
@@ -369,12 +416,16 @@ func _choose_steering() -> void:
 	var trigger: float = SharedConstants.BOT_SPRINT_TRIGGER_RADIUS
 	var ed: float = _decision.get("enemy_dist", INF)
 	var rd: float = _decision.get("rescue_dist", INF)
+	# Panic-sprint away when the incoming fire is close (mirrors online fireClose).
+	var fire_close: bool = (
+		_fire_threat != null and topology.distance(player.global_position, _fire_threat) < trigger
+	)
 	var close: bool = (
 		(_decision.get("chasing", false) and ed < trigger)
 		or (_decision.get("fleeing", false) and ed < trigger)
 		or (_decision.get("rescuing", false) and rd < trigger)
 	)
-	_sprint = close and player.sprint_energy > SharedConstants.MAX_SPRINT * 0.15
+	_sprint = (close or fire_close) and player.sprint_energy > SharedConstants.MAX_SPRINT * 0.15
 
 # Exponential heading smoothing across ticks, re-normalized; zero when the
 # blended heading collapses. Mirrors botSteering.ts smoothDir.

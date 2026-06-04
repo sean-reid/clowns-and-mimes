@@ -142,6 +142,18 @@ export class BotPathfinder {
     return this.cellCenter(this.worldToCell(position));
   }
 
+  /** Total cell count. Patrol picks a random index in [0, cellCount) so its
+   * candidates span the whole topology grid (incl. Klein's 2N x N double
+   * cover), not a fixed canonical box. */
+  cellCount(): number {
+    return this.shape.cols * this.shape.rows;
+  }
+
+  /** World-space center of cell `index`. Pairs with cellCount for patrol. */
+  cellCenterAt(index: number): Vec2 {
+    return this.cellCenter(index);
+  }
+
   // Cell chain from the step after fromCell through toCell, cached per
   // (from, to) pair for the no-occupancy common case (a swarm chasing one
   // target pays the search once). Empty when unreachable.

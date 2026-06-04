@@ -233,7 +233,20 @@ func _portal_escape(away: Vector3) -> Variant:
 func _choose_target() -> void:
 	match state:
 		State.CHASE:
-			patrol_target = _decision.target.position
+			# Drive at the assigned pincer slot while closing from range; inside
+			# FLANK_RELEASE_DIST go straight at the target for the tag. Each bot
+			# recomputes the same global chase assignment and reads its own claim.
+			var goal: Vector3 = _decision.target.position
+			var enemy_dist: float = _decision.get("enemy_dist", INF)
+			if enemy_dist > SharedConstants.BOT_CHASE_FLANK_RELEASE_DIST:
+				var walls: Array = labyrinth.wall_endpoints() if labyrinth != null else []
+				var claims := BotCoordinationScript.assign_chases(
+					rules.players.values(), walls, topology, float(Time.get_ticks_msec())
+				)
+				var claim: Variant = claims.get(player_id, null)
+				if claim != null and claim.target_id == _decision.target.id:
+					goal = claim.goal
+			patrol_target = goal
 		State.FLEE:
 			var threat: Vector3 = _decision.target.position
 			# Wrap-aware away vector (from threat toward us), projected out.

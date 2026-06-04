@@ -446,6 +446,11 @@ func _maybe_use_item(want_jump: bool) -> void:
 # WORLD_WIDTH/2 - margin per axis). NOT a ring around the origin - that made
 # every bot head for the centre and bunch up.
 func _random_patrol_point() -> Vector3:
+	# A random pathfinder cell center spans the whole topology grid (incl. klein's
+	# double cover / mobius extents), so bots explore the full map. Falls back to
+	# the canonical box before attach (no pathfinder yet).
+	if pathfinder != null:
+		return pathfinder.cell_center_at(rng.randi() % pathfinder.cell_count())
 	var half: float = TopologyScript.WIDTH / 2.0 - PATROL_MARGIN
 	return Vector3(rng.randf_range(-half, half), 0.0, rng.randf_range(-half, half))
 

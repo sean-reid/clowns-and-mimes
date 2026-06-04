@@ -294,6 +294,14 @@ export class BotManager {
   }
 
   private randomPatrolPoint(): { x: number; z: number } {
+    // A random pathfinder cell center spans the whole topology grid (incl.
+    // Klein's double cover / Möbius extents), so bots explore the full map.
+    const pathfinder = this.host.getPathfinder();
+    if (pathfinder) {
+      const c = pathfinder.cellCenterAt(Math.floor(Math.random() * pathfinder.cellCount()));
+      return { x: c.x, z: c.z };
+    }
+    // No maze: fall back to a random point in the canonical box.
     const half = WORLD_WIDTH / 2;
     return {
       x: (Math.random() - 0.5) * 2 * (half - 4),

@@ -11,7 +11,7 @@ export type TelemetryEvent =
   | {
       t: 'match_start';
       topology: Topology;
-      mode: 'open' | 'private';
+      mode: 'open' | 'private' | 'offline';
       partySize: number;
       botCount: number;
     }

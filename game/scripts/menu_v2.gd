@@ -387,6 +387,9 @@ func _show_update_popup(local: String, latest: String) -> void:
 
 func _maybe_show_telemetry_opt_in() -> void:
 	if not Settings.telemetry_consent.is_empty():
+		# Already decided. If they're opted in, record the session_start for this
+		# launch (guarded so it fires at most once per run).
+		Telemetry.track_session_start()
 		return
 	var dialog := ConfirmationDialog.new()
 	dialog.theme = CARNIVAL_THEME
@@ -413,9 +416,4 @@ func _maybe_show_telemetry_opt_in() -> void:
 func _accept_telemetry() -> void:
 	Settings.set_telemetry_consent("yes")
 	Telemetry.ensure_id()
-	Telemetry.event({
-		"t": "session_start",
-		"v": ProjectSettings.get_setting("application/config/version", "0.0.0"),
-		"platform": OS.get_name(),
-		"telemetryId": Settings.telemetry_id,
-	})
+	Telemetry.track_session_start()

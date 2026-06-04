@@ -1,0 +1,99 @@
+{
+  "schemaVersion": 1,
+  "reach": 3,
+  "scenarios": [
+    {
+      "name": "clear_wall",
+      "bot": {
+        "x": 0,
+        "z": 0
+      },
+      "goal": {
+        "x": 6,
+        "z": 0
+      },
+      "walls": [
+        {
+          "ax": 2,
+          "az": -3,
+          "bx": 2,
+          "bz": 3
+        }
+      ],
+      "expected": true
+    },
+    {
+      "name": "no_wall",
+      "bot": {
+        "x": 0,
+        "z": 0
+      },
+      "goal": {
+        "x": 6,
+        "z": 0
+      },
+      "walls": [],
+      "expected": false
+    },
+    {
+      "name": "wall_beyond_reach",
+      "bot": {
+        "x": 0,
+        "z": 0
+      },
+      "goal": {
+        "x": 10,
+        "z": 0
+      },
+      "walls": [
+        {
+          "ax": 5,
+          "az": -3,
+          "bx": 5,
+          "bz": 3
+        }
+      ],
+      "expected": false
+    },
+    {
+      "name": "land_in_wall",
+      "bot": {
+        "x": 0,
+        "z": 0
+      },
+      "goal": {
+        "x": 6,
+        "z": 0
+      },
+      "walls": [
+        {
+          "ax": 2.8,
+          "az": -3,
+          "bx": 2.8,
+          "bz": 3
+        }
+      ],
+      "expected": false
+    },
+    {
+      "name": "wall_off_path",
+      "bot": {
+        "x": 0,
+        "z": 0
+      },
+      "goal": {
+        "x": 6,
+        "z": 0
+      },
+      "walls": [
+        {
+          "ax": 1,
+          "az": 2,
+          "bx": 1,
+          "bz": 5
+        }
+      ],
+      "expected": false
+    }
+  ]
+}

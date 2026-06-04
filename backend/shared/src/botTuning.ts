@@ -94,6 +94,14 @@ export const BOT_ITEM_SEEK_RADIUS = 16;
 export const BOT_ITEM_CONTEST_RADIUS = 12;
 export const BOT_ITEM_DENY_WEIGHT = 8;
 
+// Leap traversal (botLeap.shouldLeapTraverse). Only a leap clears a wall (its
+// arc peaks above WALL_HEIGHT; a normal jump doesn't), so a chasing/rescuing bot
+// that holds a leap will hop a wall in its way instead of pathing around when
+// the far side is open. REACH is roughly a leap's horizontal travel - kept short
+// (a leap only covers ~3 units, and is wall-blocked until it clears 6 m) so the
+// bot only commits to a wall it can actually clear. Playtest-tuned.
+export const BOT_LEAP_REACH = 3;
+
 // Jump triggers.
 export const BOT_JUMP_REFRACTORY_MS = 1500;
 export const BOT_JUMP_NOISE_PER_SECOND = 0.05;

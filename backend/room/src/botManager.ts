@@ -46,6 +46,7 @@ import {
   BOT_ITEM_DENY_WEIGHT,
   BOT_ITEM_SEEK_RADIUS,
   BOT_JUMP_CORNER_THREAT_RADIUS,
+  BOT_LEAP_REACH,
   BOT_JUMP_EVADE_BUFFER,
   BOT_JUMP_NOISE_PER_SECOND,
   BOT_JUMP_REFRACTORY_MS,
@@ -78,6 +79,7 @@ import { nearestItemTarget, portalEscapeTarget } from './botGoals.ts';
 import { assignChases, assignRescues } from './botCoordination.ts';
 import { bestFleeTarget } from './botFlee.ts';
 import { interceptPoint } from './botIntercept.ts';
+import { shouldLeapTraverse } from './botLeap.ts';
 import { nearestProjectileThreat, shouldDodgeProjectile } from './botProjectileThreat.ts';
 import { markVisited, patrolCandidateScore, type ExplorationParams } from './botExploration.ts';
 
@@ -595,6 +597,24 @@ export class BotManager {
             wantJump = true;
           }
         }
+        // Leap traversal: holding a Leap, hop a wall between the bot and a fixed
+        // objective (chase target / frozen ally) instead of pathing around. Only
+        // a leap clears walls, so this is gated on holding one; the steering
+        // below drives straight at the goal while airborne to carry it over.
+        if (!wantJump && bot.activeItem === 'leap') {
+          const leapGoal =
+            decision.mode === 'chase' && target
+              ? target.position
+              : decision.mode === 'rescue' && rescueTarget
+                ? rescueTarget.position
+                : null;
+          if (
+            leapGoal &&
+            shouldLeapTraverse(bot.position, leapGoal, walls, topology, WORLD_WIDTH, BOT_LEAP_REACH)
+          ) {
+            wantJump = true;
+          }
+        }
       }
       // Power-up use is decided before the jump applies so a Leap arms the
       // very jump this tick. Other effects (surge / overcharge / cloak / clone
@@ -675,9 +695,12 @@ export class BotManager {
         dir = wrappedUnitDelta(bot.position, waypoint, topology, WORLD_WIDTH);
       } else if (decision.mode === 'rescue' && rescueTarget) {
         const avoid = this.avoidPositionsForBot(bot);
-        const waypoint = pathfinder
-          ? pathfinder.nextWaypointAvoiding(bot.position, rescueTarget.position, avoid)
-          : rescueTarget.position;
+        // While airborne from a leap, drive straight at the ally to carry over
+        // the wall; otherwise route around it.
+        const waypoint =
+          pathfinder && !bot.leaping
+            ? pathfinder.nextWaypointAvoiding(bot.position, rescueTarget.position, avoid)
+            : rescueTarget.position;
         dir = wrappedUnitDelta(bot.position, waypoint, topology, WORLD_WIDTH);
       } else if (decision.mode === 'chase' && target) {
         // Use the assigned flank slot only while still closing from range; once
@@ -697,9 +720,12 @@ export class BotManager {
                 WORLD_WIDTH,
               );
         const avoid = this.avoidPositionsForBot(bot);
-        const waypoint = pathfinder
-          ? pathfinder.nextWaypointAvoiding(bot.position, chaseGoal, avoid)
-          : chaseGoal;
+        // While airborne from a leap, drive straight at the target to carry over
+        // the wall; otherwise route around it.
+        const waypoint =
+          pathfinder && !bot.leaping
+            ? pathfinder.nextWaypointAvoiding(bot.position, chaseGoal, avoid)
+            : chaseGoal;
         dir = wrappedUnitDelta(bot.position, waypoint, topology, WORLD_WIDTH);
       } else if (decision.mode === 'investigate' && mind.lastKnownPos) {
         const avoid = this.avoidPositionsForBot(bot);

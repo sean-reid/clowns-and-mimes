@@ -37,6 +37,8 @@ import { PROJECTILE_SPEED } from '@cm/shared/projectiles';
 import {
   BOT_CHASE_FLANK_RADIUS,
   BOT_CHASE_FLANK_RELEASE_DIST,
+  BOT_DODGE_LEAD_S,
+  BOT_DODGE_RADIUS,
   BOT_FIRE_THREAT_LOOKBACK,
   BOT_FLEE_PROJECTION,
   BOT_INVESTIGATE_MS,
@@ -74,7 +76,7 @@ import { nearestItemTarget, portalEscapeTarget } from './botGoals.ts';
 import { assignChases, assignRescues } from './botCoordination.ts';
 import { bestFleeTarget } from './botFlee.ts';
 import { interceptPoint } from './botIntercept.ts';
-import { nearestProjectileThreat } from './botProjectileThreat.ts';
+import { nearestProjectileThreat, shouldDodgeProjectile } from './botProjectileThreat.ts';
 import { markVisited, patrolCandidateScore, type ExplorationParams } from './botExploration.ts';
 
 // World half-extent (kept private here; Room owns the canonical constant).
@@ -541,7 +543,22 @@ export class BotManager {
         // a little per bot (jumpPhase in [0,1)).
         const evadeBuffer = BOT_JUMP_EVADE_BUFFER * (0.5 + mind.jumpPhase);
         const noProgressWindow = BOT_NO_PROGRESS_WINDOW_MS * (0.75 + 0.5 * mind.jumpPhase);
+        // Dodge first: a shot about to hit is the most urgent reason to jump.
         if (
+          shouldDodgeProjectile(
+            bot,
+            projectiles,
+            walls,
+            topology,
+            WORLD_WIDTH,
+            BOT_DODGE_RADIUS,
+            BOT_DODGE_LEAD_S,
+          )
+        ) {
+          wantJump = true;
+        }
+        if (
+          !wantJump &&
           fleeing &&
           target !== null &&
           !target.frozen &&

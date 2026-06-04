@@ -51,6 +51,26 @@ func _assert_scenario(sc: Dictionary, sight: float, lookback: float) -> void:
 			assert_approx(threat.x, float(sc.expected.x), TOLERANCE, "%s: bearing.x" % name)
 			assert_approx(threat.z, float(sc.expected.z), TOLERANCE, "%s: bearing.z" % name)
 
+func _assert_dodge_scenario(sc: Dictionary, radius: float, lead: float) -> void:
+	var name: String = sc.name
+	var bot := {
+		"id": sc.bot.id,
+		"team": sc.bot.team,
+		"position": Vector3(float(sc.bot.x), 0.0, float(sc.bot.z)),
+	}
+	var projectiles: Array = []
+	for p in sc.projectiles:
+		projectiles.append({
+			"owner_id": p.ownerId,
+			"team": p.team,
+			"position": Vector3(float(p.px), 0.0, float(p.pz)),
+			"velocity": Vector3(float(p.vx), 0.0, float(p.vz)),
+		})
+	var dodge: bool = BotProjectileThreat.should_dodge_projectile(
+		bot, projectiles, sc.walls, _topo, radius, lead
+	)
+	assert_eq(dodge, bool(sc.expected), "%s: dodge" % name)
+
 func test_projectile_threat_matches_fixture() -> void:
 	var fixture := _load_fixture()
 	if fixture.is_empty():
@@ -61,3 +81,14 @@ func test_projectile_threat_matches_fixture() -> void:
 	assert_true(scenarios.size() > 0, "fixture has scenarios")
 	for sc in scenarios:
 		_assert_scenario(sc, sight, lookback)
+
+func test_dodge_matches_fixture() -> void:
+	var fixture := _load_fixture()
+	if fixture.is_empty():
+		return
+	var radius := float(fixture.dodgeRadius)
+	var lead := float(fixture.dodgeLeadS)
+	var scenarios: Array = fixture.get("dodgeScenarios", [])
+	assert_true(scenarios.size() > 0, "fixture has dodge scenarios")
+	for sc in scenarios:
+		_assert_dodge_scenario(sc, radius, lead)

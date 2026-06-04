@@ -1,10 +1,16 @@
 import { describe, expect, it } from 'vitest';
 import type { PlayerState, Team } from '@cm/shared';
 import type { WallSegment } from '@cm/shared/labyrinth';
-import { nearestProjectileThreat, type SightedProjectile } from './botProjectileThreat.ts';
+import {
+  nearestProjectileThreat,
+  shouldDodgeProjectile,
+  type SightedProjectile,
+} from './botProjectileThreat.ts';
 
 const SIGHT = 22;
 const LOOKBACK = 12;
+const DODGE_RADIUS = 1;
+const DODGE_LEAD = 0.35;
 
 function bot(team: Team = 'mime'): PlayerState {
   return {
@@ -65,5 +71,37 @@ describe('nearestProjectileThreat', () => {
       proj({ ownerId: 'e2', team: 'clown', position: { x: 6, z: 0 } }),
     ]);
     expect(t?.x).toBeCloseTo(18, 4);
+  });
+});
+
+const dodge = (projectiles: SightedProjectile[], walls: WallSegment[] = []) =>
+  shouldDodgeProjectile(bot(), projectiles, walls, 'plane', 80, DODGE_RADIUS, DODGE_LEAD);
+
+describe('shouldDodgeProjectile', () => {
+  it('dodges a dead-on shot arriving within the lead window', () => {
+    expect(dodge([proj({ team: 'clown', position: { x: 4, z: 0 } })])).toBe(true);
+  });
+
+  it('does not dodge a shot passing wide', () => {
+    expect(dodge([proj({ team: 'clown', position: { x: 4, z: 5 } })])).toBe(false);
+  });
+
+  it('waits on a hit line that is still too far out', () => {
+    expect(dodge([proj({ team: 'clown', position: { x: 10, z: 0 } })])).toBe(false);
+  });
+
+  it('does not dodge a shot moving away', () => {
+    expect(
+      dodge([proj({ team: 'clown', position: { x: 4, z: 0 }, velocity: { x: 16, z: 0 } })]),
+    ).toBe(false);
+  });
+
+  it('does not dodge a shot it cannot see', () => {
+    const walls: WallSegment[] = [{ ax: 2, az: -3, bx: 2, bz: 3 }];
+    expect(dodge([proj({ team: 'clown', position: { x: 4, z: 0 } })], walls)).toBe(false);
+  });
+
+  it('does not dodge friendly fire', () => {
+    expect(dodge([proj({ team: 'mime', position: { x: 4, z: 0 } })])).toBe(false);
   });
 });

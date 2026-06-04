@@ -5,7 +5,7 @@
 //
 //   pnpm --filter @cm/telemetry inspect                # today, dev
 //   pnpm --filter @cm/telemetry inspect --env production
-//   pnpm --filter @cm/telemetry inspect --day 2026-05-30 --type item_used
+//   pnpm --filter @cm/telemetry inspect --day 2026-05-30 --type item_pickup
 //
 // Runs `wrangler` from node_modules/.bin (on PATH under pnpm), reading
 // the binding + namespace id from wrangler.toml, so it needs the same
@@ -72,7 +72,6 @@ export function bucketLabel(ev: TelemetryEvent): string {
     case 'match_end':
       return `${ev.outcome} as ${ev.team}`;
     case 'item_pickup':
-    case 'item_used':
       return ev.itemType;
     case 'projectile_hit':
       return ev.distanceBucket;
@@ -85,6 +84,12 @@ export function bucketLabel(ev: TelemetryEvent): string {
     case 'menu_funnel':
       return ev.action;
   }
+  // A retired event type can still sit in KV under its old per-type key until
+  // its TTL lapses (e.g. item_used after it was dropped). Label such leftovers
+  // by their raw type and prefer an itemType/outcome field if present, so the
+  // inspector reports them instead of crashing on an unmatched case.
+  const legacy = ev as { t?: string; itemType?: string; outcome?: string };
+  return legacy.itemType ?? legacy.outcome ?? legacy.t ?? 'unknown';
 }
 
 export function rollup(events: TelemetryEvent[]): Map<string, number> {

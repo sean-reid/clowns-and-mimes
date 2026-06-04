@@ -138,7 +138,6 @@ func use_item_local() -> void:
 	var item_type: String = _items.use_item(p)
 	if item_type == "":
 		return
-	Telemetry.track_item_used(item_type)
 	arena.hud.set_held_item("")
 	_apply_item_effect(arena.local_player, item_type, id)
 

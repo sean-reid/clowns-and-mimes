@@ -806,7 +806,6 @@ func _stream_input(delta: float) -> void:
 	if not frozen and _input_active() and Input.is_action_pressed("use_item"):
 		if not _use_item_was_held:
 			room_client.send_use_item()
-			Telemetry.track_item_used(_held_item)
 			# Arm the local leap prediction in the same frame the server arms
 			# leapArmed, so the next predicted jump uses the boosted arc
 			# without waiting a round-trip for the authoritative leaping flag.

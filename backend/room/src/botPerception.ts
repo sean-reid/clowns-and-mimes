@@ -65,8 +65,10 @@ export function nearestVisibleEnemy(
 
 // Fraction (0..1) of sampled compass directions around a point blocked by a
 // wall within sampleDist - a cheap "how boxed in is this spot" proxy. 0 in the
-// open; ramps toward 1 in a corner where several directions hit a wall.
-function corneredness(pos: Vec2, walls: readonly WallSegment[], sampleDist: number): number {
+// open; ramps toward 1 in a corner where several directions hit a wall. Used by
+// target scoring (a cornered enemy is more catchable) and by flee scoring (a
+// cornered flee point is a dead-end to avoid).
+export function corneredness(pos: Vec2, walls: readonly WallSegment[], sampleDist: number): number {
   if (walls.length === 0) return 0;
   let blocked = 0;
   for (let k = 0; k < CORNER_SAMPLES; k++) {

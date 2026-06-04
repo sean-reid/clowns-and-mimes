@@ -1,0 +1,83 @@
+{
+  "schemaVersion": 1,
+  "projection": 12,
+  "scenarios": [
+    {
+      "name": "open_field",
+      "bot": {
+        "x": 0,
+        "z": 0
+      },
+      "threat": {
+        "x": 5,
+        "z": 0
+      },
+      "enemies": [
+        {
+          "x": 5,
+          "z": 0
+        }
+      ],
+      "walls": [],
+      "expected": {
+        "goalX": -12,
+        "goalZ": 1.4695761589768238e-15
+      }
+    },
+    {
+      "name": "second_enemy_redirect",
+      "bot": {
+        "x": 0,
+        "z": 0
+      },
+      "threat": {
+        "x": 5,
+        "z": 0
+      },
+      "enemies": [
+        {
+          "x": 5,
+          "z": 0
+        },
+        {
+          "x": -10,
+          "z": 0
+        }
+      ],
+      "walls": [],
+      "expected": {
+        "goalX": -2.204364238465236e-15,
+        "goalZ": -12
+      }
+    },
+    {
+      "name": "dead_end_avoided",
+      "bot": {
+        "x": 0,
+        "z": 0
+      },
+      "threat": {
+        "x": 5,
+        "z": 0
+      },
+      "enemies": [
+        {
+          "x": 5,
+          "z": 0
+        }
+      ],
+      "walls": [
+        {
+          "ax": -6,
+          "az": -4,
+          "bx": -6,
+          "bz": 4
+        }
+      ],
+      "expected": {
+        "goalX": -6.000000000000005,
+        "goalZ": -10.392304845413262
+      }
+    }
+  ]
+}

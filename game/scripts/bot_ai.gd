@@ -42,6 +42,7 @@ const BotFleeScript := preload("res://scripts/bot_flee.gd")
 const BotInterceptScript := preload("res://scripts/bot_intercept.gd")
 const BotProjectileThreatScript := preload("res://scripts/bot_projectile_threat.gd")
 const BotLeapScript := preload("res://scripts/bot_leap.gd")
+const BotTurnFlipScript := preload("res://scripts/bot_turn_flip.gd")
 const WallGeometry := preload("res://scripts/wall_geometry.gd")
 
 enum State { PATROL, CHASE, FLEE, RESCUE, INVESTIGATE, COLLECT }
@@ -91,6 +92,9 @@ var _aim_prev_at: float = 0.0
 # holds the bearing (a point back along the shot's line) to flee away from; else
 # null. Refreshed each tick in _choose_state, consumed by the PATROL steering.
 var _fire_threat: Variant = null
+# True this tick when the bot is pre-positioning for the turn flip (so the
+# steering layer sprints into position rather than idling at chase/flee range).
+var _flip_active: bool = false
 # Seconds since this bot last triggered a jump. Initialised to a value
 # well past the refractory window so the very first eligible tick can
 # jump if the trigger fires.
@@ -303,6 +307,7 @@ func _portal_escape(away: Vector3) -> Variant:
 	)
 
 func _choose_target() -> void:
+	_flip_active = false
 	match state:
 		State.CHASE:
 			# Drive at the assigned pincer slot while closing from range; inside
@@ -325,6 +330,11 @@ func _choose_target() -> void:
 				if claim != null and claim.target_id == _decision.target.id:
 					goal = claim.goal
 			patrol_target = goal
+			# Near the turn flip, pre-position for the next role instead.
+			var flip_c: Variant = _turn_flip_reposition()
+			if flip_c != null:
+				patrol_target = flip_c
+				_flip_active = true
 		State.FLEE:
 			var threat: Vector3 = _decision.target.position
 			# Wrap-aware away vector (from threat toward us), projected out.
@@ -350,6 +360,11 @@ func _choose_target() -> void:
 					topology,
 					SharedConstants.BOT_FLEE_PROJECTION
 				)
+			# Near the turn flip, pre-position for the next role instead.
+			var flip_f: Variant = _turn_flip_reposition()
+			if flip_f != null:
+				patrol_target = flip_f
+				_flip_active = true
 		State.RESCUE:
 			patrol_target = _decision.rescue_target.position
 		State.COLLECT:
@@ -436,7 +451,9 @@ func _choose_steering() -> void:
 		or (_decision.get("fleeing", false) and ed < trigger)
 		or (_decision.get("rescuing", false) and rd < trigger)
 	)
-	_sprint = (close or fire_close) and player.sprint_energy > SharedConstants.MAX_SPRINT * 0.15
+	_sprint = (
+		(close or fire_close or _flip_active) and player.sprint_energy > SharedConstants.MAX_SPRINT * 0.15
+	)
 
 # Exponential heading smoothing across ticks, re-normalized; zero when the
 # blended heading collapses. Mirrors botSteering.ts smoothDir.
@@ -661,6 +678,29 @@ func _enemy_positions() -> Array:
 		if p.get("team", "") != player.team and not p.get("frozen", false):
 			out.append(p.get("position", Vector3.ZERO))
 	return out
+
+# Pre-position target for the imminent turn flip (retreat if about to be prey,
+# close to a safe striking ring if about to be hunter), or null. Mirrors the
+# online turnFlipReposition wiring; uses the engaged enemy (_decision.target).
+func _turn_flip_reposition() -> Variant:
+	var target: Dictionary = _decision.get("target", {})
+	if target.is_empty():
+		return null
+	var now_s: float = Time.get_unix_time_from_system()
+	var time_to_flip_ms: float = rules.phase_time_remaining(now_s) * 1000.0
+	var bot_is_hunter: bool = rules.active_team() == player.team
+	return BotTurnFlipScript.turn_flip_reposition(
+		player.global_position,
+		target.position,
+		time_to_flip_ms,
+		bot_is_hunter,
+		topology,
+		SharedConstants.BOT_TURN_ANTICIPATE_MS,
+		TAG_RADIUS_BOT,
+		SharedConstants.BOT_TURN_STANDOFF_BUFFER,
+		SharedConstants.SPRINT_SPEED,
+		SharedConstants.BOT_FLEE_PROJECTION
+	)
 
 # Commit a fresh exploration target. Mirrors online commitPatrolTarget.
 func _commit_patrol_target() -> void:

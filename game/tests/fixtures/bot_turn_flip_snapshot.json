@@ -1,0 +1,88 @@
+{
+  "schemaVersion": 1,
+  "params": {
+    "anticipateMs": 800,
+    "tagRadius": 1.4,
+    "standoffBuffer": 1,
+    "sprintSpeed": 5.6,
+    "fleeProjection": 12
+  },
+  "scenarios": [
+    {
+      "name": "hunter_retreat",
+      "bot": {
+        "x": 0,
+        "z": 0
+      },
+      "enemy": {
+        "x": 5,
+        "z": 0
+      },
+      "timeToFlipMs": 400,
+      "botIsHunter": true,
+      "expected": {
+        "x": -12,
+        "z": 0
+      }
+    },
+    {
+      "name": "hunter_can_tag",
+      "bot": {
+        "x": 0,
+        "z": 0
+      },
+      "enemy": {
+        "x": 1,
+        "z": 0
+      },
+      "timeToFlipMs": 400,
+      "botIsHunter": true,
+      "expected": null
+    },
+    {
+      "name": "prey_pounce",
+      "bot": {
+        "x": 0,
+        "z": 0
+      },
+      "enemy": {
+        "x": 10,
+        "z": 0
+      },
+      "timeToFlipMs": 400,
+      "botIsHunter": false,
+      "expected": {
+        "x": 5.36,
+        "z": 0
+      }
+    },
+    {
+      "name": "not_imminent",
+      "bot": {
+        "x": 0,
+        "z": 0
+      },
+      "enemy": {
+        "x": 10,
+        "z": 0
+      },
+      "timeToFlipMs": 5000,
+      "botIsHunter": false,
+      "expected": null
+    },
+    {
+      "name": "flip_passed",
+      "bot": {
+        "x": 0,
+        "z": 0
+      },
+      "enemy": {
+        "x": 10,
+        "z": 0
+      },
+      "timeToFlipMs": -10,
+      "botIsHunter": false,
+      "expected": null
+    }
+  ]
+}

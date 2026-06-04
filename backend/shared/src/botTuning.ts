@@ -102,6 +102,15 @@ export const BOT_ITEM_DENY_WEIGHT = 8;
 // bot only commits to a wall it can actually clear. Playtest-tuned.
 export const BOT_LEAP_REACH = 3;
 
+// Turn-flip anticipation (botTurnFlip.turnFlipReposition). Within ANTICIPATE_MS
+// of the turn flipping, a bot pre-positions for its next role: a hunter who
+// can't land the tag in time opens a gap (head start as prey), and a prey closes
+// to a standoff ring - tagRadius + STANDOFF_BUFFER plus how far the still-active
+// hunter can sprint in the remaining time, so it can't be tagged before the flip
+// yet is poised to pounce the instant it becomes the hunter.
+export const BOT_TURN_ANTICIPATE_MS = 800;
+export const BOT_TURN_STANDOFF_BUFFER = 1;
+
 // Jump triggers.
 export const BOT_JUMP_REFRACTORY_MS = 1500;
 export const BOT_JUMP_NOISE_PER_SECOND = 0.05;

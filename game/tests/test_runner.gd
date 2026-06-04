@@ -23,6 +23,7 @@ const TEST_SCRIPTS: Array[String] = [
 	"res://tests/test_bot_intercept_determinism.gd",
 	"res://tests/test_bot_projectile_threat_determinism.gd",
 	"res://tests/test_bot_leap_determinism.gd",
+	"res://tests/test_bot_turn_flip_determinism.gd",
 	"res://tests/test_offline_items.gd",
 	"res://tests/test_offline_items_determinism.gd",
 	"res://tests/test_offline_mode_lifecycle.gd",

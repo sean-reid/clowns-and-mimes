@@ -245,6 +245,7 @@ func _play_solo() -> void:
 	GameState.party_intent = ""
 	GameState.host_random_topology = false
 	GameState.set_mode(GameState.Mode.OPEN)
+	Telemetry.track_menu_funnel("open")
 	requested_screen.emit("lobby")
 
 func _host() -> void:
@@ -256,6 +257,7 @@ func _host() -> void:
 	else:
 		GameState.set_topology(idx)
 	GameState.set_mode(GameState.Mode.HOST)
+	Telemetry.track_menu_funnel("private")
 	requested_screen.emit("lobby")
 
 # Explicit offline play vs bots with a chosen (or random) topology. Skips the
@@ -274,6 +276,7 @@ func _play_offline() -> void:
 		GameState.set_topology(idx)
 	GameState.server_url = ""
 	GameState.set_mode(GameState.Mode.OFFLINE)
+	Telemetry.track_menu_funnel("offline")
 	requested_screen.emit("lobby")
 
 func _join_match() -> void:
@@ -284,6 +287,7 @@ func _join_match() -> void:
 	GameState.host_random_topology = false
 	GameState.set_mode(GameState.Mode.JOIN)
 	GameState.lobby_code = code
+	Telemetry.track_menu_funnel("private")
 	requested_screen.emit("lobby")
 
 func _create_party() -> void:

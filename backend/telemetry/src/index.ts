@@ -17,7 +17,6 @@ const KNOWN_EVENT_TYPES = new Set([
   'match_start',
   'match_end',
   'item_pickup',
-  'item_used',
   'projectile_hit',
   'match_abandoned',
   'connect_result',

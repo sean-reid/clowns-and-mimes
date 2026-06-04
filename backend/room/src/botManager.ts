@@ -56,6 +56,7 @@ import { decideItemUse } from './botItems.ts';
 import { nearestEnemy } from './botPerception.ts';
 import { nearestItemTarget, portalEscapeTarget } from './botGoals.ts';
 import { assignChases, assignRescues } from './botCoordination.ts';
+import { bestFleeTarget } from './botFlee.ts';
 import { markVisited, patrolCandidateScore, type ExplorationParams } from './botExploration.ts';
 
 // World half-extent (kept private here; Room owns the canonical constant).
@@ -551,15 +552,22 @@ export class BotManager {
         const portalTarget = portal
           ? portalEscapeTarget(bot.position, away, portal.a, portal.b, topology, WORLD_WIDTH)
           : null;
+        // Score escape directions instead of bolting straight away, so the bot
+        // doesn't flee into a dead-end or toward a second enemy.
+        const enemies: Vec2[] = [];
+        for (const p of this.host.players.values()) {
+          if (p.team !== bot.team && !p.frozen) enemies.push(p.position);
+        }
         const fleeTarget =
           portalTarget ??
-          wrapPosition(
-            {
-              x: bot.position.x + away.x * BOT_FLEE_PROJECTION,
-              z: bot.position.z + away.z * BOT_FLEE_PROJECTION,
-            },
+          bestFleeTarget(
+            bot.position,
+            target.position,
+            enemies,
+            walls,
             topology,
             WORLD_WIDTH,
+            BOT_FLEE_PROJECTION,
           );
         const avoid = this.avoidPositionsForBot(bot);
         const waypoint = pathfinder

@@ -38,6 +38,7 @@ const BotItemsScript := preload("res://scripts/bot_items.gd")
 const BotPerception := preload("res://scripts/bot_perception.gd")
 const BotCoordinationScript := preload("res://scripts/bot_coordination.gd")
 const BotExplorationScript := preload("res://scripts/bot_exploration.gd")
+const BotFleeScript := preload("res://scripts/bot_flee.gd")
 const WallGeometry := preload("res://scripts/wall_geometry.gd")
 
 enum State { PATROL, CHASE, FLEE, RESCUE, INVESTIGATE, COLLECT }
@@ -258,10 +259,20 @@ func _choose_target() -> void:
 			# If this bot opened a portal, head into its own entry mouth instead
 			# of the open-field flee point - that's why it spent the item.
 			var mouth: Variant = _portal_escape(away)
-			patrol_target = (
-				mouth if mouth != null
-				else topology.wrap(player.global_position + away * SharedConstants.BOT_FLEE_PROJECTION)
-			)
+			if mouth != null:
+				patrol_target = mouth
+			else:
+				# Score escape directions instead of bolting straight away, so the
+				# bot doesn't flee into a dead-end or toward a second enemy.
+				var flee_walls: Array = labyrinth.wall_endpoints() if labyrinth != null else []
+				patrol_target = BotFleeScript.best_flee_target(
+					player.global_position,
+					threat,
+					_enemy_positions(),
+					flee_walls,
+					topology,
+					SharedConstants.BOT_FLEE_PROJECTION
+				)
 		State.RESCUE:
 			patrol_target = _decision.rescue_target.position
 		State.COLLECT:
@@ -505,6 +516,16 @@ func _teammate_positions() -> Array:
 			continue
 		var p: Dictionary = rules.players[pid]
 		if p.get("team", "") == player.team:
+			out.append(p.get("position", Vector3.ZERO))
+	return out
+
+# Positions of every active enemy, for smart-flee scoring (avoid fleeing toward
+# a second enemy). Mirrors the online flee branch's enemy gather.
+func _enemy_positions() -> Array:
+	var out: Array = []
+	for pid in rules.players:
+		var p: Dictionary = rules.players[pid]
+		if p.get("team", "") != player.team and not p.get("frozen", false):
 			out.append(p.get("position", Vector3.ZERO))
 	return out
 

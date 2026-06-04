@@ -39,6 +39,15 @@ export const BOT_CHASE_FLANK_RELEASE_DIST = 6;
 // Movement / steering.
 export const BOT_SPRINT_TRIGGER_RADIUS = 10;
 export const BOT_FLEE_PROJECTION = 12;
+// Smart flee (botFlee.bestFleeTarget). Instead of bolting straight away from the
+// threat, the bot scores a fan of CANDIDATES escape points (anchored on the
+// straight-away direction) and picks the one farthest from the nearest enemy
+// after penalties: WALL_PENALTY scales the dead-end cost (a wall-cornered
+// destination, 0..1), BLOCKED_PENALTY all but rules out a direction with a wall
+// straight in the way. On open ground the straight-away candidate still wins.
+export const BOT_FLEE_CANDIDATES = 12;
+export const BOT_FLEE_WALL_PENALTY = 12;
+export const BOT_FLEE_BLOCKED_PENALTY = 1000;
 export const DIR_SMOOTHING = 0.5;
 export const MAX_YAW_RATE = 9.0;
 

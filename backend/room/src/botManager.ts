@@ -42,6 +42,8 @@ import {
   BOT_FIRE_THREAT_LOOKBACK,
   BOT_FLEE_PROJECTION,
   BOT_INVESTIGATE_MS,
+  BOT_ITEM_CONTEST_RADIUS,
+  BOT_ITEM_DENY_WEIGHT,
   BOT_ITEM_SEEK_RADIUS,
   BOT_JUMP_CORNER_THREAT_RADIUS,
   BOT_JUMP_EVADE_BUFFER,
@@ -483,7 +485,19 @@ export class BotManager {
             BOT_FIRE_THREAT_LOOKBACK,
           );
 
+      // Active (unfrozen) enemy positions: avoided when fleeing, and used to
+      // contest floor items for denial. Gathered once per bot.
+      const enemyPositions: Vec2[] = [];
+      for (const p of this.host.players.values()) {
+        if (p.team !== bot.team && !p.frozen) enemyPositions.push(p.position);
+      }
+
       // A held item blocks pickup, so only seek floor items when empty-handed.
+      // Contest items an enemy is going for ONLY on our own turn: then the enemy
+      // is prey and can neither tag nor shoot (both turn-gated), so converging on
+      // the item is safe. On the enemy's turn the bot is prey, so denial must not
+      // pull it toward a hunter - fall back to plain nearest.
+      const contestItems = active === bot.team;
       const collectTarget =
         bot.activeItem === undefined
           ? nearestItemTarget(
@@ -492,6 +506,9 @@ export class BotManager {
               topology,
               WORLD_WIDTH,
               BOT_ITEM_SEEK_RADIUS,
+              enemyPositions,
+              contestItems ? BOT_ITEM_CONTEST_RADIUS : 0,
+              contestItems ? BOT_ITEM_DENY_WEIGHT : 0,
             )
           : null;
 
@@ -640,16 +657,12 @@ export class BotManager {
           : null;
         // Score escape directions instead of bolting straight away, so the bot
         // doesn't flee into a dead-end or toward a second enemy.
-        const enemies: Vec2[] = [];
-        for (const p of this.host.players.values()) {
-          if (p.team !== bot.team && !p.frozen) enemies.push(p.position);
-        }
         const fleeTarget =
           portalTarget ??
           bestFleeTarget(
             bot.position,
             target.position,
-            enemies,
+            enemyPositions,
             walls,
             topology,
             WORLD_WIDTH,

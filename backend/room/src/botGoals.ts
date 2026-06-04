@@ -13,21 +13,43 @@
 import type { Topology, Vec2, Vec3 } from '@cm/shared';
 import { topologyDistance, wrappedUnitDelta } from '@cm/shared/topology';
 
-// Nearest floor item within `seekRadius`, or null when none is close enough.
-// The caller only seeks while holding no item (no stacking on pickup).
+// Best floor item to seek within `seekRadius`, or null when none is close
+// enough. The caller only seeks while holding no item (no stacking on pickup).
+//
+// By default this is just the nearest item. Pass `enemies` + a positive
+// `denyWeight` to add item denial: an item an enemy is contesting (within
+// `contestRadius` of it) that the bot can still reach first (no farther from
+// the item than that enemy) gets a `denyWeight` bonus, so the bot detours up to
+// roughly that far to snatch a power-up out from under the enemy rather than
+// grab a marginally closer uncontested one. With no enemies (or denyWeight 0)
+// the bonus is always 0 and the result is exactly the nearest item.
 export function nearestItemTarget(
   botPos: Vec2,
   items: ReadonlyArray<{ position: Vec3 }>,
   topology: Topology,
   worldWidth: number,
   seekRadius: number,
+  enemies: readonly Vec2[] = [],
+  contestRadius = 0,
+  denyWeight = 0,
 ): Vec2 | null {
   let best: Vec2 | null = null;
-  let bestDist = Infinity;
+  let bestScore = -Infinity;
   for (const item of items) {
     const d = topologyDistance(botPos, item.position, topology, worldWidth);
-    if (d <= seekRadius && d < bestDist) {
-      bestDist = d;
+    if (d > seekRadius) continue;
+    let bonus = 0;
+    if (denyWeight > 0 && contestRadius > 0) {
+      let nearestEnemy = Infinity;
+      for (const e of enemies) {
+        const ed = topologyDistance(e, item.position, topology, worldWidth);
+        if (ed < nearestEnemy) nearestEnemy = ed;
+      }
+      if (nearestEnemy < contestRadius && d <= nearestEnemy) bonus = denyWeight;
+    }
+    const score = bonus - d;
+    if (score > bestScore) {
+      bestScore = score;
       best = { x: item.position.x, z: item.position.z };
     }
   }

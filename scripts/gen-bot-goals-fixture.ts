@@ -24,6 +24,10 @@ interface Scenario {
   botZ: number;
   items: Array<{ x: number; z: number }>;
   seekRadius: number;
+  // Item-denial inputs (omitted -> pure nearest, matching the defaults).
+  enemies?: Array<{ x: number; z: number }>;
+  contestRadius?: number;
+  denyWeight?: number;
 }
 
 const item = (x: number, z: number): { position: Vec3 } => ({ position: { x, y: 0.5, z } });
@@ -84,6 +88,38 @@ const SCENARIOS: Scenario[] = [
     botZ: 0,
     items: [{ x: 38, z: 0 }],
     seekRadius: 12,
+  },
+  {
+    // Item denial: the nearer item A(3) is uncontested, but B(10) is contested
+    // by an enemy at (21) the bot can still beat (10 <= 11), so it detours for B.
+    name: 'deny_contested',
+    topology: 'plane',
+    botX: 0,
+    botZ: 0,
+    items: [
+      { x: 3, z: 0 },
+      { x: 10, z: 0 },
+    ],
+    seekRadius: 16,
+    enemies: [{ x: 21, z: 0 }],
+    contestRadius: 12,
+    denyWeight: 8,
+  },
+  {
+    // Same items, but the enemy is far from both: no contest, so the bot just
+    // takes the nearest (A) - the denial bias falls back to plain nearest.
+    name: 'deny_fallback_uncontested',
+    topology: 'plane',
+    botX: 0,
+    botZ: 0,
+    items: [
+      { x: 3, z: 0 },
+      { x: 10, z: 0 },
+    ],
+    seekRadius: 16,
+    enemies: [{ x: 60, z: 0 }],
+    contestRadius: 12,
+    denyWeight: 8,
   },
 ];
 
@@ -162,6 +198,9 @@ function run(s: Scenario) {
     s.topology,
     WORLD_WIDTH,
     s.seekRadius,
+    s.enemies ?? [],
+    s.contestRadius ?? 0,
+    s.denyWeight ?? 0,
   );
   return {
     name: s.name,
@@ -170,6 +209,9 @@ function run(s: Scenario) {
     botZ: s.botZ,
     items: s.items,
     seekRadius: s.seekRadius,
+    enemies: s.enemies ?? [],
+    contestRadius: s.contestRadius ?? 0,
+    denyWeight: s.denyWeight ?? 0,
     expected: best ? { x: best.x, z: best.z } : null,
   };
 }

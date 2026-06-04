@@ -8,6 +8,9 @@
       "botZ": 0,
       "items": [],
       "seekRadius": 12,
+      "enemies": [],
+      "contestRadius": 0,
+      "denyWeight": 0,
       "expected": null
     },
     {
@@ -22,6 +25,9 @@
         }
       ],
       "seekRadius": 12,
+      "enemies": [],
+      "contestRadius": 0,
+      "denyWeight": 0,
       "expected": null
     },
     {
@@ -36,6 +42,9 @@
         }
       ],
       "seekRadius": 12,
+      "enemies": [],
+      "contestRadius": 0,
+      "denyWeight": 0,
       "expected": {
         "x": 5,
         "z": 0
@@ -61,6 +70,9 @@
         }
       ],
       "seekRadius": 12,
+      "enemies": [],
+      "contestRadius": 0,
+      "denyWeight": 0,
       "expected": {
         "x": 3,
         "z": 4
@@ -78,6 +90,9 @@
         }
       ],
       "seekRadius": 12,
+      "enemies": [],
+      "contestRadius": 0,
+      "denyWeight": 0,
       "expected": {
         "x": 12,
         "z": 0
@@ -99,6 +114,9 @@
         }
       ],
       "seekRadius": 12,
+      "enemies": [],
+      "contestRadius": 0,
+      "denyWeight": 0,
       "expected": {
         "x": 5,
         "z": 0
@@ -116,8 +134,69 @@
         }
       ],
       "seekRadius": 12,
+      "enemies": [],
+      "contestRadius": 0,
+      "denyWeight": 0,
       "expected": {
         "x": 38,
+        "z": 0
+      }
+    },
+    {
+      "name": "deny_contested",
+      "topology": "plane",
+      "botX": 0,
+      "botZ": 0,
+      "items": [
+        {
+          "x": 3,
+          "z": 0
+        },
+        {
+          "x": 10,
+          "z": 0
+        }
+      ],
+      "seekRadius": 16,
+      "enemies": [
+        {
+          "x": 21,
+          "z": 0
+        }
+      ],
+      "contestRadius": 12,
+      "denyWeight": 8,
+      "expected": {
+        "x": 10,
+        "z": 0
+      }
+    },
+    {
+      "name": "deny_fallback_uncontested",
+      "topology": "plane",
+      "botX": 0,
+      "botZ": 0,
+      "items": [
+        {
+          "x": 3,
+          "z": 0
+        },
+        {
+          "x": 10,
+          "z": 0
+        }
+      ],
+      "seekRadius": 16,
+      "enemies": [
+        {
+          "x": 60,
+          "z": 0
+        }
+      ],
+      "contestRadius": 12,
+      "denyWeight": 8,
+      "expected": {
+        "x": 3,
         "z": 0
       }
     }

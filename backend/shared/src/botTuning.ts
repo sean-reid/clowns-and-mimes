@@ -87,6 +87,12 @@ export const BOT_PATROL_SPREAD_WEIGHT = 0.7;
 
 // Item seeking.
 export const BOT_ITEM_SEEK_RADIUS = 16;
+// Item denial: a reachable floor item an enemy is contesting (within
+// CONTEST_RADIUS of it, and the bot no farther from it than that enemy) is worth
+// a DENY_WEIGHT detour over a marginally closer uncontested item, so the bot
+// snatches power-ups out from under the enemy.
+export const BOT_ITEM_CONTEST_RADIUS = 12;
+export const BOT_ITEM_DENY_WEIGHT = 8;
 
 // Jump triggers.
 export const BOT_JUMP_REFRACTORY_MS = 1500;

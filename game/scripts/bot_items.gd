@@ -32,7 +32,14 @@ static func decide_item_use(item: String, ctx: Dictionary, params: Dictionary) -
 			var engaged: bool = ctx.chasing or ctx.fleeing
 			var close: bool = ctx.enemy_dist < float(params.sprint_trigger_radius)
 			var tired: bool = ctx.sprint_energy < float(params.max_sprint) * 0.5
-			return _spend() if (engaged and close and tired) else _hold()
+			if engaged and close and tired:
+				return _spend()
+			# In extremis - an imminent tag either way - burn surge regardless of
+			# energy: landing/dodging the tag beats conserving sprint.
+			var imminent: bool = (
+				ctx.enemy_dist <= float(params.tag_radius) + float(params.jump_evade_buffer)
+			)
+			return _spend() if (engaged and imminent) else _hold()
 		"overcharge":
 			# Arm the shot the bot is about to fire.
 			return _spend() if ctx.can_shoot else _hold()

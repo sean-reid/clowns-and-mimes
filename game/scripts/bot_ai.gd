@@ -459,6 +459,8 @@ func _random_patrol_point() -> Vector3:
 # sweeps the map instead of pacing. Mirrors online pickExplorationPatrolPoint.
 func _pick_exploration_patrol_point() -> Vector3:
 	var walls: Array = labyrinth.wall_endpoints() if labyrinth != null else []
+	var teammates := _teammate_positions()
+	var now_ms := float(Time.get_ticks_msec())
 	var best := _random_patrol_point()
 	var best_score := -INF
 	for _i in BOT_PATROL_CANDIDATE_ATTEMPTS:
@@ -468,13 +470,30 @@ func _pick_exploration_patrol_point() -> Vector3:
 		var cell: int = pathfinder.cell_at(candidate) if pathfinder != null else -1
 		var score: float = BotExplorationScript.patrol_candidate_score(
 			candidate, cell, player.global_position, last_dir, _visited,
-			float(Time.get_ticks_msec()), SharedConstants.BOT_PATROL_VISIT_DECAY_MS,
-			SharedConstants.BOT_PATROL_MOMENTUM_BONUS
+			now_ms, SharedConstants.BOT_PATROL_VISIT_DECAY_MS,
+			SharedConstants.BOT_PATROL_MOMENTUM_BONUS,
+			teammates, SharedConstants.BOT_PATROL_SPREAD_RADIUS, SharedConstants.BOT_PATROL_SPREAD_WEIGHT
 		)
 		if score > best_score:
 			best_score = score
 			best = candidate
 	return best
+
+# Same-team player positions to spread patrol away from (so the team covers
+# distinct regions instead of clustering). Includes the human teammate.
+func _teammate_positions() -> Array:
+	var out: Array = []
+	# _ready picks an initial patrol target before attach() wires rules/player,
+	# so guard against the un-attached state (the first pick just gets no spread).
+	if rules == null or player == null:
+		return out
+	for pid in rules.players:
+		if pid == player_id:
+			continue
+		var p: Dictionary = rules.players[pid]
+		if p.get("team", "") == player.team:
+			out.append(p.get("position", Vector3.ZERO))
+	return out
 
 # Commit a fresh exploration target. Mirrors online commitPatrolTarget.
 func _commit_patrol_target() -> void:

@@ -21,6 +21,19 @@ func _make_setup() -> Dictionary:
 	rules.register_player("self", "mime", Vector3.ZERO, "self", true)
 	return {"rules": rules, "ai": ai, "player": player, "topology": topology}
 
+func test_patrol_pick_before_attach_is_safe() -> void:
+	# A bot's _ready fires on add_child, BEFORE attach() wires rules/pathfinder
+	# (that's the real offline spawn order). The initial patrol pick must not
+	# touch the un-attached state - this guards the regression where team-spread
+	# read rules.players on a null rules and crashed at match start.
+	var tree := Engine.get_main_loop() as SceneTree
+	var body := CharacterBody3D.new()
+	tree.root.add_child(body)
+	var ai: Node = BotAIScript.new()
+	body.add_child(ai)  # fires _ready -> _commit_patrol_target with no rules yet
+	assert_true(is_instance_valid(ai), "bot _ready survived spawning before attach")
+	body.free()
+
 func test_chase_state_when_enemy_visible_during_own_turn() -> void:
 	var ctx: Dictionary = _make_setup()
 	var rules: Node = ctx["rules"]

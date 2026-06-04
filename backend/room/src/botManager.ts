@@ -32,6 +32,8 @@ import {
   BOT_PATROL_CANDIDATE_ATTEMPTS,
   BOT_PATROL_MOMENTUM_BONUS,
   BOT_PATROL_RETARGET_MS,
+  BOT_PATROL_SPREAD_RADIUS,
+  BOT_PATROL_SPREAD_WEIGHT,
   BOT_PATROL_VISIT_DECAY_MS,
   BOT_SHOOT_AIM_JITTER,
   BOT_SHOOT_RANGE,
@@ -60,6 +62,8 @@ const WORLD_WIDTH = 80;
 const EXPLORATION_PARAMS: ExplorationParams = {
   decayMs: BOT_PATROL_VISIT_DECAY_MS,
   momentumBonus: BOT_PATROL_MOMENTUM_BONUS,
+  spreadRadius: BOT_PATROL_SPREAD_RADIUS,
+  spreadWeight: BOT_PATROL_SPREAD_WEIGHT,
 };
 
 // Server-only bot orchestration (slot fill). The behavioral tuning lives in
@@ -322,6 +326,13 @@ export class BotManager {
   } {
     const walls = this.host.getWalls();
     const pathfinder = this.host.getPathfinder();
+    // Same-team players to spread away from (so the team covers distinct regions).
+    const teammates: Vec2[] = [];
+    for (const other of this.host.players.values()) {
+      if (other.id !== bot.id && other.team === bot.team) {
+        teammates.push({ x: other.position.x, z: other.position.z });
+      }
+    }
     let best = this.randomPatrolPoint();
     let bestScore = -Infinity;
     for (let attempt = 0; attempt < BOT_PATROL_CANDIDATE_ATTEMPTS; attempt += 1) {
@@ -336,6 +347,7 @@ export class BotManager {
         mind.visited,
         now,
         EXPLORATION_PARAMS,
+        teammates,
       );
       if (score > bestScore) {
         bestScore = score;

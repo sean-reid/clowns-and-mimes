@@ -3,7 +3,9 @@
   "now": 100000,
   "params": {
     "decayMs": 12000,
-    "momentumBonus": 0.5
+    "momentumBonus": 0.5,
+    "spreadRadius": 24,
+    "spreadWeight": 0.7
   },
   "scenarios": [
     {
@@ -101,6 +103,60 @@
         "5": 100000
       },
       "expected": 1
+    },
+    {
+      "name": "teammate_far",
+      "candidateX": 0,
+      "candidateZ": 0,
+      "candidateCell": 5,
+      "botX": 0,
+      "botZ": 0,
+      "headingX": 0,
+      "headingZ": 0,
+      "visited": {},
+      "teammates": [
+        {
+          "x": 40,
+          "z": 0
+        }
+      ],
+      "expected": 1
+    },
+    {
+      "name": "teammate_near",
+      "candidateX": 0,
+      "candidateZ": 0,
+      "candidateCell": 5,
+      "botX": 0,
+      "botZ": 0,
+      "headingX": 0,
+      "headingZ": 0,
+      "visited": {},
+      "teammates": [
+        {
+          "x": 12,
+          "z": 0
+        }
+      ],
+      "expected": 0.65
+    },
+    {
+      "name": "teammate_on_top",
+      "candidateX": 0,
+      "candidateZ": 0,
+      "candidateCell": 5,
+      "botX": 0,
+      "botZ": 0,
+      "headingX": 0,
+      "headingZ": 0,
+      "visited": {},
+      "teammates": [
+        {
+          "x": 0,
+          "z": 0
+        }
+      ],
+      "expected": 0.30000000000000004
     }
   ]
 }

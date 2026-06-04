@@ -26,7 +26,10 @@ static func patrol_candidate_score(
 	visited: Dictionary,
 	now_ms: float,
 	decay_ms: float,
-	momentum_bonus: float
+	momentum_bonus: float,
+	teammates: Array = [],
+	spread_radius: float = 0.0,
+	spread_weight: float = 0.0
 ) -> float:
 	var age: float = decay_ms
 	if candidate_cell >= 0 and visited.has(candidate_cell):
@@ -39,4 +42,15 @@ static func patrol_candidate_score(
 	var forward: float = 0.0
 	if length > 1e-6 and hlen > 1e-6:
 		forward = maxf(0.0, (dx * heading.x + dz * heading.z) / (length * hlen))
-	return staleness + momentum_bonus * forward
+	# Team-spread: nearest teammate within spread_radius penalizes this candidate,
+	# ramping to spread_weight at zero distance, so the team fans out.
+	var crowd: float = 0.0
+	if spread_radius > 0.0:
+		var nearest := INF
+		for t in teammates:
+			var td: float = sqrt((candidate.x - t.x) * (candidate.x - t.x) + (candidate.z - t.z) * (candidate.z - t.z))
+			if td < nearest:
+				nearest = td
+		if nearest < spread_radius:
+			crowd = spread_weight * (1.0 - nearest / spread_radius)
+	return staleness + momentum_bonus * forward - crowd

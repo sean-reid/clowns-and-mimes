@@ -39,6 +39,11 @@ export const BOT_RECENT_TARGET_RADIUS = 10;
 // keep-going-forward term against staleness (which is 0..1).
 export const BOT_PATROL_VISIT_DECAY_MS = 12000;
 export const BOT_PATROL_MOMENTUM_BONUS = 0.5;
+// Team-spread: a patrol candidate is penalized for sitting within SPREAD_RADIUS
+// of a teammate (penalty ramps to SPREAD_WEIGHT at zero distance), so the team
+// fans out across distinct regions instead of clustering.
+export const BOT_PATROL_SPREAD_RADIUS = 24;
+export const BOT_PATROL_SPREAD_WEIGHT = 0.7;
 
 // Item seeking.
 export const BOT_ITEM_SEEK_RADIUS = 16;

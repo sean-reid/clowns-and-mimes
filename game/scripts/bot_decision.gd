@@ -30,7 +30,7 @@ static func decide(
 	has_rescue_claim: bool = false
 ) -> Dictionary:
 	var vision: float = params.vision_radius
-	var candidate := BotPerception.nearest_visible_enemy(bot, players, walls, topology, now)
+	var candidate := BotPerception.best_visible_enemy(bot, players, walls, topology, now)
 	var candidate_dist: float = (
 		topology.distance(bot.position, candidate.position) if not candidate.is_empty() else INF
 	)

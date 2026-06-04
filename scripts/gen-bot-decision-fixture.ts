@@ -57,6 +57,14 @@ const fresh = (): Engagement => ({
   investigateUntil: 0,
 });
 const WALL: WallSegment[] = [{ ax: 3, az: -6, bx: 3, bz: 6 }];
+// An L-shaped corner wrapping the west + south of (-8, 0), close enough
+// (within BOT_TARGET_CORNER_SAMPLE_DIST) that most rays cast from there hit a
+// wall - boxing that enemy in - while leaving the eastward line of sight from
+// the bot at the origin clear.
+const CORNER_WALLS: WallSegment[] = [
+  { ax: -11, az: -2, bx: -5, bz: -2 },
+  { ax: -10, az: -3, bx: -10, bz: 3 },
+];
 
 const SCENARIOS: Scenario[] = [
   {
@@ -123,6 +131,36 @@ const SCENARIOS: Scenario[] = [
     now: 1000,
     active: 'mime',
     engagement: { engagedTargetId: 'A', lastKnownPos: null, investigateUntil: 0 },
+  },
+  {
+    // Two enemies equidistant (6), but 'D' is shielded by a teammate 'd2' right
+    // beside it while 'L' is on its own. 'D' is listed first, so a nearest-only
+    // pick would lock 'D'; tag-value picks the isolated 'L'.
+    name: 'tag_value_prefers_isolated',
+    bot: { id: 'bot', team: 'mime', x: 0, z: 0 },
+    players: [
+      { id: 'D', team: 'clown', x: 6, z: 0 },
+      { id: 'd2', team: 'clown', x: 6, z: 1.5 },
+      { id: 'L', team: 'clown', x: 0, z: 6 },
+    ],
+    now: 1000,
+    active: 'mime',
+    engagement: fresh(),
+  },
+  {
+    // Two enemies equidistant (8); 'O' stands in the open, 'C' is backed into a
+    // wall corner. 'O' is listed first (nearest-tie winner), but tag-value picks
+    // the cornered 'C' as the more catchable target.
+    name: 'tag_value_prefers_cornered',
+    bot: { id: 'bot', team: 'mime', x: 0, z: 0 },
+    players: [
+      { id: 'O', team: 'clown', x: 8, z: 0 },
+      { id: 'C', team: 'clown', x: -8, z: 0 },
+    ],
+    walls: CORNER_WALLS,
+    now: 1000,
+    active: 'mime',
+    engagement: fresh(),
   },
   {
     name: 'occlusion_investigate',

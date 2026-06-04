@@ -8,6 +8,11 @@ extends RefCounted
 
 const WallGeometry := preload("res://scripts/wall_geometry.gd")
 const TopologyScript := preload("res://scripts/topology/topology.gd")
+const SharedConstants := preload("res://scripts/shared_constants.gd")
+
+## Compass directions sampled to gauge corneredness. Mirrors
+## botPerception.ts's CORNER_SAMPLES; kept in lockstep at 8 (not a tuning knob).
+const CORNER_SAMPLES := 8
 
 ## Hidden from perception while Cloak is active (offline has no items yet, so
 ## cloak_until defaults to 0 and this is always false until 6d/6e).
@@ -37,6 +42,70 @@ static func nearest_visible_enemy(
 		var d := topology.distance(bot.position, other.position)
 		if d < best_dist:
 			best_dist = d
+			best = other
+	return best
+
+## Fraction (0..1) of sampled directions around a point blocked by a wall within
+## sample_dist - a cheap "how boxed in" proxy. Mirrors corneredness().
+static func _corneredness(pos: Vector3, walls: Array, sample_dist: float) -> float:
+	if walls.is_empty():
+		return 0.0
+	var blocked := 0
+	for k in CORNER_SAMPLES:
+		var a := (float(k) / float(CORNER_SAMPLES)) * TAU
+		var ex := pos.x + cos(a) * sample_dist
+		var ez := pos.z + sin(a) * sample_dist
+		if WallGeometry.path_crosses_wall(walls, pos.x, pos.z, ex, ez):
+			blocked += 1
+	return float(blocked) / float(CORNER_SAMPLES)
+
+## How cut off an enemy is from its own (active) team. Mirrors teamIsolation();
+## frozen allies don't count. 0 = teammate beside it, 1 = none within vision.
+static func _team_isolation(
+	enemy: Dictionary, players: Array, topology: TopologyScript, vision_radius: float
+) -> float:
+	var nearest := INF
+	for other in players:
+		if other.id == enemy.id or other.team != enemy.team:
+			continue
+		if other.get("frozen", false):
+			continue
+		var d := topology.distance(enemy.position, other.position)
+		if d < nearest:
+			nearest = d
+	if nearest == INF:
+		return 1.0
+	return min(nearest / vision_radius, 1.0)
+
+## Among visible enemies, the most catchable - mirrors best_visible_enemy().
+## value = -dist + cornered*CORNER_WEIGHT + isolated*ISOLATION_WEIGHT. Reduces to
+## nearest_visible_enemy in the open with symmetric teams. Returns {} for none.
+static func best_visible_enemy(
+	bot: Dictionary, players: Array, walls: Array, topology: TopologyScript, now: float
+) -> Dictionary:
+	var best: Dictionary = {}
+	var best_value := -INF
+	for other in players:
+		if other.id == bot.id or other.team == bot.team:
+			continue
+		if other.get("frozen", false) or is_cloaked(other, now):
+			continue
+		if not bot_can_see(walls, bot.position, other.position):
+			continue
+		var dist := topology.distance(bot.position, other.position)
+		var cornered := _corneredness(
+			other.position, walls, SharedConstants.BOT_TARGET_CORNER_SAMPLE_DIST
+		)
+		var isolated := _team_isolation(
+			other, players, topology, SharedConstants.BOT_VISION_RADIUS
+		)
+		var value := (
+			-dist
+			+ cornered * SharedConstants.BOT_TARGET_CORNER_WEIGHT
+			+ isolated * SharedConstants.BOT_TARGET_ISOLATION_WEIGHT
+		)
+		if value > best_value:
+			best_value = value
 			best = other
 	return best
 

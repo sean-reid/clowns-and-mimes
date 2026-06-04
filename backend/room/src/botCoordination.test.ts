@@ -1,18 +1,20 @@
 import { describe, expect, it } from 'vitest';
 import type { PlayerState, Team } from '@cm/shared';
-import { assignRescues } from './botCoordination.ts';
+import { assignChases, assignRescues } from './botCoordination.ts';
+import { topologyDistance } from '@cm/shared/topology';
 
 function player(over: {
   id: string;
   team: Team;
   position?: { x: number; z: number };
   frozen?: boolean;
+  bot?: boolean;
 }): PlayerState {
   return {
     id: over.id,
     name: over.id,
     team: over.team,
-    bot: true,
+    bot: over.bot ?? true,
     position: { x: over.position?.x ?? 0, y: 0.5, z: over.position?.z ?? 0 },
     yaw: 0,
     frozen: over.frozen ?? false,
@@ -24,6 +26,7 @@ function player(over: {
 
 const VISION = 22;
 const assign = (roster: PlayerState[]) => assignRescues(roster, 'plane', 80, VISION);
+const chase = (roster: PlayerState[]) => assignChases(roster, [], 'plane', 80, 1000, VISION);
 
 describe('assignRescues', () => {
   it('assigns a lone frozen ally to the only free bot', () => {
@@ -82,5 +85,48 @@ describe('assignRescues', () => {
     const reversed = assign([a2, a1, b2, b1]);
     expect(forward.get('b1')?.target.id).toBe(reversed.get('b1')?.target.id);
     expect(forward.get('b2')?.target.id).toBe(reversed.get('b2')?.target.id);
+  });
+});
+
+describe('assignChases', () => {
+  it('does not claim a lone chaser (it drives straight at the target)', () => {
+    const b = player({ id: 'b', team: 'mime', position: { x: 0, z: 0 } });
+    const e = player({ id: 'e', team: 'clown', position: { x: 5, z: 0 }, bot: false });
+    expect(chase([b, e]).size).toBe(0);
+  });
+
+  it('does not claim bots chasing separate targets', () => {
+    const b1 = player({ id: 'b1', team: 'mime', position: { x: 0, z: 0 } });
+    const e1 = player({ id: 'e1', team: 'clown', position: { x: 3, z: 0 }, bot: false });
+    const b2 = player({ id: 'b2', team: 'mime', position: { x: 0, z: 20 } });
+    const e2 = player({ id: 'e2', team: 'clown', position: { x: 3, z: 20 }, bot: false });
+    expect(chase([b1, e1, b2, e2]).size).toBe(0);
+  });
+
+  it('fans two co-chasers onto opposite sides of the target (pincer)', () => {
+    // Both bots sit on the -x side of the enemy; one keeps the near approach,
+    // the other is routed behind it.
+    const b1 = player({ id: 'b1', team: 'mime', position: { x: 0, z: 0 } });
+    const b2 = player({ id: 'b2', team: 'mime', position: { x: 1, z: 0 } });
+    const e = player({ id: 'e', team: 'clown', position: { x: 10, z: 0 }, bot: false });
+    const claims = chase([b1, b2, e]);
+    expect(claims.size).toBe(2);
+    expect(claims.get('b1')?.targetId).toBe('e');
+    expect(claims.get('b2')?.targetId).toBe('e');
+    // The two flank goals sit on a ring around the enemy at distinct angles, so
+    // their goals differ and one is on the far (x > enemy) side.
+    const g1 = claims.get('b1')!.goal;
+    const g2 = claims.get('b2')!.goal;
+    expect(topologyDistance(g1, g2, 'plane', 80)).toBeGreaterThan(2);
+    const farthest = Math.max(g1.x, g2.x);
+    expect(farthest).toBeGreaterThan(10);
+  });
+
+  it('ignores frozen bots as chasers', () => {
+    const b1 = player({ id: 'b1', team: 'mime', position: { x: 0, z: 0 } });
+    const b2 = player({ id: 'b2', team: 'mime', position: { x: 1, z: 0 }, frozen: true });
+    const e = player({ id: 'e', team: 'clown', position: { x: 10, z: 0 }, bot: false });
+    // Only b1 is an active chaser, so the group is size 1 and unclaimed.
+    expect(chase([b1, b2, e]).size).toBe(0);
   });
 });

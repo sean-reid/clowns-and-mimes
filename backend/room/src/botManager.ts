@@ -20,6 +20,8 @@ import {
   WALK_SPEED,
 } from '@cm/shared/movement';
 import {
+  BOT_CHASE_FLANK_RADIUS,
+  BOT_CHASE_FLANK_RELEASE_DIST,
   BOT_FLEE_PROJECTION,
   BOT_INVESTIGATE_MS,
   BOT_ITEM_SEEK_RADIUS,
@@ -53,7 +55,7 @@ import { decideBotAction } from './botDecision.ts';
 import { decideItemUse } from './botItems.ts';
 import { nearestEnemy } from './botPerception.ts';
 import { nearestItemTarget, portalEscapeTarget } from './botGoals.ts';
-import { assignRescues } from './botCoordination.ts';
+import { assignChases, assignRescues } from './botCoordination.ts';
 import { markVisited, patrolCandidateScore, type ExplorationParams } from './botExploration.ts';
 
 // World half-extent (kept private here; Room owns the canonical constant).
@@ -395,6 +397,17 @@ export class BotManager {
       WORLD_WIDTH,
       BOT_VISION_RADIUS,
     );
+    // One pincer slot per bot sharing a chase target, so a pack fans out around
+    // the enemy instead of conga-lining in. Computed once per tick.
+    const chaseClaims = assignChases(
+      this.host.players.values(),
+      walls,
+      topology,
+      WORLD_WIDTH,
+      now,
+      BOT_VISION_RADIUS,
+      BOT_CHASE_FLANK_RADIUS,
+    );
 
     for (const bot of this.botPlayers()) {
       if (bot.frozen) continue;
@@ -560,10 +573,17 @@ export class BotManager {
           : rescueTarget.position;
         dir = wrappedUnitDelta(bot.position, waypoint, topology, WORLD_WIDTH);
       } else if (decision.mode === 'chase' && target) {
+        // Use the assigned flank slot only while still closing from range; once
+        // inside FLANK_RELEASE_DIST drive straight at the target for the tag.
+        const claim = chaseClaims.get(bot.id);
+        const chaseGoal =
+          claim && claim.targetId === target.id && enemyDist > BOT_CHASE_FLANK_RELEASE_DIST
+            ? claim.goal
+            : target.position;
         const avoid = this.avoidPositionsForBot(bot);
         const waypoint = pathfinder
-          ? pathfinder.nextWaypointAvoiding(bot.position, target.position, avoid)
-          : target.position;
+          ? pathfinder.nextWaypointAvoiding(bot.position, chaseGoal, avoid)
+          : chaseGoal;
         dir = wrappedUnitDelta(bot.position, waypoint, topology, WORLD_WIDTH);
       } else if (decision.mode === 'investigate' && mind.lastKnownPos) {
         const avoid = this.avoidPositionsForBot(bot);

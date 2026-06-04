@@ -1,6 +1,7 @@
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "vision": 22,
+  "now": 1000,
   "scenarios": [
     {
       "name": "lone",
@@ -170,6 +171,142 @@
         "b1": "a1",
         "b2": "a2"
       }
+    }
+  ],
+  "chaseScenarios": [
+    {
+      "name": "pincer_two",
+      "players": [
+        {
+          "id": "b1",
+          "team": "mime",
+          "x": 0,
+          "z": 0
+        },
+        {
+          "id": "b2",
+          "team": "mime",
+          "x": 1,
+          "z": 0
+        },
+        {
+          "id": "e",
+          "team": "clown",
+          "x": 10,
+          "z": 0,
+          "bot": false
+        }
+      ],
+      "expected": {
+        "b1": {
+          "targetId": "e",
+          "goalX": 6,
+          "goalZ": 4.898587196589413e-16
+        },
+        "b2": {
+          "targetId": "e",
+          "goalX": 14,
+          "goalZ": -9.797174393178826e-16
+        }
+      }
+    },
+    {
+      "name": "pincer_three",
+      "players": [
+        {
+          "id": "b1",
+          "team": "mime",
+          "x": 0,
+          "z": 0
+        },
+        {
+          "id": "b2",
+          "team": "mime",
+          "x": 0,
+          "z": 1
+        },
+        {
+          "id": "b3",
+          "team": "mime",
+          "x": 0,
+          "z": -1
+        },
+        {
+          "id": "e",
+          "team": "clown",
+          "x": 10,
+          "z": 0,
+          "bot": false
+        }
+      ],
+      "expected": {
+        "b3": {
+          "targetId": "e",
+          "goalX": 6.019851239160044,
+          "goalZ": -0.3980148760839955
+        },
+        "b2": {
+          "targetId": "e",
+          "goalX": 12.334765374192834,
+          "goalZ": -3.2479024996865595
+        },
+        "b1": {
+          "targetId": "e",
+          "goalX": 11.645383386647124,
+          "goalZ": 3.6459173757705536
+        }
+      }
+    },
+    {
+      "name": "solo_unclaimed",
+      "players": [
+        {
+          "id": "b",
+          "team": "mime",
+          "x": 0,
+          "z": 0
+        },
+        {
+          "id": "e",
+          "team": "clown",
+          "x": 5,
+          "z": 0,
+          "bot": false
+        }
+      ],
+      "expected": {}
+    },
+    {
+      "name": "separate_targets",
+      "players": [
+        {
+          "id": "b1",
+          "team": "mime",
+          "x": 0,
+          "z": 0
+        },
+        {
+          "id": "e1",
+          "team": "clown",
+          "x": 3,
+          "z": 0,
+          "bot": false
+        },
+        {
+          "id": "b2",
+          "team": "mime",
+          "x": 0,
+          "z": 20
+        },
+        {
+          "id": "e2",
+          "team": "clown",
+          "x": 3,
+          "z": 20,
+          "bot": false
+        }
+      ],
+      "expected": {}
     }
   ]
 }

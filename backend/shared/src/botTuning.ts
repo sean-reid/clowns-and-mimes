@@ -27,6 +27,14 @@ export const BOT_SHOOT_RANGE = 18;
 export const BOT_SHOOT_AIM_JITTER = 0.09;
 export const RETARGET_HYSTERESIS = 0.75;
 export const BOT_INVESTIGATE_MS = 3000;
+// Chase coordination (botCoordination.assignChases). When two or more bots hunt
+// the same enemy they're fanned out onto a ring of this radius around it at
+// evenly-spaced angles, so they pincer from different sides instead of
+// conga-lining in from one. The flank goal only steers the approach while the
+// bot is farther than FLANK_RELEASE_DIST from the target; inside that it drives
+// straight in for the tag (RELEASE > RADIUS leaves a convergence zone).
+export const BOT_CHASE_FLANK_RADIUS = 4;
+export const BOT_CHASE_FLANK_RELEASE_DIST = 6;
 
 // Movement / steering.
 export const BOT_SPRINT_TRIGGER_RADIUS = 10;

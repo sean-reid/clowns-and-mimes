@@ -33,6 +33,33 @@ describe('bucketLabel', () => {
     expect(bucketLabel({ t: 'item_pickup', itemType: 'leap' })).toBe('leap');
     expect(bucketLabel({ t: 'item_used', itemType: 'portal' })).toBe('portal');
   });
+
+  it('labels projectile_hit by distance bucket', () => {
+    expect(bucketLabel({ t: 'projectile_hit', distanceBucket: 'close' })).toBe('close');
+  });
+
+  it('labels match_abandoned by phase', () => {
+    expect(bucketLabel({ t: 'match_abandoned', durationS: 42, phase: 'turn_mime' })).toBe(
+      'phase turn_mime',
+    );
+  });
+
+  it('labels connect_result by outcome, with the reason for rejections', () => {
+    expect(bucketLabel({ t: 'connect_result', outcome: 'connected', reason: '' })).toBe(
+      'connected',
+    );
+    expect(
+      bucketLabel({ t: 'connect_result', outcome: 'timeout_offline', reason: 'network timed out' }),
+    ).toBe('timeout_offline');
+    expect(
+      bucketLabel({ t: 'connect_result', outcome: 'rejected', reason: 'version_mismatch' }),
+    ).toBe('rejected: version_mismatch');
+  });
+
+  it('labels reconnect and menu_funnel by their outcome/action', () => {
+    expect(bucketLabel({ t: 'reconnect', outcome: 'success' })).toBe('success');
+    expect(bucketLabel({ t: 'menu_funnel', action: 'open' })).toBe('open');
+  });
 });
 
 describe('parseWranglerJson', () => {

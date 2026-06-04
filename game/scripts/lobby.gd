@@ -42,6 +42,8 @@ var transition_started: bool = false
 # during the transition so the arena's connections don't clash. The actual
 # RoomClient lives under NetClient so it outlives this scene.
 var _room_signal_handlers: Array = []
+# Telemetry: emit connect_result("connected") at most once per lobby session.
+var _connect_emitted: bool = false
 # Our own player id, learned from the first snapshot. Used to recognise a
 # host_changed promotion aimed at us when the original host leaves the lobby.
 var _local_id: String = ""
@@ -240,6 +242,9 @@ func _go_offline(reason: String) -> void:
 	if network_resolved:
 		return
 	network_resolved = true
+	# Online didn't pan out (matchmaker timeout / net client unavailable); we're
+	# falling back to bots. `reason` carries which.
+	Telemetry.track_connect_result("timeout_offline", reason)
 	GameState.server_url = ""
 	GameState.host_token = ""
 	GameState.is_room_host = false
@@ -267,6 +272,10 @@ func _open_ws(username: String, host_token: String) -> void:
 		entry[0].connect(entry[1], entry[2])
 
 func _on_snapshot(snapshot: Dictionary, you_are: String) -> void:
+	# First snapshot = we're connected to a live online room.
+	if not _connect_emitted:
+		_connect_emitted = true
+		Telemetry.track_connect_result("connected")
 	if not you_are.is_empty():
 		_local_id = you_are
 	_render_roster_from(snapshot.get("players", []))
@@ -341,12 +350,15 @@ func _on_room_disconnected(reason: String) -> void:
 	# peer: 4003)" raw status text.
 	var code: int = _parse_close_code(reason)
 	if code == 4003:
+		Telemetry.track_connect_result("rejected", "match_in_progress")
 		_show_match_in_progress_popup()
 		return
 	if code == 4004:
+		Telemetry.track_connect_result("rejected", "session_expired")
 		_show_session_expired_popup()
 		return
 	if code == 4002:
+		Telemetry.track_connect_result("rejected", "room_full")
 		_show_room_full_popup()
 		return
 	status_label.text = "Disconnected from lobby. (%s)" % reason

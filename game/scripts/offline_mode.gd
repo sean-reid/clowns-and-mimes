@@ -86,6 +86,9 @@ func start() -> void:
 		if arena.rules.players[pid].get("bot", false):
 			bots += 1
 	Telemetry.track_match_start(arena.topology.name(), "offline", 1, bots)
+	# Mark the match live so leaving before a win counts as match_abandoned
+	# (arena._on_back_to_menu reads this flag; _on_won clears it).
+	arena._match_telemetry_emitted = true
 
 ## Called from arena._process during offline play. Pushes live positions
 ## to the rules engine, runs the item pickup/respawn pass, and refreshes the
@@ -468,6 +471,9 @@ func _on_saved(victim_id: String, savior_id: String) -> void:
 func _on_won(team: String) -> void:
 	var victory: bool = team == arena.local_player.team
 	Telemetry.track_match_end("won" if victory else "lost", arena.local_player.team)
+	# Match completed cleanly - clear the live flag so the trip back to the menu
+	# isn't counted as an abandon.
+	arena._match_telemetry_emitted = false
 	arena.hud.show_end(victory)
 	arena._play_stinger(victory)
 

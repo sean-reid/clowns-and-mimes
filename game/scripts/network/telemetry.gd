@@ -119,6 +119,23 @@ func track_item_used(item_type: String) -> void:
 func track_projectile_hit(distance: float) -> void:
 	event({"t": "projectile_hit", "distanceBucket": distance_bucket(distance)})
 
+## The player left a live match before it ended. Does NOT bump match_count
+## (that counts completed matches); duration is measured from the match start.
+func track_match_abandoned(phase: String) -> void:
+	var duration_s: float = 0.0
+	if _match_start_ms > 0.0:
+		duration_s = (float(Time.get_ticks_msec()) - _match_start_ms) / 1000.0
+	event({"t": "match_abandoned", "durationS": duration_s, "phase": phase})
+
+func track_connect_result(outcome: String, reason: String = "") -> void:
+	event({"t": "connect_result", "outcome": outcome, "reason": reason})
+
+func track_reconnect(outcome: String) -> void:
+	event({"t": "reconnect", "outcome": outcome})
+
+func track_menu_funnel(action: String) -> void:
+	event({"t": "menu_funnel", "action": action})
+
 ## Map a shot's shooter-to-victim distance to the schema's bucket label.
 static func distance_bucket(distance: float) -> String:
 	if distance <= HIT_BUCKET_CLOSE_MAX:

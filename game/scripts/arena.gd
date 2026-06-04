@@ -633,12 +633,14 @@ const VersionCheck := preload("res://scripts/network/version_check.gd")
 
 func _on_room_error(code: String, message: String) -> void:
 	if code == "version_mismatch":
+		Telemetry.track_connect_result("rejected", "version_mismatch")
 		_show_version_mismatch_popup(message)
 		return
 	if code == "session_expired":
 		# Reconnect grace window expired before our ladder got a session
 		# token back to the server. The player's slot is gone; the match
 		# may still be running. Send them back to the menu cleanly.
+		Telemetry.track_connect_result("rejected", "session_expired")
 		_show_rejected_popup(
 			"Match ended",
 			"You were disconnected for too long. Returning to the menu.",
@@ -649,6 +651,7 @@ func _on_room_error(code: String, message: String) -> void:
 		# session token. Most often hit when the matchmaker has not yet
 		# reaped a now-running room from its open pool, or when a stale
 		# private code is shared after the host started the match.
+		Telemetry.track_connect_result("rejected", "match_in_progress")
 		_show_rejected_popup(
 			"Match already running",
 			"This room is already mid-match. Try Find Match again for a new one.",
@@ -1093,6 +1096,13 @@ func _play_stinger(victory: bool) -> void:
 	)
 
 func _on_back_to_menu() -> void:
+	# Telemetry: leaving while a match is still live (not won) is an abandon -
+	# covers menu-quit, reconnect give-up, and rejected-popup exits, which all
+	# funnel here. The win path resets the flag first, so a finished match never
+	# counts as abandoned. Offline sets the same flag in OfflineMode.start.
+	if _match_telemetry_emitted:
+		_match_telemetry_emitted = false
+		Telemetry.track_match_abandoned(phase_label)
 	Input.set_mouse_mode(Input.MOUSE_MODE_VISIBLE)
 	# The RoomClient is parented under the NetClient autoload now (so it
 	# could survive the lobby -> arena scene swap). Tearing down through

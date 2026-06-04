@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 # Launches Godot against the deployed dev backend so the editor build talks to
-# the live cm-matchmaker-dev worker. Falls back to printing instructions if
-# godot is not on PATH.
+# the live cm-matchmaker-dev worker AND reports telemetry to the dev telemetry
+# worker (not the production default), so dev playtests land in the dev KV
+# namespace - inspect with `pnpm --filter @cm/telemetry inspect --env dev`.
+# Falls back to printing instructions if godot is not on PATH.
 #
 # Godot only imports resources on first editor open or via an explicit
 # --import pass. Running the project directly on a fresh checkout skips this,
@@ -12,6 +14,9 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PROJECT="${ROOT}/game"
 export CLOWNS_MM_URL="${CLOWNS_MM_URL:-https://cm-matchmaker-dev.seanreid.workers.dev}"
+# Telemetry defaults to the production worker; point dev playtests at the dev
+# telemetry worker so their events land in the dev namespace, not production.
+export CLOWNS_TELEMETRY_URL="${CLOWNS_TELEMETRY_URL:-https://cm-telemetry-dev.seanreid.workers.dev}"
 
 GODOT_BIN=""
 if command -v godot >/dev/null 2>&1; then
@@ -38,4 +43,5 @@ if [ ! -d "${PROJECT}/.godot/imported" ]; then
 fi
 
 echo "Pointing the game at: ${CLOWNS_MM_URL}"
+echo "Telemetry -> ${CLOWNS_TELEMETRY_URL}"
 exec "${GODOT_BIN}" --path "${PROJECT}"

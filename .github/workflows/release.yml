@@ -348,6 +348,12 @@ jobs:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
         run: pnpm --filter @cm/room deploy:production
+      - if: steps.creds.outputs.configured == 'true'
+        name: Deploy telemetry
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: pnpm --filter @cm/telemetry deploy:production
 
   # Website deploys live in .github/workflows/deploy-website.yml, which fires on
   # every push to main. Tag pushes hit main first, so by the time the release

@@ -843,7 +843,14 @@ export class Room implements DurableObject {
     // already-applied (seq <= lastSeq) and the player couldn't move for the
     // rest of the match. Position history is per-match too - clearing it stops
     // lag-comp / closing-velocity from referencing the prior match's coords.
+    //
+    // Clearing inputQueues is what actually unsticks the player: the prior
+    // match's undrained input backlog (seqs into the thousands) otherwise sits
+    // in the queue and gets drained first on the next match, re-raising
+    // lastAppliedSeq right back to its old peak - so the cleared high-water
+    // mark above is immediately undone and the new low-seq stream is rejected.
     this.lastAppliedSeq.clear();
+    this.inputQueues.clear();
     this.prevTickPositions.clear();
     this.positionHistory.clear();
     this.phase = 'filling';

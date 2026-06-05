@@ -553,4 +553,57 @@ describe('Room.simulate', () => {
     expect(lastApplied.get('h1')).toBe(1);
     expect(h1.position.x).toBeGreaterThan(0);
   });
+
+  it('drops the prior match input backlog so it cannot re-raise the high-water mark', () => {
+    // Regression for the actual "frozen after Play Again" cause: clearing
+    // lastAppliedSeq alone was not enough. The prior match left an UNDRAINED
+    // input backlog (high seqs) sitting in inputQueues; on the next match the
+    // sim drains that backlog first, re-raising lastAppliedSeq right back to
+    // the old peak - so the rebuilt arena's seq-from-0 stream is rejected again
+    // and the player stays put. resetForReplay must also clear inputQueues.
+    const room = makeRoom();
+    setPhase(room, 'free_roam');
+    placeHuman(room, 'h1', 'mime', 0, 0);
+    const queues = (room as unknown as { inputQueues: Map<string, PlayerInput[]> }).inputQueues;
+    const lastApplied = (room as unknown as { lastAppliedSeq: Map<string, number> }).lastAppliedSeq;
+
+    // Leave a high-seq backlog queued but UNDRAINED, as a real match end does
+    // (inputs keep arriving up to the win; the tick stops without draining the
+    // tail). seq 3150 mirrors the value seen in the playtest trace.
+    for (let seq = 3148; seq <= 3150; seq += 1) {
+      queueInput(room, 'h1', {
+        seq,
+        dt: 1 / 60,
+        move: { x: 1, z: 0 },
+        lookYaw: 0,
+        sprint: false,
+        nowMs: Date.now(),
+      });
+    }
+
+    (room as unknown as { resetForReplay: () => void }).resetForReplay();
+    // Both the mark and the stale backlog must be gone.
+    expect(lastApplied.has('h1')).toBe(false);
+    expect(queues.get('h1')?.length ?? 0).toBe(0);
+
+    (room as unknown as { walls: readonly unknown[] }).walls = [];
+    setPhase(room, 'free_roam');
+    const h1 = (room as unknown as { players: Map<string, PlayerState> }).players.get('h1')!;
+    h1.position = { x: 0, y: 0.5, z: 0 };
+
+    // Rebuilt arena streams seq from 1. Without the inputQueues clear, the
+    // backlog (3148-3150) would drain first, set lastAppliedSeq to 3150, and
+    // this seq-1 input would be rejected (1 <= 3150) - the player never moves.
+    queueInput(room, 'h1', {
+      seq: 1,
+      dt: 1 / 60,
+      move: { x: 1, z: 0 },
+      lookYaw: 0,
+      sprint: false,
+      nowMs: Date.now(),
+    });
+    callSimulate(room);
+    expect(lastApplied.get('h1')).toBe(1);
+    expect(h1.position.x).toBeGreaterThan(0);
+  });
 });

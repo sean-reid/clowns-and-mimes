@@ -111,11 +111,6 @@ func track_item_pickup(item_type: String) -> void:
 		return
 	event({"t": "item_pickup", "itemType": item_type})
 
-func track_item_used(item_type: String) -> void:
-	if item_type.is_empty():
-		return
-	event({"t": "item_used", "itemType": item_type})
-
 func track_projectile_hit(distance: float) -> void:
 	event({"t": "projectile_hit", "distanceBucket": distance_bucket(distance)})
 

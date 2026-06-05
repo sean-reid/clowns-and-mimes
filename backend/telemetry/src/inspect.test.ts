@@ -11,8 +11,8 @@ describe('parseArgs', () => {
   });
 
   it('reads env, day, and type', () => {
-    const args = parseArgs(['--env', 'production', '--day', '2026-05-30', '--type', 'item_used']);
-    expect(args).toEqual({ env: 'production', day: '2026-05-30', type: 'item_used' });
+    const args = parseArgs(['--env', 'production', '--day', '2026-05-30', '--type', 'item_pickup']);
+    expect(args).toEqual({ env: 'production', day: '2026-05-30', type: 'item_pickup' });
   });
 });
 
@@ -29,9 +29,8 @@ describe('bucketLabel', () => {
     ).toBe('torus/open (party 2, bots 5)');
   });
 
-  it('labels item events by itemType', () => {
+  it('labels item_pickup by itemType', () => {
     expect(bucketLabel({ t: 'item_pickup', itemType: 'leap' })).toBe('leap');
-    expect(bucketLabel({ t: 'item_used', itemType: 'portal' })).toBe('portal');
   });
 
   it('labels projectile_hit by distance bucket', () => {
@@ -60,15 +59,24 @@ describe('bucketLabel', () => {
     expect(bucketLabel({ t: 'reconnect', outcome: 'success' })).toBe('success');
     expect(bucketLabel({ t: 'menu_funnel', action: 'open' })).toBe('open');
   });
+
+  it('falls back gracefully for a retired event type still in KV', () => {
+    // item_used was dropped from the schema, but old events linger until TTL;
+    // the inspector must label them rather than crash on the unmatched case.
+    expect(bucketLabel({ t: 'item_used', itemType: 'radar' } as unknown as TelemetryEvent)).toBe(
+      'radar',
+    );
+    expect(bucketLabel({ t: 'mystery' } as unknown as TelemetryEvent)).toBe('mystery');
+  });
 });
 
 describe('parseWranglerJson', () => {
   it('parses an array after a wrangler banner on stdout', () => {
     const raw =
       'Cloudflare agent skills are available for: Claude Code. Run wrangler ...\n' +
-      '[{"name":"tel:2026-05-31:item_used"}]';
+      '[{"name":"tel:2026-05-31:item_pickup"}]';
     expect(parseWranglerJson<Array<{ name: string }>>(raw)).toEqual([
-      { name: 'tel:2026-05-31:item_used' },
+      { name: 'tel:2026-05-31:item_pickup' },
     ]);
   });
 
@@ -84,9 +92,9 @@ describe('parseWranglerJson', () => {
 describe('rollup', () => {
   it('tallies events by their bucket label', () => {
     const events: TelemetryEvent[] = [
-      { t: 'item_used', itemType: 'leap' },
-      { t: 'item_used', itemType: 'leap' },
-      { t: 'item_used', itemType: 'cloak' },
+      { t: 'item_pickup', itemType: 'leap' },
+      { t: 'item_pickup', itemType: 'leap' },
+      { t: 'item_pickup', itemType: 'cloak' },
     ];
     const counts = rollup(events);
     expect(counts.get('leap')).toBe(2);

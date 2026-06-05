@@ -17,7 +17,6 @@ export type TelemetryEvent =
     }
   | { t: 'match_end'; durationS: number; outcome: 'won' | 'lost'; team: 'mime' | 'clown' }
   | { t: 'item_pickup'; itemType: string }
-  | { t: 'item_used'; itemType: string }
   | { t: 'projectile_hit'; distanceBucket: 'close' | 'medium' | 'far' }
   // Reliability + funnel signals (client-emitted).
   // The player left a live match before it ended (quit, drop, or reconnect

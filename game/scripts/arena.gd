@@ -806,7 +806,6 @@ func _stream_input(delta: float) -> void:
 	if not frozen and _input_active() and Input.is_action_pressed("use_item"):
 		if not _use_item_was_held:
 			room_client.send_use_item()
-			Telemetry.track_item_used(_held_item)
 			# Arm the local leap prediction in the same frame the server arms
 			# leapArmed, so the next predicted jump uses the boosted arc
 			# without waiting a round-trip for the authoritative leaping flag.
@@ -1147,6 +1146,11 @@ func _disconnect_room_handlers() -> void:
 
 func _on_menu_resume() -> void:
 	menu.close()
+	# in_game_menu.close() recaptures the mouse for active play, but if the
+	# match-end overlay is up (you paused on the end screen), resuming must leave
+	# the cursor free so Play Again / Back to menu stay clickable.
+	if hud != null and hud.is_end_showing():
+		Input.set_mouse_mode(Input.MOUSE_MODE_VISIBLE)
 
 func _on_menu_quit() -> void:
 	menu.close()

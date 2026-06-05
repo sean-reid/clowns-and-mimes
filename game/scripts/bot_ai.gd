@@ -435,7 +435,20 @@ func _choose_steering() -> void:
 	if to_target.length() < 0.05:
 		_intent = Vector3.ZERO
 	else:
-		_intent = _smooth_dir(last_dir, to_target.normalized(), SharedConstants.DIR_SMOOTHING)
+		var raw: Vector3 = to_target.normalized()
+		# Head-on swerve: nudge to a consistent side when other players sit close
+		# ahead, so converging bots pass instead of mirror-deadlocking. Skipped
+		# while chasing or rescuing - those need a straight line to a specific
+		# body. Mirrors botManager's pass-bias gate.
+		var engaged: bool = _decision.get("chasing", false) or _decision.get("rescuing", false)
+		if not engaged:
+			raw = _pass_bias_dir(
+				raw,
+				_pass_neighbor_offsets(),
+				SharedConstants.BOT_PASS_BIAS_RADIUS,
+				SharedConstants.BOT_PASS_BIAS_WEIGHT,
+			)
+		_intent = _smooth_dir(last_dir, raw, SharedConstants.DIR_SMOOTHING)
 	last_dir = _intent
 	# Sprint only when closing on an engagement within the trigger radius and
 	# there's energy to spend (mirrors online's closeEnemyOrRescue gate).
@@ -465,6 +478,58 @@ func _smooth_dir(last: Vector3, raw: Vector3, smoothing: float) -> Vector3:
 	)
 	var l: float = blended.length()
 	return blended / l if l > 1e-3 else Vector3.ZERO
+
+# Wrap-relative offsets to every other player within the pass-bias radius, for
+# the head-on swerve. Wrap-aware via topology.delta so it reads correctly across
+# a seam. Mirrors botManager.passNeighborOffsets.
+func _pass_neighbor_offsets() -> Array:
+	var out: Array = []
+	var self_pos: Vector3 = player.global_position
+	for pid in rules.players:
+		if pid == player_id:
+			continue
+		var op: Vector3 = rules.players[pid].get("position", Vector3.ZERO)
+		var off: Vector3 = topology.delta(self_pos, op)
+		off.y = 0.0
+		var d: float = off.length()
+		if d < 1e-3 or d >= SharedConstants.BOT_PASS_BIAS_RADIUS:
+			continue
+		out.append(off)
+	return out
+
+# Deterministic head-on avoidance ("keep right" rule). Nudges the heading toward
+# the bot's right when other players sit close ahead, so converging bots pass
+# instead of mirroring into a deadlock. offsets are wrap-relative. Re-normalized;
+# returns dir unchanged when degenerate or nothing is in the forward cone.
+# Mirrors botSteering.ts passBiasDir, including the 1e-4 quantization.
+func _pass_bias_dir(dir: Vector3, offsets: Array, radius: float, weight: float) -> Vector3:
+	var l: float = Vector2(dir.x, dir.z).length()
+	if l < 1e-3 or offsets.is_empty():
+		return dir
+	var fx: float = dir.x / l
+	var fz: float = dir.z / l
+	# Right-hand perpendicular of the heading in the XZ plane.
+	var rx: float = -fz
+	var rz: float = fx
+	var lateral: float = 0.0
+	for off in offsets:
+		var d: float = Vector2(off.x, off.z).length()
+		if d < 1e-3 or d >= radius:
+			continue
+		# Cosine of the angle to the heading: only neighbours ahead count.
+		var ahead: float = (off.x * fx + off.z * fz) / d
+		if ahead <= 0.0:
+			continue
+		var prox: float = (radius - d) / radius
+		lateral += roundf(weight * prox * ahead * 1e4) / 1e4
+	if lateral == 0.0:
+		return dir
+	var bx: float = fx + rx * lateral
+	var bz: float = fz + rz * lateral
+	var blen: float = Vector2(bx, bz).length()
+	if blen < 1e-3:
+		return dir
+	return Vector3(bx / blen, 0.0, bz / blen)
 
 func _drive() -> void:
 	player.bot_intent = _intent

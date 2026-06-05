@@ -6,6 +6,14 @@ When cutting a release: rename the `[Unreleased]` heading below to the version b
 
 ## [Unreleased]
 
+## [0.8.1] - 2026-06-04
+
+Patch release. Fixes the end-screen buttons going dead if you opened the in-game menu after a match ended.
+
+### Fixed
+
+- After a match ends, opening the pause menu with Esc and closing it again no longer leaves the mouse captured, so the end screen's Play Again and Back to Menu buttons stay clickable.
+
 ## [0.8.0] - 2026-06-03
 
 The smarter-bots release. Bots now play with real tactics instead of always charging the nearest opponent: they pick the most catchable target, surround a runner from two sides rather than trailing it in a line, flee around walls and away from a second chaser, lead their freeze shots and cut off where you are heading, react to fire they can see by relocating off the line and hopping a shot about to land, contest floor power-ups and spend them to seal a tag or an escape, leap over a wall to reach you, and pre-position for the next turn right as it flips. On patrol they roam the whole arena on every topology instead of pacing one spot or clustering together. Opt-in anonymous gameplay stats are now recorded (when you accept the prompt) to help tune the game. Online play is unchanged on the wire (protocol v4).

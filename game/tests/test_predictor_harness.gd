@@ -22,6 +22,7 @@ const Movement := preload("res://scripts/movement.gd")
 const Physics := preload("res://scripts/physics.gd")
 const TopologyFactory := preload("res://scripts/topology/topology_factory.gd")
 const SharedConstants := preload("res://scripts/shared_constants.gd")
+const OnlinePredictor := preload("res://scripts/online_predictor.gd")
 
 # --- Mock helpers ----------------------------------------------------
 
@@ -174,3 +175,42 @@ func test_harness_reconcile_replay_chain() -> void:
 		now_ms += int((1.0 / 60.0) * 1000.0)
 	var expected_x := 1.0 + 5.0 * SharedConstants.WALK_SPEED / 60.0
 	assert_approx(state["position"].x, expected_x, 0.001, "5-input replay landing position")
+
+# Regression for the mid-jump camera snap: when the server's authoritative jump
+# confirmation lags the input ack (notably under heavy load, e.g. many Clone
+# bots), the replayed value falls back to the server's not-yet-updated state and
+# reads as -1 the instant the jump input is acked. reconcile used to cancel the
+# arc then, dropping the body to the ground partway through the jump. A young
+# predicted arc is now kept until JUMP_DURATION elapses regardless of the replay.
+func test_reconcile_keeps_a_young_arc_when_server_confirmation_lags() -> void:
+	var dur_ms := int(Physics.JUMP_DURATION_S * 1000.0)
+	# Arc started 100 ms ago, server hasn't confirmed yet (replayed -1): keep it.
+	assert_eq(
+		OnlinePredictor.resolve_jump_started_at(100000, -1, 100000 + 100),
+		100000,
+		"a young predicted arc plays out even when the server has not confirmed",
+	)
+	# Arc window has passed and the server shows no arc: land.
+	assert_eq(
+		OnlinePredictor.resolve_jump_started_at(100000, -1, 100000 + dur_ms + 1),
+		-1,
+		"lands once the arc window has passed and the server has no arc",
+	)
+	# Not predicting one, server reports an arc: adopt it to start.
+	assert_eq(
+		OnlinePredictor.resolve_jump_started_at(-1, 105000, 105000),
+		105000,
+		"adopts the server start to begin an arc we were not predicting",
+	)
+	# Window passed, both active: keep our own start (they describe one arc).
+	assert_eq(
+		OnlinePredictor.resolve_jump_started_at(100000, 105000, 100000 + dur_ms + 1),
+		100000,
+		"keeps our arc start once the window passed and both agree",
+	)
+	# Neither side has an arc: stay grounded.
+	assert_eq(
+		OnlinePredictor.resolve_jump_started_at(-1, -1, 100000),
+		-1,
+		"stays grounded when neither side has an arc",
+	)

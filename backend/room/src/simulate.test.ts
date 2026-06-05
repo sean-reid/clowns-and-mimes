@@ -500,4 +500,110 @@ describe('Room.simulate', () => {
     // only cares that the seq advanced.)
     expect(lastApplied.get('h1')).toBe(60);
   });
+
+  it('accepts a fresh seq-from-0 input stream after a Play Again replay', () => {
+    // Regression for the 2026-06 "frozen after Play Again" report: the
+    // per-connection input high-water mark (lastAppliedSeq) was never reset on
+    // restart. The client rebuilds the arena on Play Again and restarts
+    // input_seq at 0, so every new input was <= the prior match's final seq
+    // and got dropped at the stepInputs gate - the player's authoritative
+    // position stayed put for the whole new match while the client rubber-banded.
+    const room = makeRoom();
+    setPhase(room, 'free_roam');
+    placeHuman(room, 'h1', 'mime', 0, 0);
+    // Play a full match's worth of inputs so the high-water mark is high.
+    for (let seq = 1; seq <= 60; seq += 1) {
+      queueInput(room, 'h1', {
+        seq,
+        dt: 1 / 60,
+        move: { x: 1, z: 0 },
+        lookYaw: 0,
+        sprint: false,
+        nowMs: Date.now(),
+      });
+      callSimulate(room);
+      vi.advanceTimersByTime(1000 / 60);
+    }
+    const lastApplied = (room as unknown as { lastAppliedSeq: Map<string, number> }).lastAppliedSeq;
+    expect(lastApplied.get('h1')).toBe(60);
+
+    // Play Again restarts the room for the same connected players.
+    (room as unknown as { resetForReplay: () => void }).resetForReplay();
+    // The seq map must be wiped so the rebuilt arena's seq-from-0 is accepted.
+    expect(lastApplied.has('h1')).toBe(false);
+
+    // resetForReplay regenerates walls from a fresh seed and respawns the
+    // player; pin both so the movement assertion is deterministic.
+    (room as unknown as { walls: readonly unknown[] }).walls = [];
+    setPhase(room, 'free_roam');
+    const h1 = (room as unknown as { players: Map<string, PlayerState> }).players.get('h1')!;
+    h1.position = { x: 0, y: 0.5, z: 0 };
+
+    // The new match's first input is seq 1 - lower than the prior 60. Before
+    // the fix this was rejected (1 <= 60) and the player never moved.
+    queueInput(room, 'h1', {
+      seq: 1,
+      dt: 1 / 60,
+      move: { x: 1, z: 0 },
+      lookYaw: 0,
+      sprint: false,
+      nowMs: Date.now(),
+    });
+    callSimulate(room);
+    expect(lastApplied.get('h1')).toBe(1);
+    expect(h1.position.x).toBeGreaterThan(0);
+  });
+
+  it('drops the prior match input backlog so it cannot re-raise the high-water mark', () => {
+    // Regression for the actual "frozen after Play Again" cause: clearing
+    // lastAppliedSeq alone was not enough. The prior match left an UNDRAINED
+    // input backlog (high seqs) sitting in inputQueues; on the next match the
+    // sim drains that backlog first, re-raising lastAppliedSeq right back to
+    // the old peak - so the rebuilt arena's seq-from-0 stream is rejected again
+    // and the player stays put. resetForReplay must also clear inputQueues.
+    const room = makeRoom();
+    setPhase(room, 'free_roam');
+    placeHuman(room, 'h1', 'mime', 0, 0);
+    const queues = (room as unknown as { inputQueues: Map<string, PlayerInput[]> }).inputQueues;
+    const lastApplied = (room as unknown as { lastAppliedSeq: Map<string, number> }).lastAppliedSeq;
+
+    // Leave a high-seq backlog queued but UNDRAINED, as a real match end does
+    // (inputs keep arriving up to the win; the tick stops without draining the
+    // tail). seq 3150 mirrors the value seen in the playtest trace.
+    for (let seq = 3148; seq <= 3150; seq += 1) {
+      queueInput(room, 'h1', {
+        seq,
+        dt: 1 / 60,
+        move: { x: 1, z: 0 },
+        lookYaw: 0,
+        sprint: false,
+        nowMs: Date.now(),
+      });
+    }
+
+    (room as unknown as { resetForReplay: () => void }).resetForReplay();
+    // Both the mark and the stale backlog must be gone.
+    expect(lastApplied.has('h1')).toBe(false);
+    expect(queues.get('h1')?.length ?? 0).toBe(0);
+
+    (room as unknown as { walls: readonly unknown[] }).walls = [];
+    setPhase(room, 'free_roam');
+    const h1 = (room as unknown as { players: Map<string, PlayerState> }).players.get('h1')!;
+    h1.position = { x: 0, y: 0.5, z: 0 };
+
+    // Rebuilt arena streams seq from 1. Without the inputQueues clear, the
+    // backlog (3148-3150) would drain first, set lastAppliedSeq to 3150, and
+    // this seq-1 input would be rejected (1 <= 3150) - the player never moves.
+    queueInput(room, 'h1', {
+      seq: 1,
+      dt: 1 / 60,
+      move: { x: 1, z: 0 },
+      lookYaw: 0,
+      sprint: false,
+      nowMs: Date.now(),
+    });
+    callSimulate(room);
+    expect(lastApplied.get('h1')).toBe(1);
+    expect(h1.position.x).toBeGreaterThan(0);
+  });
 });

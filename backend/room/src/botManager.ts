@@ -52,6 +52,8 @@ import {
   BOT_JUMP_REFRACTORY_MS,
   BOT_NO_PROGRESS_MIN_DIST,
   BOT_NO_PROGRESS_WINDOW_MS,
+  BOT_PASS_BIAS_RADIUS,
+  BOT_PASS_BIAS_WEIGHT,
   BOT_PATROL_CANDIDATE_ATTEMPTS,
   BOT_PATROL_MOMENTUM_BONUS,
   BOT_PATROL_RETARGET_MS,
@@ -73,7 +75,7 @@ import {
   UNFREEZE_RADIUS_BOT,
 } from '@cm/shared/botTuning';
 import type { BotPathfinder } from './botPathfinder.ts';
-import { smoothDir, stepWithSlide, turnToward } from './botSteering.ts';
+import { passBiasDir, smoothDir, stepWithSlide, turnToward } from './botSteering.ts';
 import { decideBotAction } from './botDecision.ts';
 import { decideItemUse } from './botItems.ts';
 import { nearestEnemy } from './botPerception.ts';
@@ -413,6 +415,22 @@ export class BotManager {
     for (const other of this.host.players.values()) {
       if (other.id === self.id) continue;
       out.push({ x: other.position.x, z: other.position.z });
+    }
+    return out;
+  }
+
+  // Wrap-relative offsets to every other player within the pass-bias radius,
+  // for the head-on swerve (passBiasDir). Wrap-aware (unit delta x distance) so
+  // it reads correctly across a seam; the offset, not the raw coordinate, is
+  // what the bias works in. Topology + width pulled from the host once per call.
+  private passNeighborOffsets(self: PlayerState, topology: Topology): Vec2[] {
+    const out: Vec2[] = [];
+    for (const other of this.host.players.values()) {
+      if (other.id === self.id) continue;
+      const d = topologyDistance(self.position, other.position, topology, WORLD_WIDTH);
+      if (d < 1e-3 || d >= BOT_PASS_BIAS_RADIUS) continue;
+      const u = wrappedUnitDelta(self.position, other.position, topology, WORLD_WIDTH);
+      out.push({ x: u.x * d, z: u.z * d });
     }
     return out;
   }
@@ -800,6 +818,19 @@ export class BotManager {
           ? pathfinder.nextWaypointAvoiding(bot.position, mind.patrolTarget, avoid)
           : mind.patrolTarget;
         dir = wrappedUnitDelta(bot.position, waypoint, topology, WORLD_WIDTH);
+      }
+      // Head-on swerve: nudge to a consistent side when other players sit close
+      // ahead, so converging bots pass instead of mirror-deadlocking. Skipped
+      // while chasing or rescuing - those need a straight line to a specific
+      // body, and the chase flank slots already keep a pack fanned out.
+      const engaged = decision.mode === 'chase' || decision.mode === 'rescue';
+      if (!engaged && (dir.x !== 0 || dir.z !== 0)) {
+        dir = passBiasDir(
+          dir,
+          this.passNeighborOffsets(bot, topology),
+          BOT_PASS_BIAS_RADIUS,
+          BOT_PASS_BIAS_WEIGHT,
+        );
       }
       dir = smoothDir(mind.lastDir, dir, DIR_SMOOTHING);
       mind.lastDir = dir;

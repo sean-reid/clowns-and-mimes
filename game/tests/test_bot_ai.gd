@@ -72,3 +72,39 @@ func test_patrol_when_no_targets() -> void:
 	var ai: Node = ctx["ai"]
 	ai._choose_state()
 	assert_eq(ai.state, BotAIScript.State.PATROL, "patrol with no targets")
+
+# Pass-bias parity: these mirror the botSteering.ts passBiasDir unit tests so the
+# offline swerve produces the same numbers as the online one.
+func test_pass_bias_veers_right_of_neighbour_ahead() -> void:
+	var ctx: Dictionary = _make_setup()
+	var ai: Node = ctx["ai"]
+	# dir=+x, neighbour 2 ahead, radius 4, weight 1 -> lateral 0.5 toward +z.
+	var d: Vector3 = ai._pass_bias_dir(Vector3(1, 0, 0), [Vector3(2, 0, 0)], 4.0, 1.0)
+	assert_approx(d.x, 0.894427, 0.0001, "keeps a forward bias")
+	assert_approx(d.z, 0.447214, 0.0001, "swerves to the right (+z)")
+
+func test_pass_bias_head_on_pair_splits() -> void:
+	var ctx: Dictionary = _make_setup()
+	var ai: Node = ctx["ai"]
+	var a: Vector3 = ai._pass_bias_dir(Vector3(1, 0, 0), [Vector3(2, 0, 0)], 4.0, 1.0)
+	var b: Vector3 = ai._pass_bias_dir(Vector3(-1, 0, 0), [Vector3(-2, 0, 0)], 4.0, 1.0)
+	assert_true(a.z > 0.0, "bot facing +x swerves +z")
+	assert_true(b.z < 0.0, "bot facing -x swerves -z")
+	assert_approx(a.z, -b.z, 0.0001, "the pair splits symmetrically")
+
+func test_pass_bias_ignores_neighbour_behind() -> void:
+	var ctx: Dictionary = _make_setup()
+	var ai: Node = ctx["ai"]
+	var d: Vector3 = ai._pass_bias_dir(Vector3(1, 0, 0), [Vector3(-2, 0, 0)], 4.0, 1.0)
+	assert_approx(d.x, 1.0, 0.0001, "heading unchanged")
+	assert_approx(d.z, 0.0, 0.0001, "no swerve for a neighbour behind")
+
+func test_pass_neighbor_offsets_filters_by_radius() -> void:
+	var ctx: Dictionary = _make_setup()
+	var rules: Node = ctx["rules"]
+	var ai: Node = ctx["ai"]
+	rules.register_player("near", "clown", Vector3(2, 0, 0), "N", true)
+	rules.register_player("far", "clown", Vector3(20, 0, 0), "F", true)
+	var offs: Array = ai._pass_neighbor_offsets()
+	assert_eq(offs.size(), 1, "only the in-radius neighbour is returned")
+	assert_approx(offs[0].x, 2.0, 0.001, "offset is wrap-relative to the bot")

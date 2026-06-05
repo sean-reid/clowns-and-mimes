@@ -61,8 +61,24 @@ export const BOT_FLEE_PROJECTION = 12;
 export const BOT_FLEE_CANDIDATES = 12;
 export const BOT_FLEE_WALL_PENALTY = 12;
 export const BOT_FLEE_BLOCKED_PENALTY = 1000;
-export const DIR_SMOOTHING = 0.5;
+// Heading smoothing across ticks (botSteering.smoothDir). Lower = more
+// responsive, less inertia: bots commit to a new heading faster instead of
+// drifting on the old one, which is what read as hesitation when two bots had
+// to swap directions to get past each other. Still damped enough to kill raw
+// per-tick waypoint jitter.
+export const DIR_SMOOTHING = 0.35;
 export const MAX_YAW_RATE = 9.0;
+// Head-on pass bias (botSteering.passBiasDir). When another player sits within
+// RADIUS and roughly ahead of a bot's heading, the bot nudges its steering to a
+// consistent side (a "keep right" rule). Two bots closing head-on therefore veer
+// apart symmetrically and pass, instead of mirroring each other's dodge into the
+// indecisive shuffle players saw. WEIGHT is the lateral push a point-blank,
+// dead-ahead neighbour adds to the unit heading (it ramps down with distance and
+// off-axis angle). Only applied when the bot is NOT actively chasing or rescuing
+// - those need a straight line to a specific body. RADIUS sits a bit beyond the
+// tag reach so the swerve starts before contact.
+export const BOT_PASS_BIAS_RADIUS = 3.5;
+export const BOT_PASS_BIAS_WEIGHT = 1.2;
 
 // Patrol + stuck detection.
 export const BOT_PATROL_RETARGET_MS = 4000;
@@ -144,4 +160,7 @@ export const CLONE_SPAWN_OFFSET = 2.0;
 export const WALL_AVOID_WEIGHT = 4;
 export const WALL_AVOID_RADIUS = 14;
 export const OCCUPANCY_WEIGHT = 6;
-export const OCCUPANCY_RADIUS = 6;
+// Widened from 6 so the A* player-repulsion field keeps bots a lane farther
+// apart - they start routing around each other earlier, which (with the pass
+// bias above) stops the nose-to-nose stalemate before it forms.
+export const OCCUPANCY_RADIUS = 8;

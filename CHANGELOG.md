@@ -6,6 +6,18 @@ When cutting a release: rename the `[Unreleased]` heading below to the version b
 
 ## [Unreleased]
 
+## [0.8.2] - 2026-06-05
+
+Patch release. Fixes being unable to move after restarting a match with Play Again, and smooths out bots that hesitated when passing each other.
+
+### Fixed
+
+- Starting a fresh match with Play Again no longer leaves you frozen in place. The restarted match reused an input counter the server had already moved past, so it rejected every move you sent; the counter now carries across the restart and your input is accepted again.
+
+### Changed
+
+- Two bots walking toward each other no longer shuffle in place trying to dodge the same way. They keep to one side and pass cleanly, and commit to a new heading faster so they hesitate less.
+
 ## [0.8.1] - 2026-06-04
 
 Patch release. Fixes the end-screen buttons going dead if you opened the in-game menu after a match ended.

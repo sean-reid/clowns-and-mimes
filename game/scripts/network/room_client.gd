@@ -35,6 +35,15 @@ const SEND_QUEUE_MAX := 64
 # disconnect_from so leaving the game intentionally never lets a stale
 # token claim a slot in a different room.
 var session_token: String = ""
+# Monotonic input sequence for the life of THIS connection. Lives here, not on
+# the arena, because it is per-connection state the server tracks per-connection
+# (lastAppliedSeq / ackSeq). The arena is rebuilt on Play Again but the
+# connection persists, so the counter must too: a per-arena counter resets to 0
+# each match, the rebuilt arena's low seqs land <= the server's existing
+# high-water mark, and every new input is rejected (the "stuck after Play Again"
+# bug). Keeping it monotonic across matches means the new match's inputs always
+# out-rank the prior peak. Reset only when a brand-new connection opens.
+var input_seq: int = 0
 
 func connect_to(ws_url: String) -> void:
 	# Drop any stale enqueued messages from a previous session before
@@ -42,6 +51,9 @@ func connect_to(ws_url: String) -> void:
 	# replay old inputs with stale seq numbers as soon as the new socket
 	# opens.
 	_send_queue.clear()
+	# A fresh connection talks to a fresh server-side seq tracker, so restart
+	# the counter in lockstep.
+	input_seq = 0
 	_socket = WebSocketPeer.new()
 	_socket.handshake_headers = PackedStringArray()
 	var err: int = _socket.connect_to_url(ws_url)

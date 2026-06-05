@@ -384,6 +384,12 @@ func _start_online() -> void:
 		NetClient.add_child(room_client)
 		NetClient.room_client = room_client
 		room_client.connect_to(GameState.server_url)
+	# Continue the connection's input seq instead of restarting at 0. On a Play
+	# Again the same connection (and its server-side high-water mark) is reused,
+	# so a rebuilt arena that reset to 0 would have every input rejected as
+	# already-applied. room_client owns the counter and only zeroes it on a brand
+	# new connection.
+	input_seq = room_client.input_seq
 	room_client.connected.connect(_on_room_connected)
 	room_client.disconnected.connect(_on_room_disconnected)
 	room_client.snapshot_received.connect(_on_snapshot)
@@ -753,6 +759,9 @@ func _stream_input(delta: float) -> void:
 	# when physics frames don't land exactly on tick boundaries.
 	input_accumulator -= INPUT_TICK_PERIOD
 	input_seq += 1
+	# Persist back onto the connection so the next arena (Play Again) resumes
+	# from here instead of restarting at 0.
+	room_client.input_seq = input_seq
 	# Sample WASD in player-local axes, then rotate into world XZ. Server and
 	# client both treat input.move as world-space, so reconciliation replay
 	# does not need to know the player's yaw at each historical tick.

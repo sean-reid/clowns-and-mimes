@@ -6,6 +6,14 @@ When cutting a release: rename the `[Unreleased]` heading below to the version b
 
 ## [Unreleased]
 
+## [0.8.3] - 2026-06-05
+
+Patch release. Fixes a jump that cut back to the ground partway through the arc.
+
+### Fixed
+
+- Jumping no longer snaps you (and the camera) back to ground height mid-jump. The client was cancelling its predicted jump the instant the server acknowledged the input but before it had reported the jump back, which showed up most often with a lot of Clone allies on the map; the jump arc now plays out in full.
+
 ## [0.8.2] - 2026-06-05
 
 Patch release. Fixes being unable to move after restarting a match with Play Again, and smooths out bots that hesitated when passing each other.

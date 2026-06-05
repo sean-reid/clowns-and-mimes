@@ -243,5 +243,10 @@ func show_end(victory: bool, allow_play_again: bool = false) -> void:
 	if allow_play_again:
 		play_again_button.grab_focus()
 
+## True while the match-end overlay is up. The cursor must stay free (not
+## captured) whenever this is showing so its buttons stay clickable.
+func is_end_showing() -> bool:
+	return end_overlay.visible
+
 func set_play_again_enabled(enabled: bool) -> void:
 	play_again_button.disabled = not enabled

@@ -1146,6 +1146,11 @@ func _disconnect_room_handlers() -> void:
 
 func _on_menu_resume() -> void:
 	menu.close()
+	# in_game_menu.close() recaptures the mouse for active play, but if the
+	# match-end overlay is up (you paused on the end screen), resuming must leave
+	# the cursor free so Play Again / Back to menu stay clickable.
+	if hud != null and hud.is_end_showing():
+		Input.set_mouse_mode(Input.MOUSE_MODE_VISIBLE)
 
 func _on_menu_quit() -> void:
 	menu.close()

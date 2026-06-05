@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { WallSegment } from '@cm/shared/labyrinth';
-import { smoothDir, stepWithSlide, turnToward } from './botSteering.ts';
+import { passBiasDir, smoothDir, stepWithSlide, turnToward } from './botSteering.ts';
 
 describe('smoothDir', () => {
   it('returns the normalized raw direction when there is no prior direction', () => {
@@ -92,5 +92,54 @@ describe('turnToward', () => {
   it('reaches the target when within the per-tick budget', () => {
     const y = turnToward(0, 0.05, 1.0, 0.1); // budget 0.1 > 0.05
     expect(y).toBeCloseTo(0.05, 6);
+  });
+});
+
+describe('passBiasDir', () => {
+  it('veers to the right of a neighbour sitting dead ahead', () => {
+    // dir=+x, neighbour 2 ahead, radius 4, weight 1 -> lateral 0.5 toward +z
+    // (the right-hand perpendicular of +x). blend (1, 0.5) normalizes.
+    const d = passBiasDir({ x: 1, z: 0 }, [{ x: 2, z: 0 }], 4, 1);
+    expect(d.x).toBeCloseTo(0.894427, 5);
+    expect(d.z).toBeCloseTo(0.447214, 5);
+  });
+
+  it('sends two head-on bots to opposite sides so they pass', () => {
+    // Bot A faces +x and sees B 2 units ahead; Bot B faces -x and sees A 2
+    // units ahead. Same rule, mirrored frames -> A swerves +z, B swerves -z.
+    const a = passBiasDir({ x: 1, z: 0 }, [{ x: 2, z: 0 }], 4, 1);
+    const b = passBiasDir({ x: -1, z: 0 }, [{ x: -2, z: 0 }], 4, 1);
+    expect(a.z).toBeGreaterThan(0);
+    expect(b.z).toBeLessThan(0);
+    expect(a.z).toBeCloseTo(-b.z, 6);
+  });
+
+  it('ignores a neighbour behind the heading', () => {
+    const d = passBiasDir({ x: 1, z: 0 }, [{ x: -2, z: 0 }], 4, 1);
+    expect(d.x).toBeCloseTo(1, 6);
+    expect(d.z).toBeCloseTo(0, 6);
+  });
+
+  it('ignores a neighbour beyond the radius', () => {
+    const d = passBiasDir({ x: 1, z: 0 }, [{ x: 5, z: 0 }], 4, 1);
+    expect(d.x).toBeCloseTo(1, 6);
+    expect(d.z).toBeCloseTo(0, 6);
+  });
+
+  it('returns the heading unchanged when there are no neighbours', () => {
+    const d = passBiasDir({ x: 0, z: 1 }, [], 4, 1);
+    expect(d).toEqual({ x: 0, z: 1 });
+  });
+
+  it('returns a degenerate heading unchanged', () => {
+    const d = passBiasDir({ x: 0, z: 0 }, [{ x: 1, z: 0 }], 4, 1);
+    expect(d).toEqual({ x: 0, z: 0 });
+  });
+
+  it('pushes harder the closer the neighbour', () => {
+    const near = passBiasDir({ x: 1, z: 0 }, [{ x: 1, z: 0 }], 4, 1);
+    const far = passBiasDir({ x: 1, z: 0 }, [{ x: 3, z: 0 }], 4, 1);
+    // Both veer +z; the nearer neighbour produces the larger lateral component.
+    expect(near.z).toBeGreaterThan(far.z);
   });
 });

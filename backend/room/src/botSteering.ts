@@ -24,6 +24,51 @@ export function smoothDir(lastDir: Vec2, rawDir: Vec2, smoothing: number): Vec2 
   return { x: 0, z: 0 };
 }
 
+// Deterministic head-on avoidance ("keep right" rule). Given the desired
+// heading and the wrap-relative offsets to nearby other players, nudge the
+// heading toward the bot's right by an amount that ramps with how close and how
+// directly-ahead each neighbour is. Because every bot biases to the same side, a
+// pair closing head-on veers apart symmetrically and passes, instead of
+// mirroring each other's dodge into a deadlock (the "indecisive" shuffle).
+//
+// `offsets` are other-player positions relative to the bot (already wrap-aware),
+// so this stays topology-free and ports cleanly. Only neighbours within `radius`
+// and in front of the heading contribute. The lateral term is quantized to 1e-4
+// for the same reason the repulsion field is: a sqrt-based value must never
+// drift an outcome between the TS and GDScript bots. Returns `dir` unchanged
+// when it's degenerate or no neighbour is in the forward cone, so open-field
+// paths are untouched. The result is re-normalized.
+export function passBiasDir(
+  dir: Vec2,
+  offsets: readonly Vec2[],
+  radius: number,
+  weight: number,
+): Vec2 {
+  const len = Math.hypot(dir.x, dir.z);
+  if (len < 1e-3 || offsets.length === 0) return dir;
+  const fwd = { x: dir.x / len, z: dir.z / len };
+  // Right-hand perpendicular of the heading in the XZ plane. Consistent across
+  // all bots, so two head-on bots pick opposite world sides and separate.
+  const right = { x: -fwd.z, z: fwd.x };
+  let lateral = 0;
+  for (const off of offsets) {
+    const d = Math.hypot(off.x, off.z);
+    if (d < 1e-3 || d >= radius) continue;
+    // Cosine of the angle between the heading and the neighbour: only those
+    // ahead (dot > 0) make the bot swerve.
+    const ahead = (off.x * fwd.x + off.z * fwd.z) / d;
+    if (ahead <= 0) continue;
+    const prox = (radius - d) / radius;
+    lateral += Math.round(weight * prox * ahead * 1e4) / 1e4;
+  }
+  if (lateral === 0) return dir;
+  const bx = fwd.x + right.x * lateral;
+  const bz = fwd.z + right.z * lateral;
+  const blen = Math.hypot(bx, bz);
+  if (blen < 1e-3) return dir;
+  return { x: bx / blen, z: bz / blen };
+}
+
 // Rotations (radians) tried, in order, to round a wall tip when the diagonal
 // and both axis slides are all blocked. Each direction is the desired heading
 // turned by +/- the angle; capped at 90deg so the bot slides tangent to the

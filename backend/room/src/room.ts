@@ -144,6 +144,10 @@ export class Room implements DurableObject {
   // the client sent even when the DO tick under-runs 60 Hz. The cap
   // (MAX_INPUT_QUEUE) bounds memory; an overflow drops the OLDEST.
   private readonly inputQueues = new Map<string, PlayerInput[]>();
+  // playerId -> partyId for human players who joined with a party. Used only by
+  // the match-start balance to keep a party on one team. Not on PlayerState, so
+  // it never reaches other clients; cleared when the player is removed.
+  private readonly partyIdByPlayer = new Map<string, string>();
   // Last input seq the server actually fed into stepMovement, per player.
   // This is what gets reported back to the client as ackSeq so reconciliation
   // replays only the inputs the simulation has not yet consumed.
@@ -249,9 +253,17 @@ export class Room implements DurableObject {
       // the players map). Each WS's playerId is set in onJoin /
       // resumeSession via ws.serializeAttachment({playerId}).
       for (const ws of state.getWebSockets()) {
-        const attachment = ws.deserializeAttachment() as { playerId?: string } | undefined;
+        const attachment = ws.deserializeAttachment() as
+          | { playerId?: string; partyId?: string }
+          | undefined;
         if (attachment?.playerId) {
           this.connections.set(ws, { ws, playerId: attachment.playerId });
+          // Party affiliation rides the WS attachment too, so a party survives
+          // a hibernation between join and match start and still balances as one
+          // unit (the in-memory partyIdByPlayer map is otherwise empty on wake).
+          if (attachment.partyId) {
+            this.partyIdByPlayer.set(attachment.playerId, attachment.partyId);
+          }
         }
       }
     });
@@ -578,7 +590,15 @@ export class Room implements DurableObject {
   private handleMessage(ws: WebSocket, msg: ClientToServer): void {
     switch (msg.t) {
       case 'join':
-        this.onJoin(ws, msg.name, msg.v, msg.preferTeam, msg.hostToken, msg.sessionToken);
+        this.onJoin(
+          ws,
+          msg.name,
+          msg.v,
+          msg.preferTeam,
+          msg.hostToken,
+          msg.sessionToken,
+          msg.partyId,
+        );
         return;
       case 'leave':
         this.detach(ws);
@@ -617,6 +637,7 @@ export class Room implements DurableObject {
     prefer?: Team,
     payloadHostToken?: string,
     sessionToken?: string,
+    partyId?: string,
   ): void {
     if (version !== PROTOCOL_VERSION) {
       this.send(ws, { t: 'error', code: 'version_mismatch', message: 'update your client' });
@@ -691,10 +712,17 @@ export class Room implements DurableObject {
       jumpStartedAt: null,
     };
     this.players.set(id, player);
+    // Remember the joiner's party so the match-start balance treats the whole
+    // party as one unit and never splits it across teams. Kept off PlayerState
+    // so it isn't broadcast to other clients.
+    if (typeof partyId === 'string' && partyId !== '') {
+      this.partyIdByPlayer.set(id, partyId);
+    }
     this.connections.set(ws, { ws, playerId: id });
     // Attach the playerId directly to the WS so the binding survives CF
-    // hibernation. See the constructor for the full rationale.
-    ws.serializeAttachment({ playerId: id });
+    // hibernation. See the constructor for the full rationale. partyId rides
+    // along so the match-start balance can still group the party after a wake.
+    ws.serializeAttachment({ playerId: id, partyId: this.partyIdByPlayer.get(id) });
     // Mint the resumption secret now so the snapshot below can carry it
     // back to the client. Kept server-side in SessionManager; never sent
     // to other clients.
@@ -970,6 +998,7 @@ export class Room implements DurableObject {
     this.lastAppliedSeq.delete(playerId);
     this.lastSavedAt.delete(playerId);
     this.positionHistory.delete(playerId);
+    this.partyIdByPlayer.delete(playerId);
     if (this.humanPlayers().length === 0) {
       this.stopTick();
       this.bots.cancelFill();
@@ -1029,8 +1058,9 @@ export class Room implements DurableObject {
     }
     this.connections.set(ws, { ws, playerId });
     // Same hibernation-survival attachment as onJoin. Resume is the
-    // other entry point that binds a WS to a playerId.
-    ws.serializeAttachment({ playerId });
+    // other entry point that binds a WS to a playerId. Re-stamp the party so a
+    // reconnecting member stays grouped through a later hibernation too.
+    ws.serializeAttachment({ playerId, partyId: this.partyIdByPlayer.get(playerId) });
     // Re-evaluate host status for the resumed connection. A new WS upgrade
     // may have stamped a fresh host token on the URL even if the player's
     // first connection didn't.
@@ -1158,7 +1188,15 @@ export class Room implements DurableObject {
    * other team's territory.
    */
   private balanceHumansForMatchStart(): void {
-    const reassignments = balanceTeamAssignments([...this.players.values()], TEAM_TARGET);
+    const reassignments = balanceTeamAssignments(
+      [...this.players.values()].map((p) => ({
+        id: p.id,
+        team: p.team,
+        bot: p.bot,
+        partyId: this.partyIdByPlayer.get(p.id),
+      })),
+      TEAM_TARGET,
+    );
     for (const [id, team] of reassignments) {
       const p = this.players.get(id);
       if (p) {

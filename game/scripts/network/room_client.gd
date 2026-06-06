@@ -69,12 +69,18 @@ func disconnect_from() -> void:
 	_send_queue.clear()
 	session_token = ""
 
-func send_join(name: String, prefer_team: String = "", host_token: String = "") -> void:
+func send_join(
+	name: String, prefer_team: String = "", host_token: String = "", party_id: String = ""
+) -> void:
 	var payload := {"t": "join", "v": ServerConfig.protocol_version(), "name": name}
 	if not prefer_team.is_empty():
 		payload["preferTeam"] = prefer_team
 	if not host_token.is_empty():
 		payload["hostToken"] = host_token
+	# Party id, if any: the room keeps the party on one team when it balances at
+	# match start so they are never split apart.
+	if not party_id.is_empty():
+		payload["partyId"] = party_id
 	# session_token is only set after the server has handed us one in a
 	# prior snapshot. Sending it here is what makes the next join a
 	# reconnect rather than a fresh join.

@@ -177,6 +177,7 @@ func _on_back_pressed() -> void:
 func _clear_party_state() -> void:
 	GameState.party_id = ""
 	GameState.party_member_id = ""
+	GameState.party_size = 0
 
 func _uppercase_code(new_text: String) -> void:
 	var upper := new_text.to_upper()
@@ -197,6 +198,9 @@ func _on_copy_pressed() -> void:
 		copy_button.text = "Copy code"
 
 func _render_members(members: Array) -> void:
+	# Mirror the roster size so the join (and the open room's gather-wait) knows
+	# how many to expect from this party.
+	GameState.party_size = members.size()
 	for child in members_box.get_children():
 		child.queue_free()
 	if members.is_empty():

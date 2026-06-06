@@ -413,7 +413,9 @@ func _on_room_connected() -> void:
 	# Only fires on the fallback path where the arena opened the WS itself.
 	# In the normal lobby path the WS was already connected and join was
 	# sent before this scene loaded.
-	room_client.send_join(GameState.username, "", GameState.host_token, GameState.party_id)
+	room_client.send_join(
+		GameState.username, "", GameState.host_token, GameState.party_id, GameState.party_size
+	)
 	reconnect.handle_connected()
 
 func _on_room_disconnected(reason: String) -> void:

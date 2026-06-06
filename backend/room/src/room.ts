@@ -91,6 +91,16 @@ const MAX_PLAYERS = 16;
 // kept here because onJoin reads it to decide whether to kick a bot when
 // a human arrives after the auto-fill has saturated the team.
 const TEAM_TARGET = 4;
+// Open-room auto-start tuning. A room stays in `filling` accepting joiners (the
+// matchmaker routes newcomers to the fullest viable room), and starts the
+// instant it reaches OPEN_START_TARGET humans - a full human match - so a flood
+// packs into a few full rooms instead of fragmenting into many 2-player rooms.
+// Short of that, the bot-fill gather timer starts whatever assembled. While a
+// party is still arriving the start is held until every present party is whole,
+// up to PARTY_GATHER_HARD_MS from the first human (a no-show can't hang the
+// room).
+const OPEN_START_TARGET = 2 * TEAM_TARGET;
+const PARTY_GATHER_HARD_MS = 12_000;
 // Grace window after an unfreeze where the saved player cannot be re-tagged.
 // Without this, two opponents adjacent to a saved teammate could re-freeze
 // them on the very next tick and trigger an endless freeze/save chain.
@@ -148,6 +158,14 @@ export class Room implements DurableObject {
   // the match-start balance to keep a party on one team. Not on PlayerState, so
   // it never reaches other clients; cleared when the player is removed.
   private readonly partyIdByPlayer = new Map<string, string>();
+  // partyId -> the party's full expected size (client-reported on join). Used to
+  // hold the open-room auto-start until a party has fully assembled, so a party
+  // of 3-4 whose members arrive a beat apart isn't split by an early start.
+  private readonly expectedPartySize = new Map<string, number>();
+  // Wall-clock cap for the gather wait, set when the first human joins an open
+  // room. Past this the match starts even if a party is still incomplete, so a
+  // member who never connects can't hang the room. 0 = no fill cycle active.
+  private openGatherDeadline = 0;
   // Last input seq the server actually fed into stepMovement, per player.
   // This is what gets reported back to the client as ackSeq so reconciliation
   // replays only the inputs the simulation has not yet consumed.
@@ -254,15 +272,18 @@ export class Room implements DurableObject {
       // resumeSession via ws.serializeAttachment({playerId}).
       for (const ws of state.getWebSockets()) {
         const attachment = ws.deserializeAttachment() as
-          | { playerId?: string; partyId?: string }
+          | { playerId?: string; partyId?: string; partySize?: number }
           | undefined;
         if (attachment?.playerId) {
           this.connections.set(ws, { ws, playerId: attachment.playerId });
           // Party affiliation rides the WS attachment too, so a party survives
           // a hibernation between join and match start and still balances as one
-          // unit (the in-memory partyIdByPlayer map is otherwise empty on wake).
+          // unit (the in-memory maps are otherwise empty on wake).
           if (attachment.partyId) {
             this.partyIdByPlayer.set(attachment.playerId, attachment.partyId);
+            if (typeof attachment.partySize === 'number' && attachment.partySize > 0) {
+              this.expectedPartySize.set(attachment.partyId, attachment.partySize);
+            }
           }
         }
       }
@@ -321,6 +342,7 @@ export class Room implements DurableObject {
       freezePlayer: (p) => this.tagManager.freezePlayer(p),
       checkWin: () => this.tagManager.checkWin(),
       startMatch: () => this.startMatch(),
+      startOpenMatchIfReady: () => this.startOpenMatchIfReady(),
       botShoot: (attacker, dir) => this.projectiles.botShoot(attacker, dir),
       useBotItem: (player) => this.items.useItemForBot(player),
       availableItems: () => this.items.available(),
@@ -598,6 +620,7 @@ export class Room implements DurableObject {
           msg.hostToken,
           msg.sessionToken,
           msg.partyId,
+          msg.partySize,
         );
         return;
       case 'leave':
@@ -638,6 +661,7 @@ export class Room implements DurableObject {
     payloadHostToken?: string,
     sessionToken?: string,
     partyId?: string,
+    partySize?: number,
   ): void {
     if (version !== PROTOCOL_VERSION) {
       this.send(ws, { t: 'error', code: 'version_mismatch', message: 'update your client' });
@@ -717,12 +741,24 @@ export class Room implements DurableObject {
     // so it isn't broadcast to other clients.
     if (typeof partyId === 'string' && partyId !== '') {
       this.partyIdByPlayer.set(id, partyId);
+      // Remember how big this party is so the auto-start can wait for the rest
+      // of them to arrive. Take the max seen in case reports vary.
+      if (typeof partySize === 'number' && partySize > 0) {
+        this.expectedPartySize.set(
+          partyId,
+          Math.max(this.expectedPartySize.get(partyId) ?? 0, Math.floor(partySize)),
+        );
+      }
     }
     this.connections.set(ws, { ws, playerId: id });
     // Attach the playerId directly to the WS so the binding survives CF
     // hibernation. See the constructor for the full rationale. partyId rides
     // along so the match-start balance can still group the party after a wake.
-    ws.serializeAttachment({ playerId: id, partyId: this.partyIdByPlayer.get(id) });
+    ws.serializeAttachment({
+      playerId: id,
+      partyId: this.partyIdByPlayer.get(id),
+      partySize: partyId ? this.expectedPartySize.get(partyId) : undefined,
+    });
     // Mint the resumption secret now so the snapshot below can carry it
     // back to the client. Kept server-side in SessionManager; never sent
     // to other clients.
@@ -759,29 +795,60 @@ export class Room implements DurableObject {
       this.broadcaster.broadcastDelta();
     }
     // Auto-start fallback only applies when the room has NO host. Private
-    // lobbies (matchmaker minted a hostToken) wait for an explicit
-    // start_match from the host; open/strangers rooms keep starting on
-    // the 2nd human / bot-fill timer like before.
+    // lobbies (matchmaker minted a hostToken) wait for an explicit start_match.
     const hasHost = this.expectedHostToken !== null;
-    if (!hasHost) {
-      if (this.phase === 'filling' && this.humanPlayers().length >= 2 && !this.tickHandle) {
-        // Two humans landed in an open room before the 3 s bot-fill
-        // timer could fire. Fill bots NOW before starting so the match
-        // doesn't go live as a bare 1v1 (or worse, larger). The 3 s
-        // delayed path runs fillTeams inside its callback; this immediate
-        // path was missing that step, which produced empty-team
-        // strangers matches when two players clicked Find Match in the
-        // same tick. cancelFill() drops any timer that hasn't fired yet
-        // (the 3 s timer could be racing the second-human join).
+    if (!hasHost && this.phase === 'filling' && !this.tickHandle) {
+      // Start the gather clock on the first human, so a room that never fills
+      // still goes live after the bot-fill delay.
+      if (this.openGatherDeadline === 0) {
+        this.openGatherDeadline = Date.now() + PARTY_GATHER_HARD_MS;
+      }
+      // A full human match assembled and no party is mid-arrival: go live now
+      // so a flood packs into full rooms instead of fragmenting. Otherwise arm
+      // the gather timer, which starts whatever has assembled after the delay
+      // (and re-waits for an incomplete party up to the hard deadline).
+      if (this.humanPlayers().length >= OPEN_START_TARGET && this.partiesAssembled()) {
         this.bots.cancelFill();
         this.bots.fillTeams();
         this.startMatch();
-      } else if (this.phase === 'filling' && !this.tickHandle) {
+      } else {
         this.bots.scheduleFill();
       }
     }
     this.notifyMatchmaker(this.humanPlayers().length, this.botPlayers().length);
     this.persist();
+  }
+
+  // True once every party with a member already in the room has all its members
+  // present - or the gather hard-deadline has passed (so a member who never
+  // connects can't hold the room forever). Gates the open-room auto-start so a
+  // party of 3-4 arriving a beat apart isn't split by an early start.
+  private partiesAssembled(): boolean {
+    if (this.openGatherDeadline !== 0 && Date.now() >= this.openGatherDeadline) return true;
+    const present = new Map<string, number>();
+    for (const [playerId, partyId] of this.partyIdByPlayer) {
+      if (this.players.has(playerId)) present.set(partyId, (present.get(partyId) ?? 0) + 1);
+    }
+    for (const [partyId, count] of present) {
+      if (count < (this.expectedPartySize.get(partyId) ?? count)) return false;
+    }
+    return true;
+  }
+
+  // The open-room gather timer elapsed. Start now unless a party is still
+  // arriving (and we're inside the grace cap), in which case keep waiting.
+  private startOpenMatchIfReady(): void {
+    if (this.phase !== 'filling' || this.tickHandle) return;
+    if (this.humanPlayers().length === 0) {
+      this.openGatherDeadline = 0;
+      return;
+    }
+    if (!this.partiesAssembled()) {
+      this.bots.scheduleFill();
+      return;
+    }
+    this.bots.fillTeams();
+    this.startMatch();
   }
 
   private onStartMatch(ws: WebSocket): void {
@@ -1060,7 +1127,12 @@ export class Room implements DurableObject {
     // Same hibernation-survival attachment as onJoin. Resume is the
     // other entry point that binds a WS to a playerId. Re-stamp the party so a
     // reconnecting member stays grouped through a later hibernation too.
-    ws.serializeAttachment({ playerId, partyId: this.partyIdByPlayer.get(playerId) });
+    const resumePartyId = this.partyIdByPlayer.get(playerId);
+    ws.serializeAttachment({
+      playerId,
+      partyId: resumePartyId,
+      partySize: resumePartyId ? this.expectedPartySize.get(resumePartyId) : undefined,
+    });
     // Re-evaluate host status for the resumed connection. A new WS upgrade
     // may have stamped a fresh host token on the URL even if the player's
     // first connection didn't.
@@ -1145,6 +1217,10 @@ export class Room implements DurableObject {
 
   private startMatch(): void {
     this.balanceHumansForMatchStart();
+    // The gather is over once the match goes live; clear its bookkeeping so a
+    // later filling cycle (room emptied and reset) starts a fresh count.
+    this.expectedPartySize.clear();
+    this.openGatherDeadline = 0;
     this.projectiles.clear();
     this.items.spawn();
     this.firstTeam = Math.random() < 0.5 ? 'mime' : 'clown';

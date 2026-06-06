@@ -4,30 +4,34 @@ import { balanceTeamAssignments } from './teamBalance.ts';
 const human = (id: string, team: 'mime' | 'clown') => ({ id, team, bot: false });
 const bot = (id: string, team: 'mime' | 'clown') => ({ id, team, bot: true });
 
+// Matches the room's TEAM_TARGET; the bot fill tops each team up to this.
+const TARGET = 4;
+
 describe('balanceTeamAssignments', () => {
   it('returns an empty map when there is no one to rebalance', () => {
-    expect(balanceTeamAssignments([])).toEqual(new Map());
-    expect(balanceTeamAssignments([human('a', 'mime')])).toEqual(new Map());
+    expect(balanceTeamAssignments([], TARGET)).toEqual(new Map());
+    expect(balanceTeamAssignments([human('a', 'mime')], TARGET)).toEqual(new Map());
   });
 
-  it('splits four humans evenly even when they all joined the same team', () => {
+  it('keeps a 2-person party together - the bot fill makes the teams even', () => {
+    // Both joined `mime` via their party preferTeam. mime=2 <= TARGET, so the
+    // fill (2 bots on mime, 4 on clown) evens it out without splitting them.
+    const result = balanceTeamAssignments([human('a', 'mime'), human('b', 'mime')], TARGET);
+    expect(result.size).toBe(0);
+  });
+
+  it('leaves a full team of humans alone when the fill can still balance it', () => {
     const players = [
       human('a', 'mime'),
       human('b', 'mime'),
       human('c', 'mime'),
       human('d', 'mime'),
     ];
-    const result = balanceTeamAssignments(players);
-    // Sort by id: a, b, c, d. Even indices -> mime, odd -> clown.
-    // a/c already mime, no entry; b/d flip to clown.
-    expect(result.get('a')).toBeUndefined();
-    expect(result.get('b')).toBe('clown');
-    expect(result.get('c')).toBeUndefined();
-    expect(result.get('d')).toBe('clown');
-    expect(result.size).toBe(2);
+    // mime=4 == TARGET; clown fills to 4 bots. Even, so nobody moves.
+    expect(balanceTeamAssignments(players, TARGET).size).toBe(0);
   });
 
-  it('handles odd counts with one extra mime, never two of the same team in a row', () => {
+  it('sheds only the overflow when a team exceeds capacity', () => {
     const players = [
       human('a', 'mime'),
       human('b', 'mime'),
@@ -35,11 +39,36 @@ describe('balanceTeamAssignments', () => {
       human('d', 'mime'),
       human('e', 'mime'),
     ];
-    const result = balanceTeamAssignments(players);
-    // Sorted a/b/c/d/e -> mime/clown/mime/clown/mime. Three mimes, two clowns.
-    expect(result.get('b')).toBe('clown');
-    expect(result.get('d')).toBe('clown');
-    expect(result.size).toBe(2);
+    // mime=5 > TARGET: move exactly one (lowest id) to clown -> 4 vs 1, then
+    // bots fill clown to 4. Everyone else keeps their team.
+    const result = balanceTeamAssignments(players, TARGET);
+    expect(result.size).toBe(1);
+    expect(result.get('a')).toBe('clown');
+  });
+
+  it('rebalances the heavy team in the reported 5-clown / 3-mime case', () => {
+    const players = [
+      human('m1', 'mime'),
+      human('m2', 'mime'),
+      human('m3', 'mime'),
+      human('c1', 'clown'),
+      human('c2', 'clown'),
+      human('c3', 'clown'),
+      human('c4', 'clown'),
+      human('c5', 'clown'),
+    ];
+    // 8 humans, cap = max(4, 4) = 4. clown=5 sheds one -> 4 mime / 4 clown.
+    const result = balanceTeamAssignments(players, TARGET);
+    expect(result.size).toBe(1);
+    expect(result.get('c1')).toBe('mime');
+  });
+
+  it('splits evenly when humans outnumber two full teams', () => {
+    const players = Array.from({ length: 10 }, (_, i) => human(`h${i}`, 'mime'));
+    // 10 humans, cap = max(4, 5) = 5. mime=10 sheds 5 -> 5 vs 5.
+    const result = balanceTeamAssignments(players, TARGET);
+    expect(result.size).toBe(5);
+    for (const team of result.values()) expect(team).toBe('clown');
   });
 
   it('ignores bots when computing the split', () => {
@@ -51,24 +80,20 @@ describe('balanceTeamAssignments', () => {
       bot('z3', 'clown'),
       bot('z4', 'clown'),
     ];
-    const result = balanceTeamAssignments(players);
-    expect(result.get('b')).toBe('clown');
-    expect(result.has('z1')).toBe(false);
-    expect(result.has('z2')).toBe(false);
-    expect(result.has('z3')).toBe(false);
-    expect(result.has('z4')).toBe(false);
-  });
-
-  it('skips humans already on the correct team', () => {
-    const players = [human('a', 'mime'), human('b', 'clown')];
-    const result = balanceTeamAssignments(players);
+    // Only 2 humans, both mime <= TARGET: no human moves, bots untouched.
+    const result = balanceTeamAssignments(players, TARGET);
     expect(result.size).toBe(0);
   });
 
+  it('leaves an already-even roster untouched', () => {
+    const players = [human('a', 'mime'), human('b', 'clown')];
+    expect(balanceTeamAssignments(players, TARGET).size).toBe(0);
+  });
+
   it('is deterministic for a given roster', () => {
-    const players = [human('alpha', 'mime'), human('beta', 'mime'), human('gamma', 'mime')];
-    const first = balanceTeamAssignments(players);
-    const second = balanceTeamAssignments([...players].reverse());
+    const players = Array.from({ length: 5 }, (_, i) => human(`p${i}`, 'mime'));
+    const first = balanceTeamAssignments(players, TARGET);
+    const second = balanceTeamAssignments([...players].reverse(), TARGET);
     expect(first).toEqual(second);
   });
 });

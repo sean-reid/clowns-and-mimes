@@ -1141,14 +1141,15 @@ export class Room implements DurableObject {
 
   /**
    * Even out the human roster across the two teams immediately before the
-   * match goes live. Until this point every human was assigned a team at
-   * `onJoin` via `pickTeam`, which biases toward the under-tallied side as
-   * each player arrives. That works while everyone joins in clean
-   * alternation, but the playtest reported all five humans landing on
-   * `mime` - the join order, bot pre-fills, and tie-break (`mime` wins on
-   * equal tallies) lined up to give one team every human in the room.
-   * Sorting by id (UUIDs are random) and alternating assignments here
-   * guarantees a 50/50 split regardless of join order.
+   * match goes live. Until this point every human is assigned a team at
+   * `onJoin` (`pickTeam`, or their party's `preferTeam`). That can leave one
+   * team overloaded - the playtest reported all five humans on `mime`.
+   *
+   * `balanceTeamAssignments` moves the minimum needed: a human keeps the team
+   * they joined with unless that team is over capacity, so a party - whose
+   * members all join with the same `preferTeam` - stays together while the bot
+   * fill tops both sides up to `TEAM_TARGET`. Only a team holding more humans
+   * than the fill can balance sheds the excess.
    *
    * Runs before `fillBots` would notice any imbalance, since `startMatch`
    * is the single funnel and the bot fill happens at the callers (one
@@ -1157,7 +1158,7 @@ export class Room implements DurableObject {
    * other team's territory.
    */
   private balanceHumansForMatchStart(): void {
-    const reassignments = balanceTeamAssignments([...this.players.values()]);
+    const reassignments = balanceTeamAssignments([...this.players.values()], TEAM_TARGET);
     for (const [id, team] of reassignments) {
       const p = this.players.get(id);
       if (p) {

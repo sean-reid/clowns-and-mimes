@@ -22,7 +22,7 @@ signal request_failed(reason: String)
 ## current roster (Array of { memberId, name }).
 signal party_ready(party_id: String, code: String, team: String, member_id: String, members: Array)
 ## Live roster from a poll (GET /party/:id) so the screen tracks friends joining.
-signal party_refreshed(members: Array)
+signal party_refreshed(members: Array, room_id: String)
 ## join_party failed with a reason the player can act on (bad code / party full).
 signal party_join_failed(reason: String)
 ## A poll found the party gone (everyone left, or it aged out server-side).
@@ -205,7 +205,10 @@ func _on_party_response(parsed: Dictionary) -> void:
 	party_ready.emit(party_id, code, team, member_id, members)
 
 func _on_party_poll(parsed: Dictionary) -> void:
-	party_refreshed.emit(parsed.get("members", []))
+	# roomId is null until a member finds a match; normalize the JSON null to "".
+	var room_id_var: Variant = parsed.get("roomId", "")
+	var room_id: String = room_id_var if room_id_var is String else ""
+	party_refreshed.emit(parsed.get("members", []), room_id)
 
 # 404 here means the party is gone (disbanded / aged out): the screen routes
 # the player back to the menu. Any other status is a transient poll blip - the

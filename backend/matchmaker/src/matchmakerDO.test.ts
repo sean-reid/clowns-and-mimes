@@ -254,6 +254,25 @@ describe('MatchmakerDO parties', () => {
     expect(joined.members.map((m) => m.name)).toEqual(['Ada', 'Bob']);
   });
 
+  it('partyState exposes roomId so waiting members can auto-follow the match', async () => {
+    const doInstance = makeDO();
+    const { json: created } = await call(doInstance, '/partyCreate', { name: 'Ada' });
+    const partyId = (created as { partyId: string }).partyId;
+    const stateOf = async (): Promise<{ roomId: string | null }> => {
+      const res = await doInstance.fetch(
+        new Request(`https://x.test/partyState?id=${partyId}`, { method: 'GET' }),
+      );
+      return (await res.json()) as { roomId: string | null };
+    };
+    // Before anyone finds a match, there is no shared room yet.
+    expect((await stateOf()).roomId).toBeNull();
+    // One member finds a match (open-join with the party id), stamping the room.
+    const { json: joined } = await call(doInstance, '/openJoin', { partyId });
+    const roomId = (joined as { roomId: string }).roomId;
+    // The poll now reports it, which is what makes the rest of the party follow.
+    expect((await stateOf()).roomId).toBe(roomId);
+  });
+
   it('partyJoin lowercases-insensitively matches the code', async () => {
     const doInstance = makeDO();
     const { json: created } = await call(doInstance, '/partyCreate', { name: 'Ada' });

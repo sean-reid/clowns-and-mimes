@@ -28,6 +28,8 @@ const WAITING_NAME_TINT := Color(0.7, 0.7, 0.72)
 
 var matchmaker: Node = null
 var _poll_timer: Timer = null
+# Guards the auto-follow handoff so it fires exactly once when the party matches.
+var _following: bool = false
 
 func _ready() -> void:
 	matchmaker = MatchmakerClientScript.new()
@@ -104,8 +106,15 @@ func _on_party_ready(party_id: String, code: String, _team: String, member_id: S
 	_poll_timer.start()
 	find_button.grab_focus()
 
-func _on_party_refreshed(members: Array) -> void:
+func _on_party_refreshed(members: Array, room_id: String) -> void:
 	_render_members(members)
+	# Auto-follow into the match the moment any member has matched: whoever clicks
+	# Find Match stamps the party's shared room, and everyone still on the party
+	# screen rides along instead of each having to click it. Guarded so the
+	# handoff fires once.
+	if not room_id.is_empty() and not _following:
+		_following = true
+		_begin_find()
 
 func _on_party_join_failed(reason: String) -> void:
 	join_button.disabled = false
@@ -137,9 +146,14 @@ func _poll() -> void:
 	matchmaker.poll_party(GameState.party_id)
 
 func _on_find_pressed() -> void:
-	# Hand off to the lobby in OPEN mode; it calls /open/join with the party id,
-	# routing this member to the shared room and team. Stop polling first so a
-	# late tick doesn't fire against a freed screen.
+	_following = true
+	_begin_find()
+
+# Hand off to the lobby in OPEN mode; it calls /open/join with the party id,
+# routing this member to the shared room and team. Stop polling first so a late
+# tick doesn't fire against a freed screen. Shared by the explicit Find Match
+# button and the auto-follow when another member matches first.
+func _begin_find() -> void:
 	_poll_timer.stop()
 	GameState.set_mode(GameState.Mode.OPEN)
 	requested_screen.emit("lobby")

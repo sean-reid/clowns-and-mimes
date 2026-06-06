@@ -329,6 +329,7 @@ export class MatchmakerDO {
       code: party.code,
       team: party.team,
       members: party.members,
+      roomId: party.roomId,
     } satisfies PartyView);
   }
 

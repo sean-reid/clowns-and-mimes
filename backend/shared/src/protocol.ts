@@ -377,6 +377,10 @@ export interface PartyView {
   code: string;
   team: Team;
   members: PartyMember[];
+  // Set once any member has found a match; null while still gathering. Members
+  // still polling on the party screen follow it into the shared room, so a host
+  // clicking Find Match pulls the whole party in without everyone clicking.
+  roomId: string | null;
 }
 
 // Optional body on POST /open/join. When `partyId` is present the matchmaker

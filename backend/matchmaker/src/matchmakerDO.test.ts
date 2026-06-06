@@ -341,6 +341,11 @@ describe('MatchmakerDO parties', () => {
     const roomId = (joined as { roomId: string }).roomId;
     // The poll now reports it, which is what makes the rest of the party follow.
     expect((await stateOf()).roomId).toBe(roomId);
+
+    // When that room detaches (its match started), the party's pointer clears so
+    // a return-and-requeue routes them to a fresh room, not the dead one.
+    await call(doInstance, '/roomDetach', { roomId });
+    expect((await stateOf()).roomId).toBeNull();
   });
 
   it('partyJoin lowercases-insensitively matches the code', async () => {

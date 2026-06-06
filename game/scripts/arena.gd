@@ -894,6 +894,18 @@ func _apply_player_state(entry: Dictionary) -> void:
 	var node: Node = player_nodes.get(id)
 	if node == null:
 		return
+	# Team can change after the node was spawned: balanceHumansForMatchStart
+	# re-splits the human roster 50/50 at match start and resends the snapshot.
+	# The node carries its join-time team, so adopt any change here - otherwise
+	# the body keeps the wrong color and, for the local player, the "you are a
+	# MIME" badge and the minimap perspective stay on the old team while the
+	# server actually plays them on the new one.
+	var entry_team: String = entry.get("team", node.team)
+	if entry_team != node.team:
+		node.team = entry_team
+		node._apply_head_texture()
+		if id == local_player_id:
+			hud.set_local_team(entry_team)
 	var pos: Dictionary = entry.get("position", {"x": 0.0, "z": 0.0})
 	# Y now flows over the wire (PlayerState.position became Vec3 in
 	# PR 1). For backward-compat with any frame that omits it, default

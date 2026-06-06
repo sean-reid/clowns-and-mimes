@@ -6,6 +6,20 @@ When cutting a release: rename the `[Unreleased]` heading below to the version b
 
 ## [Unreleased]
 
+## [0.8.5] - 2026-06-06
+
+Patch release. Parties now stick together through matchmaking, and open matches fill more sensibly.
+
+### Changed
+
+- Parties stay together: everyone in a party lands in the same match and on the same team, and the match waits for the whole party to arrive before it starts instead of beginning without the stragglers.
+- After a match, your party drops back into its party lobby so you can jump into another match together with a single Find Match, instead of regrouping from scratch.
+- Open matchmaking packs players into fuller matches rather than splitting a rush of players across many near-empty rooms.
+
+### Fixed
+
+- A party is no longer split across teams when the match starts, and the teams come out balanced.
+
 ## [0.8.4] - 2026-06-05
 
 Patch release. Multiplayer team display, party matchmaking, and another jump fix.

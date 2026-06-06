@@ -20,6 +20,12 @@ export interface OpenRoomEntry {
   topology: Topology;
   humans: number;
   bots: number;
+  // Slots held for party members who've been routed to this room but haven't
+  // connected (and so aren't in `humans` yet). Counted against capacity so a
+  // party isn't scattered across rooms when other players fill the room before
+  // the rest of the party arrives. roomState (which overwrites humans/bots from
+  // the room's own count) must NOT touch this. Decremented as each member lands.
+  reserved: number;
   lastSeenAt: number;
   createdAt: number;
 }
@@ -45,22 +51,32 @@ interface OpenJoinResult {
   team?: Team;
 }
 
+/** Occupants counted against capacity: connected players plus reserved (not
+ * yet connected) party slots. */
+export function slotsUsed(entry: OpenRoomEntry): number {
+  return entry.humans + entry.bots + (entry.reserved ?? 0);
+}
+
 /**
- * Pure routing helper. Selects an existing open room from candidates or
- * indicates a fresh one should be created. Pulled out of the DO so it can be
- * unit-tested without spinning up a DurableObjectState stub.
+ * Pure routing helper. Selects an existing open room that can seat `needed`
+ * more occupants, or returns null to indicate a fresh one should be created.
+ * Pulled out of the DO so it can be unit-tested without a DurableObjectState
+ * stub.
  *
- * Rule: among rooms with humans+bots < OPEN_ROOM_SOFT_CAPACITY and
- * lastSeenAt within OPEN_ROOM_FRESH_MS, pick the highest humans count, then
- * highest total occupants as tiebreaker.
+ * `needed` is the party size on a party's first join (so the whole party fits
+ * in one room) and 1 for a solo. Rule: among fresh rooms with room for `needed`
+ * more (counting reserved slots), pick the highest humans count, then highest
+ * total occupancy as tiebreaker - this packs players into the fullest viable
+ * room so we don't spin up more rooms than necessary.
  */
 export function pickRoom(
   openRooms: ReadonlyMap<string, OpenRoomEntry>,
   now: number,
+  needed = 1,
 ): OpenRoomEntry | null {
   let best: OpenRoomEntry | null = null;
   for (const entry of openRooms.values()) {
-    if (entry.humans + entry.bots >= OPEN_ROOM_SOFT_CAPACITY) continue;
+    if (slotsUsed(entry) + needed > OPEN_ROOM_SOFT_CAPACITY) continue;
     if (entry.lastSeenAt <= now - OPEN_ROOM_FRESH_MS) continue;
     if (best === null) {
       best = entry;
@@ -70,7 +86,7 @@ export function pickRoom(
       best = entry;
       continue;
     }
-    if (entry.humans === best.humans && entry.humans + entry.bots > best.humans + best.bots) {
+    if (entry.humans === best.humans && slotsUsed(entry) > slotsUsed(best)) {
       best = entry;
     }
   }
@@ -127,7 +143,8 @@ export class MatchmakerDO {
     const stored = await this.state.storage.get<Record<string, OpenRoomEntry>>(STORAGE_KEY);
     if (stored) {
       for (const [id, entry] of Object.entries(stored)) {
-        this.openRooms.set(id, entry);
+        // `reserved` was added later; older persisted entries lack it.
+        this.openRooms.set(id, { ...entry, reserved: entry.reserved ?? 0 });
       }
     }
     const storedParties =
@@ -197,14 +214,16 @@ export class MatchmakerDO {
     }
 
     const party = partyId ? this.parties.get(partyId) : undefined;
-    // A later party member reuses the room the first member already landed in,
-    // as long as it's still around, fresh, and under capacity. Otherwise (first
-    // member, or the shared room aged out / filled / detached) we route fresh
-    // and re-stamp the party so the rest follow.
+
+    // A later party member claims the slot the first member reserved for them,
+    // as long as that room is still around and fresh. Their seat was held when
+    // the party was first routed, so there's no capacity check - just consume
+    // one reservation. If the shared room aged out / detached, fall through and
+    // re-route the party to a fresh one.
     if (party && party.roomId) {
       const shared = this.openRooms.get(party.roomId);
-      if (shared && shared.humans + shared.bots < OPEN_ROOM_SOFT_CAPACITY) {
-        shared.humans += 1;
+      if (shared && shared.lastSeenAt > now - OPEN_ROOM_FRESH_MS) {
+        shared.reserved = Math.max(0, (shared.reserved ?? 0) - 1);
         shared.lastSeenAt = now;
         this.openRooms.set(shared.roomId, shared);
         party.lastSeenAt = now;
@@ -219,33 +238,42 @@ export class MatchmakerDO {
       }
     }
 
-    const reusable = pickRoom(this.openRooms, now);
+    // First party member (or a re-route after the shared room vanished): pick a
+    // room with space for the WHOLE party so they all land together, then hold
+    // the rest of the party's seats. A solo just needs one slot.
+    const partySize = party ? party.members.length : 1;
+    const reusable = pickRoom(this.openRooms, now, partySize);
     let result: OpenJoinResult;
+    let chosen: OpenRoomEntry;
     if (reusable) {
       reusable.humans += 1;
       reusable.lastSeenAt = now;
-      this.openRooms.set(reusable.roomId, reusable);
+      chosen = reusable;
       result = { roomId: reusable.roomId, topology: reusable.topology, created: false };
     } else {
       const roomId = crypto.randomUUID();
       const topology = randomTopology();
-      const entry: OpenRoomEntry = {
+      chosen = {
         roomId,
         topology,
         humans: 1,
         bots: 0,
+        reserved: 0,
         lastSeenAt: now,
         createdAt: now,
       };
-      this.openRooms.set(roomId, entry);
       result = { roomId, topology, created: true };
     }
     if (party) {
-      party.roomId = result.roomId;
+      // Reserve seats for the members who haven't joined yet (this one occupies
+      // a real slot, counted in humans). Each later member consumes one above.
+      chosen.reserved = (chosen.reserved ?? 0) + Math.max(0, partySize - 1);
+      party.roomId = chosen.roomId;
       party.lastSeenAt = now;
       result.team = party.team;
       await this.persistParties();
     }
+    this.openRooms.set(chosen.roomId, chosen);
     await this.persist();
     return json(result);
   }
@@ -410,7 +438,19 @@ export class MatchmakerDO {
     // room later drops back to filling it can re-attach via the next
     // notifyMatchmaker -> /roomState call, which auto-creates the entry.
     this.openRooms.delete(body.roomId);
+    // A party that matched into this room is done with it once it detaches (the
+    // match has started and, thanks to the gather-wait, the whole party already
+    // joined). Clear the pointer so when they return to the party screen and
+    // Find Match again they're routed to a fresh room instead of the dead one.
+    let partiesChanged = false;
+    for (const party of this.parties.values()) {
+      if (party.roomId === body.roomId) {
+        party.roomId = null;
+        partiesChanged = true;
+      }
+    }
     await this.persist();
+    if (partiesChanged) await this.persistParties();
     return json({ ok: true });
   }
 }

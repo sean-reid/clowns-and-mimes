@@ -167,6 +167,9 @@ export interface BotManagerHost {
   freezePlayer(p: PlayerState): void;
   checkWin(): void;
   startMatch(): void;
+  // Called when the open-room gather timer elapses: the room decides whether to
+  // start now (fill bots + startMatch) or keep waiting for an assembling party.
+  startOpenMatchIfReady(): void;
   // Fire a projectile on the bot's behalf; returns whether it launched.
   botShoot(attacker: PlayerState, dir: Vec3): boolean;
   // Activate the bot's held power-up (clears the slot, applies the effect).
@@ -191,13 +194,18 @@ export class BotManager {
     return this.botMinds.has(id);
   }
 
-  /** Schedule fillBots + startMatch after BOT_FILL_DELAY_MS. */
+  /**
+   * Arm the open-room gather timer. Idempotent: if one is already pending this
+   * is a no-op, so onJoin can call it on every join without stacking timers.
+   * When it elapses the room decides whether to start (it may re-arm to keep
+   * waiting for a party still assembling).
+   */
   scheduleFill(): void {
+    if (this.botFillHandle !== null) return;
     this.botFillHandle = setTimeout(() => {
       this.botFillHandle = null;
       if (this.host.getPhase() !== 'filling' || this.host.getTickHandle()) return;
-      this.fillTeams();
-      this.host.startMatch();
+      this.host.startOpenMatchIfReady();
     }, BOT_FILL_DELAY_MS);
   }
 

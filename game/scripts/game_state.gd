@@ -45,6 +45,12 @@ var is_room_host: bool = false
 # Empty when not queuing as a party.
 var party_id: String = ""
 var party_member_id: String = ""
+# Party code, retained so the party screen can redisplay it when a party returns
+# from a match to re-queue.
+var party_code: String = ""
+# Live party roster size, mirrored from the party screen. Sent on join so an
+# open room can wait for the whole party to arrive before auto-starting.
+var party_size: int = 0
 # Team the matchmaker assigned the party; passed as the WS join `preferTeam`
 # so the whole party lands on one team. Empty for solo / host / join-by-code.
 var prefer_team: String = ""

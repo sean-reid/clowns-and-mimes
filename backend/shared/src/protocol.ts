@@ -207,6 +207,13 @@ export type ClientToServer =
       preferTeam?: Team;
       hostToken?: string;
       sessionToken?: string;
+      // Party the joiner belongs to, if any. The room keeps party members on one
+      // team as an atomic unit when it balances at match start, so a party is
+      // never split apart. Server-side only - it is not echoed on PlayerState.
+      partyId?: string;
+      // Size of that party, so an open room can hold its auto-start until all
+      // members have arrived rather than starting on the first two.
+      partySize?: number;
     }
   | { t: 'leave' }
   | { t: 'input'; input: PlayerInput }

@@ -137,6 +137,9 @@ var snapshot_received: bool = false
 # Set once we begin swapping back to the lobby on a Play Again restart, so a
 # second phase/snapshot in the same frame doesn't emit the screen change twice.
 var returning_to_lobby: bool = false
+# Set once a party member's post-match return to the party screen is scheduled,
+# so a second win/phase event in the same frame doesn't queue it twice.
+var _returning_to_party: bool = false
 var phase_label: String = ""
 var turn_ends_at_ms: int = 0
 var input_seq: int = 0
@@ -413,7 +416,9 @@ func _on_room_connected() -> void:
 	# Only fires on the fallback path where the arena opened the WS itself.
 	# In the normal lobby path the WS was already connected and join was
 	# sent before this scene loaded.
-	room_client.send_join(GameState.username, "", GameState.host_token)
+	room_client.send_join(
+		GameState.username, "", GameState.host_token, GameState.party_id, GameState.party_size
+	)
 	reconnect.handle_connected()
 
 func _on_room_disconnected(reason: String) -> void:
@@ -1003,6 +1008,26 @@ func _handle_win(event: Dictionary) -> void:
 	Input.set_mouse_mode(Input.MOUSE_MODE_VISIBLE)
 	hud.show_end(victory, is_host)
 	_play_stinger(victory)
+	# Open matches have no Play Again. A party returns to its party screen after
+	# the result so they can re-queue together with one Find Match; strangers
+	# (not in a party) keep the normal end screen + Back to Menu.
+	if online_mode and not GameState.party_id.is_empty():
+		_schedule_return_to_party()
+
+const PARTY_RETURN_DELAY_S := 3.5
+
+func _schedule_return_to_party() -> void:
+	if _returning_to_party:
+		return
+	_returning_to_party = true
+	await get_tree().create_timer(PARTY_RETURN_DELAY_S).timeout
+	if not is_inside_tree():
+		return
+	# Leave the finished room; the next Find Match opens a fresh connection. Mirrors
+	# the teardown in _on_back_to_menu so a dead RoomClient isn't inherited.
+	NetClient.close()
+	room_client = null
+	requested_screen.emit("party")
 
 func _on_play_again() -> void:
 	if room_client == null or not room_client.is_connected_to_server():

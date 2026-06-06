@@ -9,6 +9,7 @@ import {
   pickRoom,
   pruneStale,
   pruneStaleParties,
+  slotsUsed,
   type OpenRoomEntry,
 } from './matchmakerDO.ts';
 
@@ -17,6 +18,7 @@ function entry(partial: Partial<OpenRoomEntry> & { roomId: string }): OpenRoomEn
     topology: 'plane',
     humans: 0,
     bots: 0,
+    reserved: 0,
     lastSeenAt: 1_000_000,
     createdAt: 1_000_000,
     ...partial,
@@ -59,6 +61,21 @@ describe('pickRoom', () => {
       ['b', entry({ roomId: 'b', humans: 2, bots: 3, lastSeenAt: now })],
     ]);
     expect(pickRoom(rooms, now)?.roomId).toBe('b');
+  });
+
+  it('skips a room that cannot seat the whole party (needed)', () => {
+    const rooms = new Map<string, OpenRoomEntry>([
+      ['a', entry({ roomId: 'a', humans: OPEN_ROOM_SOFT_CAPACITY - 3, bots: 0, lastSeenAt: now })],
+    ]);
+    expect(pickRoom(rooms, now, 4)).toBeNull(); // 3 free < 4 needed
+    expect(pickRoom(rooms, now, 3)?.roomId).toBe('a'); // exactly fits
+  });
+
+  it('counts reserved seats against capacity', () => {
+    const e = entry({ roomId: 'a', humans: 1, bots: 0, reserved: 8, lastSeenAt: now });
+    expect(slotsUsed(e)).toBe(9);
+    const rooms = new Map<string, OpenRoomEntry>([['a', e]]);
+    expect(pickRoom(rooms, now, 4)).toBeNull(); // 9 + 4 > capacity
   });
 });
 
@@ -127,6 +144,59 @@ describe('MatchmakerDO.fetch', () => {
     const b = second as { roomId: string; created: boolean };
     expect(b.roomId).toBe(a.roomId);
     expect(b.created).toBe(false);
+  });
+
+  it('reserves the rest of a party on the first member open-join', async () => {
+    const doInstance = makeDO();
+    const { json: created } = await call(doInstance, '/partyCreate', { name: 'A' });
+    const { partyId, code } = created as { partyId: string; code: string };
+    await call(doInstance, '/partyJoin', { code, name: 'B' });
+    await call(doInstance, '/partyJoin', { code, name: 'C' }); // party of 3
+    const { json } = await call(doInstance, '/openJoin', { partyId });
+    const roomId = (json as { roomId: string }).roomId;
+    const rooms = (doInstance as unknown as { openRooms: Map<string, OpenRoomEntry> }).openRooms;
+    const room = rooms.get(roomId)!;
+    // The joining member takes a real slot; the other two are held.
+    expect(room.humans).toBe(1);
+    expect(room.reserved).toBe(2);
+  });
+
+  it('a later party member claims a reserved seat without creating a room', async () => {
+    const doInstance = makeDO();
+    const { json: created } = await call(doInstance, '/partyCreate', { name: 'A' });
+    const { partyId, code } = created as { partyId: string; code: string };
+    await call(doInstance, '/partyJoin', { code, name: 'B' }); // party of 2
+    const { json: first } = await call(doInstance, '/openJoin', { partyId });
+    const roomId = (first as { roomId: string }).roomId;
+    const { json: second } = await call(doInstance, '/openJoin', { partyId });
+    const rooms = (doInstance as unknown as { openRooms: Map<string, OpenRoomEntry> }).openRooms;
+    expect((second as { roomId: string }).roomId).toBe(roomId); // same room
+    expect(rooms.size).toBe(1); // no extra room spun up
+    expect(rooms.get(roomId)!.reserved).toBe(0); // both seats now claimed
+  });
+
+  it('routes a party away from a room that cannot fit all of them', async () => {
+    const doInstance = makeDO();
+    const rooms = (doInstance as unknown as { openRooms: Map<string, OpenRoomEntry> }).openRooms;
+    // Seed a near-full room: only 2 free slots, but the party needs 3.
+    const now = Date.now();
+    rooms.set('full', {
+      roomId: 'full',
+      topology: 'plane',
+      humans: OPEN_ROOM_SOFT_CAPACITY - 2,
+      bots: 0,
+      reserved: 0,
+      lastSeenAt: now,
+      createdAt: now,
+    });
+    const { json: created } = await call(doInstance, '/partyCreate', { name: 'A' });
+    const { partyId, code } = created as { partyId: string; code: string };
+    await call(doInstance, '/partyJoin', { code, name: 'B' });
+    await call(doInstance, '/partyJoin', { code, name: 'C' }); // party of 3
+    const { json } = await call(doInstance, '/openJoin', { partyId });
+    // Can't fit 3 in the 2-slot room, so a fresh room is created instead.
+    expect((json as { roomId: string; created: boolean }).roomId).not.toBe('full');
+    expect((json as { created: boolean }).created).toBe(true);
   });
 
   it('roomState updates counts and roomDetach removes empty rooms', async () => {
@@ -271,6 +341,11 @@ describe('MatchmakerDO parties', () => {
     const roomId = (joined as { roomId: string }).roomId;
     // The poll now reports it, which is what makes the rest of the party follow.
     expect((await stateOf()).roomId).toBe(roomId);
+
+    // When that room detaches (its match started), the party's pointer clears so
+    // a return-and-requeue routes them to a fresh room, not the dead one.
+    await call(doInstance, '/roomDetach', { roomId });
+    expect((await stateOf()).roomId).toBeNull();
   });
 
   it('partyJoin lowercases-insensitively matches the code', async () => {

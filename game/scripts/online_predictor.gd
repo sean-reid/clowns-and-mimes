@@ -95,29 +95,30 @@ func get_current_xz() -> Vector2:
 func get_jump_started_at_ms() -> int:
 	return _pred_jump_started_at_ms
 
-## Pick the jumpStartedAt to keep after a reconcile. `client` is our locally
-## predicted arc start (stamped from the input's client clock in advance_tick);
-## `replayed` is the server's authoritative value walked through the un-acked
-## input replay; `now_ms` is the current client clock.
+## Pick the predicted jumpStartedAt to keep after a reconcile. `client` is our
+## locally predicted arc start (stamped from the input's client clock in
+## advance_tick); `now_ms` is the current client clock.
 ##
-## While our predicted arc is still in flight (younger than JUMP_DURATION) keep
-## it, even if the replay says there is no arc. The server's authoritative
-## confirmation can lag several deltas behind the input ack - markedly so under
-## load, e.g. a map full of Clone bots - so the moment the jump input is acked
-## and drops out of the replay, `replayed` falls back to the server's not-yet-
-## updated (older) jumpStartedAt and reads as -1. Cancelling then snaps the body
-## to the ground partway through the jump. The arc curve returns to HOVER on its
-## own at JUMP_DURATION, so letting a young arc play out is safe whether the
-## server confirms it a few ticks late or rejected it outright; once the arc
-## window has passed we defer to the server again for landing and cooldown.
-static func resolve_jump_started_at(client: int, replayed: int, now_ms: int) -> int:
-	if client >= 0 and now_ms - client < int(Physics.JUMP_DURATION_S * 1000.0):
+## The local player initiates its own jumps, so reconcile must NEVER start an arc
+## from the server's authoritative state. Two failure modes that caused otherwise:
+##  - The server applies the jump late (under load - a map full of Clone bots -
+##    its tick falls behind and the input queue backs up) and, because the input
+##    is now stale, stamps jumpStartedAt with its own clock ~= now. After our
+##    real arc already finished, adopting that replayed value renders a phantom
+##    SECOND jump - the "jump again a split second later".
+##  - Conversely, dropping to the server's not-yet-updated (older) value mid-arc
+##    snapped the body to the ground partway up.
+## So we keep our own predicted start for the full lockout (JUMP_DURATION +
+## JUMP_COOLDOWN): the arc plays out, then the cooldown window matches the
+## server's, so we also stop predicting a too-soon jump the server would reject
+## (the snap's root cause). After the lockout, ground out. The server stays
+## authoritative for its own tag-evade height checks; only our local render uses
+## this. Unused server args are intentionally dropped.
+static func resolve_jump_started_at(client: int, now_ms: int) -> int:
+	var lockout_ms: int = int((Physics.JUMP_DURATION_S + Physics.JUMP_COOLDOWN_S) * 1000.0)
+	if client >= 0 and now_ms - client < lockout_ms:
 		return client
-	if replayed < 0:
-		return -1
-	if client < 0:
-		return replayed
-	return client
+	return -1
 
 ## Arm the next predicted jump as a leap. arena calls this when the local
 ## player activates a held leap power-up, in the same frame it sends the
@@ -346,20 +347,12 @@ func reconcile(delta: Dictionary) -> void:
 			bool(entry.get("jump", false)),
 			entry_now_ms,
 		)
-	# Keep our own arc start time while both we and the server agree an arc /
-	# lockout is active. advance_tick stamped it from the input's client clock so
-	# the render-rate arc Y is sampled in that same clock. The server may have
-	# stored a server-clock value instead (it falls back to its own Date.now when
-	# the input/serve clock skew exceeds JUMP_CLIENT_CLOCK_SKEW_MS); adopting that
-	# mid-arc samples the arc in the wrong clock domain and the body snaps to the
-	# ground partway through the jump the instant the triggering input is acked.
-	# Adopt the server's value only to START an arc we weren't already predicting,
-	# and clear to -1 to land once the server's arc (and its cooldown lockout) has
-	# fully ended. The arc curve itself returns to ground at JUMP_DURATION, so a
-	# start time held through the longer cooldown still renders a grounded body.
+	# The local player owns its own jump arc: keep the predicted start for the
+	# full lockout and never start an arc from the server (see
+	# resolve_jump_started_at). replayed_jump_started_at_ms is still used above for
+	# the replay's Y-aware wall skip and below for the leaping flag.
 	_pred_jump_started_at_ms = resolve_jump_started_at(
 		_pred_jump_started_at_ms,
-		replayed_jump_started_at_ms,
 		int(Time.get_unix_time_from_system() * 1000.0),
 	)
 	# Reconcile leaping against the server's authoritative flag. When the

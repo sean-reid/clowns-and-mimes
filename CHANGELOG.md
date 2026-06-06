@@ -6,6 +6,16 @@ When cutting a release: rename the `[Unreleased]` heading below to the version b
 
 ## [Unreleased]
 
+## [0.8.4] - 2026-06-05
+
+Patch release. Multiplayer team display, party matchmaking, and another jump fix.
+
+### Fixed
+
+- In a multiplayer match your team is now shown correctly. The teams are balanced at match start, but the HUD badge, sprint-bar color, and minimap kept showing your pre-balance team while you actually played on the other one.
+- In a party, only one member needs to click Find Match now — everyone else is pulled into the same match automatically instead of being stranded on the party screen.
+- Jumping no longer occasionally replays a second time right after landing. The client was rendering a late server-side jump confirmation as a fresh jump; the local player now fully owns its own jump arc.
+
 ## [0.8.3] - 2026-06-05
 
 Patch release. Fixes a jump that cut back to the ground partway through the arc.

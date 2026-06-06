@@ -176,41 +176,35 @@ func test_harness_reconcile_replay_chain() -> void:
 	var expected_x := 1.0 + 5.0 * SharedConstants.WALK_SPEED / 60.0
 	assert_approx(state["position"].x, expected_x, 0.001, "5-input replay landing position")
 
-# Regression for the mid-jump camera snap: when the server's authoritative jump
-# confirmation lags the input ack (notably under heavy load, e.g. many Clone
-# bots), the replayed value falls back to the server's not-yet-updated state and
-# reads as -1 the instant the jump input is acked. reconcile used to cancel the
-# arc then, dropping the body to the ground partway through the jump. A young
-# predicted arc is now kept until JUMP_DURATION elapses regardless of the replay.
-func test_reconcile_keeps_a_young_arc_when_server_confirmation_lags() -> void:
-	var dur_ms := int(Physics.JUMP_DURATION_S * 1000.0)
-	# Arc started 100 ms ago, server hasn't confirmed yet (replayed -1): keep it.
+# Regression for the jump snap AND the phantom re-jump. The local player owns
+# its own jumps: reconcile keeps the predicted arc for the full lockout and never
+# starts an arc from the server's authoritative state (a jump the server applied
+# late under load would otherwise replay as a second jump after the real one).
+func test_resolve_jump_keeps_predicted_arc_for_lockout_and_never_adopts_server() -> void:
+	var lockout_ms := int((Physics.JUMP_DURATION_S + Physics.JUMP_COOLDOWN_S) * 1000.0)
+	# Young arc: keep it (plays out, no mid-air snap).
 	assert_eq(
-		OnlinePredictor.resolve_jump_started_at(100000, -1, 100000 + 100),
+		OnlinePredictor.resolve_jump_started_at(100000, 100000 + 100),
 		100000,
-		"a young predicted arc plays out even when the server has not confirmed",
+		"a predicted arc plays out without being cancelled mid-flight",
 	)
-	# Arc window has passed and the server shows no arc: land.
+	# Still within the lockout (past the visible arc, in cooldown): keep it so the
+	# client's cooldown matches the server's and we don't predict a too-soon jump.
 	assert_eq(
-		OnlinePredictor.resolve_jump_started_at(100000, -1, 100000 + dur_ms + 1),
-		-1,
-		"lands once the arc window has passed and the server has no arc",
-	)
-	# Not predicting one, server reports an arc: adopt it to start.
-	assert_eq(
-		OnlinePredictor.resolve_jump_started_at(-1, 105000, 105000),
-		105000,
-		"adopts the server start to begin an arc we were not predicting",
-	)
-	# Window passed, both active: keep our own start (they describe one arc).
-	assert_eq(
-		OnlinePredictor.resolve_jump_started_at(100000, 105000, 100000 + dur_ms + 1),
+		OnlinePredictor.resolve_jump_started_at(100000, 100000 + lockout_ms - 1),
 		100000,
-		"keeps our arc start once the window passed and both agree",
+		"holds the start through the cooldown so re-press timing matches the server",
 	)
-	# Neither side has an arc: stay grounded.
+	# Past the lockout: ground out.
 	assert_eq(
-		OnlinePredictor.resolve_jump_started_at(-1, -1, 100000),
+		OnlinePredictor.resolve_jump_started_at(100000, 100000 + lockout_ms + 1),
 		-1,
-		"stays grounded when neither side has an arc",
+		"grounds out once the lockout has elapsed",
+	)
+	# No predicted arc: stay grounded. There is no `replayed` arg any more, so a
+	# late server-side jump can never be adopted into a phantom second jump.
+	assert_eq(
+		OnlinePredictor.resolve_jump_started_at(-1, 100000),
+		-1,
+		"never starts an arc the local player did not predict",
 	)

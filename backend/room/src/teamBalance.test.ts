@@ -59,7 +59,12 @@ describe('balanceTeamAssignments', () => {
 
   it('balances solo players onto even teams', () => {
     // Solos are not a party, so they split to even the match.
-    const players = [human('a', 'mime'), human('b', 'mime'), human('c', 'mime'), human('d', 'mime')];
+    const players = [
+      human('a', 'mime'),
+      human('b', 'mime'),
+      human('c', 'mime'),
+      human('d', 'mime'),
+    ];
     const counts = teamsAfter(players, balanceTeamAssignments(players, TARGET));
     expect(counts).toEqual({ mime: 2, clown: 2 });
   });

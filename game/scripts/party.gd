@@ -73,8 +73,24 @@ func _apply_intent() -> void:
 		roster.visible = false
 		code_entry.text = code
 		_on_join_pressed()
+	elif not GameState.party_id.is_empty():
+		# Returning from a match with the party intact: resume it so everyone can
+		# Find Match again together, instead of dropping to the create/join entry.
+		_resume_party()
 	else:
 		_show_entry()
+
+# Re-enter the existing party (set in GameState before this screen loaded) after
+# a match. Show the roster and start polling; the matchmaker cleared the party's
+# old room on detach, so the poll reports no room and the party waits here until
+# someone clicks Find Match again.
+func _resume_party() -> void:
+	entry.visible = false
+	roster.visible = true
+	code_label.text = "Party code: %s" % GameState.party_code
+	status_label.text = "Back together. Find a match when everyone is ready."
+	_poll_timer.start()
+	_poll()
 
 func _show_entry() -> void:
 	entry.visible = true
@@ -98,6 +114,7 @@ func _on_join_pressed() -> void:
 func _on_party_ready(party_id: String, code: String, _team: String, member_id: String, members: Array) -> void:
 	GameState.party_id = party_id
 	GameState.party_member_id = member_id
+	GameState.party_code = code
 	entry.visible = false
 	roster.visible = true
 	code_label.text = "Party code: %s" % code
@@ -178,6 +195,7 @@ func _clear_party_state() -> void:
 	GameState.party_id = ""
 	GameState.party_member_id = ""
 	GameState.party_size = 0
+	GameState.party_code = ""
 
 func _uppercase_code(new_text: String) -> void:
 	var upper := new_text.to_upper()

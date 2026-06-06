@@ -438,7 +438,19 @@ export class MatchmakerDO {
     // room later drops back to filling it can re-attach via the next
     // notifyMatchmaker -> /roomState call, which auto-creates the entry.
     this.openRooms.delete(body.roomId);
+    // A party that matched into this room is done with it once it detaches (the
+    // match has started and, thanks to the gather-wait, the whole party already
+    // joined). Clear the pointer so when they return to the party screen and
+    // Find Match again they're routed to a fresh room instead of the dead one.
+    let partiesChanged = false;
+    for (const party of this.parties.values()) {
+      if (party.roomId === body.roomId) {
+        party.roomId = null;
+        partiesChanged = true;
+      }
+    }
     await this.persist();
+    if (partiesChanged) await this.persistParties();
     return json({ ok: true });
   }
 }

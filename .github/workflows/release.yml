@@ -22,7 +22,7 @@ jobs:
     name: Validate CHANGELOG entry exists
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - name: Check CHANGELOG has section for tag
         run: |
           set -eu
@@ -71,7 +71,7 @@ jobs:
             godot_output: clowns-and-mimes-linux.x86_64
             artifact: clowns-and-mimes-linux.x86_64
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - name: Install Godot 4 (Linux runners)
         if: matrix.runner == 'ubuntu-latest'
         run: |
@@ -275,7 +275,7 @@ jobs:
     needs: build-game
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - uses: actions/download-artifact@v8
         with:
           path: dist
@@ -317,7 +317,7 @@ jobs:
     runs-on: ubuntu-latest
     environment: production
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - uses: pnpm/action-setup@v6
       - uses: actions/setup-node@v6
         with:

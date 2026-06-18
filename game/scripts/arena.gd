@@ -142,6 +142,11 @@ var returning_to_lobby: bool = false
 var _returning_to_party: bool = false
 var phase_label: String = ""
 var turn_ends_at_ms: int = 0
+# Last phase the turn visuals (battle cry + light-band tint) were applied for.
+# Both the phase event and every delta drive the visuals through one deduped
+# path, so a missed/late phase event can't leave the cue a turn behind the
+# authoritative phase the tag rules use.
+var _last_visual_phase: String = ""
 var input_seq: int = 0
 var input_accumulator: float = 0.0
 # Pending inputs since the last server ack. Each entry is
@@ -499,6 +504,12 @@ func _on_delta(delta: Dictionary) -> void:
 		return
 	phase_label = delta.get("phase", phase_label)
 	turn_ends_at_ms = int(delta.get("turnEndsAt", turn_ends_at_ms))
+	# The phase rides every delta, so re-apply the turn cue from it: if the
+	# discrete phase event was missed or late, the bands/cry would otherwise lag
+	# the real phase and mislead the player about whose turn it is. Filling
+	# (Play Again) is left to the event path, which swaps back to the lobby.
+	if phase_label != "filling":
+		_apply_phase_visuals(phase_label, -1)
 	# Server's delta carries the full player roster every tick. Use the
 	# snapshot-style sync so newly-arrived bots get a Player node spawned
 	# (otherwise _apply_player_state silently skips them and the lobby looks
@@ -629,6 +640,19 @@ func _handle_phase_event(phase: String, cry_index: int) -> void:
 	# server-picked cryIndex so every client renders the same banner text. If
 	# the server omits cryIndex (pre-cryIndex room build), falls back to slot 0
 	# rather than a per-client random pick that would diverge across players.
+	_apply_phase_visuals(phase, cry_index)
+
+# Apply the turn cue (battle cry + light-band tint) for a phase, once per change.
+# Called both from the phase event (with the server's shared cryIndex) and from
+# _on_delta (cry_index -1 -> deterministic slot 0) so the cue always reflects the
+# authoritative phase even if the discrete phase event was missed or arrived
+# late - otherwise the bands/cry could show one team's turn while the server (and
+# the tag rules) had already moved to the other, making a player think it was
+# their turn to tag when it wasn't.
+func _apply_phase_visuals(phase: String, cry_index: int) -> void:
+	if phase == _last_visual_phase:
+		return
+	_last_visual_phase = phase
 	if phase == "turn_mime":
 		var idx: int = cry_index if cry_index >= 0 else 0
 		hud.flash_battle_cry(MIME_BATTLE_CRIES[idx % MIME_BATTLE_CRIES.size()], "mime")

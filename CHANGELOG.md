@@ -6,6 +6,14 @@ When cutting a release: rename the `[Unreleased]` heading below to the version b
 
 ## [Unreleased]
 
+## [0.8.6] - 2026-06-06
+
+Patch release. Fixes a misleading turn indicator in online matches.
+
+### Fixed
+
+- The battle cry and the labyrinth light-band color now always match whose turn it actually is. A dropped or late turn update could leave them showing your team's turn while it was really the other team's, so a touch would freeze you on what looked like your turn to tag. The cue now tracks the live game state and corrects itself immediately.
+
 ## [0.8.5] - 2026-06-06
 
 Patch release. Parties now stick together through matchmaking, and open matches fill more sensibly.

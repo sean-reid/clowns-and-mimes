@@ -126,4 +126,24 @@ describe('open-room gather-aware auto-start', () => {
     placeHuman(room, 'b');
     expect(assembled(room)).toBe(true);
   });
+
+  it('fills bots after balancing so the teams come out even', () => {
+    const room = makeRoom();
+    setFilling(room);
+    // Three humans all joined the same team (mime). startMatch balances them
+    // (2-1) and only THEN fills bots, so each side reaches TEAM_TARGET: 4 vs 4.
+    // Filling before the balance left the moved human's side a bot short
+    // (the 2h+1b vs 1h+4b imbalance).
+    placeHuman(room, 'a');
+    placeHuman(room, 'b');
+    placeHuman(room, 'c');
+    (room as unknown as { startMatch(): void }).startMatch();
+    const players = (room as unknown as { players: Map<string, PlayerState> }).players;
+    let mime = 0;
+    let clown = 0;
+    for (const p of players.values()) p.team === 'mime' ? (mime += 1) : (clown += 1);
+    expect(mime).toBe(clown);
+    expect(mime + clown).toBe(8); // 2 * TEAM_TARGET
+    clearTick(room);
+  });
 });

@@ -6,6 +6,14 @@ When cutting a release: rename the `[Unreleased]` heading below to the version b
 
 ## [Unreleased]
 
+## [0.8.7] - 2026-06-22
+
+Patch release. Fixes uneven team sizes in open matches.
+
+### Fixed
+
+- Open matches now come out evenly sized. Bots were being filled in before the humans were balanced across teams, so moving a human to even out the sides could leave one team a bot short (e.g. 3 vs 5); the teams are now balanced first and the bots fill the final split.
+
 ## [0.8.6] - 2026-06-06
 
 Patch release. Fixes a misleading turn indicator in online matches.

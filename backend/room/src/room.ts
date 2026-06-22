@@ -809,7 +809,6 @@ export class Room implements DurableObject {
       // (and re-waits for an incomplete party up to the hard deadline).
       if (this.humanPlayers().length >= OPEN_START_TARGET && this.partiesAssembled()) {
         this.bots.cancelFill();
-        this.bots.fillTeams();
         this.startMatch();
       } else {
         this.bots.scheduleFill();
@@ -847,7 +846,6 @@ export class Room implements DurableObject {
       this.bots.scheduleFill();
       return;
     }
-    this.bots.fillTeams();
     this.startMatch();
   }
 
@@ -868,9 +866,8 @@ export class Room implements DurableObject {
     // Cancel the auto-fill timer if one happened to be scheduled (it would
     // not normally fire for a hosted room, but the matchmaker may have
     // changed mid-room or the room may have been promoted; safer to be
-    // defensive). Then fill bots and transition into free roam.
+    // defensive). startMatch fills bots (after balancing) and goes to free roam.
     this.bots.cancelFill();
-    this.bots.fillTeams();
     this.startMatch();
   }
 
@@ -1217,6 +1214,12 @@ export class Room implements DurableObject {
 
   private startMatch(): void {
     this.balanceHumansForMatchStart();
+    // Fill bots AFTER balancing the humans, not before: fillTeams tops each team
+    // up to TEAM_TARGET from the current tally, so if bots were placed against
+    // the pre-balance human teams and a human then moved, one side ended a bot
+    // short and the other a bot over (the 2h+1b vs 1h+4b imbalance). Balancing
+    // first means bots fill the final human split and the teams come out even.
+    this.bots.fillTeams();
     // The gather is over once the match goes live; clear its bookkeeping so a
     // later filling cycle (room emptied and reset) starts a fresh count.
     this.expectedPartySize.clear();

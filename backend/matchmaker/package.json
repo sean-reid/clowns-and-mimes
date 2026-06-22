@@ -16,10 +16,10 @@
     "@cm/shared": "workspace:*"
   },
   "devDependencies": {
-    "@cloudflare/workers-types": "4.20260604.1",
-    "@vitest/coverage-v8": "4.1.8",
+    "@cloudflare/workers-types": "4.20260621.1",
+    "@vitest/coverage-v8": "4.1.9",
     "typescript": "6.0.3",
-    "vitest": "4.1.8",
-    "wrangler": "4.97.0"
+    "vitest": "4.1.9",
+    "wrangler": "4.103.0"
   }
 }

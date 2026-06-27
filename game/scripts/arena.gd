@@ -1053,11 +1053,7 @@ func _handle_saved(event: Dictionary) -> void:
 func _handle_win(event: Dictionary) -> void:
 	var team: String = event.get("team", "")
 	_ended_win_team = team
-	# Drop back to our own camera for the end screen if we were spectating a
-	# teammate while frozen at the buzzer.
-	_spectate_delay_timer.stop()
-	_spectate_active = false
-	stop_spectating()
+	_teardown_spectate()
 	var victory: bool = local_player != null and team == local_player.team
 	if local_player != null:
 		Telemetry.track_match_end("won" if victory else "lost", local_player.team)
@@ -1229,6 +1225,14 @@ func stop_spectating() -> void:
 
 func is_spectating() -> bool:
 	return _spectate_target != null
+
+## Drop back to our own camera for the end screen if we were spectating a
+## teammate while frozen at the buzzer. Called from both the online win handler
+## and offline_mode._on_won so the two paths behave identically.
+func _teardown_spectate() -> void:
+	_spectate_delay_timer.stop()
+	_spectate_active = false
+	stop_spectating()
 
 # One spectator tick (called each frame while _spectate_active). Keeps the
 # current target if it's still a valid teammate, otherwise switches to a random

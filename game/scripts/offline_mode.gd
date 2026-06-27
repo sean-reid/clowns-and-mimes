@@ -473,6 +473,9 @@ func _on_won(team: String) -> void:
 	# Match completed cleanly - clear the live flag so the trip back to the menu
 	# isn't counted as an abandon.
 	arena._match_telemetry_emitted = false
+	# Restore our own camera if we were watching a teammate while frozen at the
+	# buzzer, mirroring the online win handler.
+	arena._teardown_spectate()
 	arena.hud.show_end(victory)
 	arena._play_stinger(victory)
 

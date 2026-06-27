@@ -168,6 +168,13 @@ var local_sprinting: bool = false
 # _spectate_target is the body currently being watched, or null when off.
 var _spectator_cam: Camera3D = null
 var _spectate_target: Node = null
+# True once the local player has been frozen long enough to switch into the
+# teammate-spectator view (see SPECTATE_DELAY_S); cleared on unfreeze / match end.
+var _spectate_active: bool = false
+var _spectate_delay_timer: Timer = null
+# Beat after freezing before the view switches, so the "you've been mimed by X"
+# flash registers on the player's own POV first.
+const SPECTATE_DELAY_S := 2.0
 
 # Online local-player predictor. Owns _pred_* state + the three
 # advance_tick / reconcile / advance_local_prediction methods. See
@@ -249,6 +256,12 @@ func _ready() -> void:
 	# scene and re-apply visual prefs (light mode) without waiting for
 	# the next match load.
 	add_to_group("arena")
+	# One-shot delay between freezing and switching to the teammate-spectator view.
+	_spectate_delay_timer = Timer.new()
+	_spectate_delay_timer.one_shot = true
+	_spectate_delay_timer.wait_time = SPECTATE_DELAY_S
+	_spectate_delay_timer.timeout.connect(_on_spectate_delay_elapsed)
+	add_child(_spectate_delay_timer)
 	online_mode = not GameState.server_url.is_empty()
 	apply_light_mode(Settings.light_mode)
 	_setup_menu()
@@ -329,14 +342,11 @@ func _unhandled_input(event: InputEvent) -> void:
 # ---------------------------------------------------------------------------
 
 func _process(delta: float) -> void:
-	# Keep the spectator camera glued to the watched teammate's eye each frame
-	# (their body is already interpolated, so this stays smooth). Drop spectating
-	# if the target body went away (left / despawned).
-	if _spectate_target != null:
-		if is_instance_valid(_spectate_target):
-			_position_spectator_cam()
-		else:
-			stop_spectating()
+	# While in spectator mode (frozen past the delay), keep watching a valid
+	# teammate: re-pick if ours left or got frozen, fall back to our own POV if
+	# none are eligible, and glue the camera to the target's interpolated eye.
+	if _spectate_active:
+		_tick_spectate()
 	if online_mode:
 		_drive_online_hud()
 		# The authoritative XZ advances at 60 Hz inside _advance_predicted_tick
@@ -1031,6 +1041,11 @@ func _handle_saved(event: Dictionary) -> void:
 func _handle_win(event: Dictionary) -> void:
 	var team: String = event.get("team", "")
 	_ended_win_team = team
+	# Drop back to our own camera for the end screen if we were spectating a
+	# teammate while frozen at the buzzer.
+	_spectate_delay_timer.stop()
+	_spectate_active = false
+	stop_spectating()
 	var victory: bool = local_player != null and team == local_player.team
 	if local_player != null:
 		Telemetry.track_match_end("won" if victory else "lost", local_player.team)
@@ -1145,8 +1160,22 @@ func _team_spawn_offset(team: String) -> Vector3:
 # ---------------------------------------------------------------------------
 
 func _on_local_frozen_changed(is_frozen: bool) -> void:
-	if not is_frozen:
+	if is_frozen:
+		# Schedule the switch to a teammate's POV after a short beat. The actual
+		# pick happens on timeout (and re-validates each frame) so we never switch
+		# if the player gets saved during the delay.
+		_spectate_delay_timer.start()
+	else:
 		hud.clear_frozen_overlay()
+		# Saved (or match reset): cancel any pending switch and return to our POV.
+		_spectate_delay_timer.stop()
+		_spectate_active = false
+		stop_spectating()
+
+func _on_spectate_delay_elapsed() -> void:
+	# Only enter spectator mode if we're still frozen (not saved during the beat).
+	if local_player != null and is_instance_valid(local_player) and local_player.frozen:
+		_spectate_active = true
 
 # ---------------------------------------------------------------------------
 # Teammate-spectator camera (Phase 1 foundation: the camera + follow only; the
@@ -1169,15 +1198,57 @@ func spectate(target: Node) -> void:
 	_spectate_target = target
 	_position_spectator_cam()
 	_spectator_cam.make_current()
+	if local_player != null and is_instance_valid(local_player):
+		local_player.spectating = true
 
 ## Return to the local player's own camera.
 func stop_spectating() -> void:
 	_spectate_target = null
-	if local_player != null and is_instance_valid(local_player) and local_player.camera != null:
-		local_player.camera.make_current()
+	if local_player != null and is_instance_valid(local_player):
+		local_player.spectating = false
+		if local_player.camera != null:
+			local_player.camera.make_current()
 
 func is_spectating() -> bool:
 	return _spectate_target != null
+
+# One spectator tick (called each frame while _spectate_active). Keeps the
+# current target if it's still a valid teammate, otherwise switches to a random
+# eligible one, or falls back to our own POV when no teammate is available
+# (e.g. the whole team is frozen) - re-picking automatically when one frees up.
+func _tick_spectate() -> void:
+	var desired: Node = _choose_spectate_target()
+	if desired != _spectate_target:
+		if desired == null:
+			stop_spectating()
+		else:
+			spectate(desired)
+	if _spectate_target != null and is_instance_valid(_spectate_target):
+		_position_spectator_cam()
+
+func _choose_spectate_target() -> Node:
+	if _is_eligible(_spectate_target):
+		return _spectate_target
+	var eligible: Array = _eligible_spectate_targets()
+	if eligible.is_empty():
+		return null
+	return eligible[randi() % eligible.size()]
+
+func _eligible_spectate_targets() -> Array:
+	var out: Array = []
+	for id in player_nodes:
+		if id == local_player_id:
+			continue
+		var node: Node = player_nodes[id]
+		if _is_eligible(node):
+			out.append(node)
+	return out
+
+func _is_eligible(node: Node) -> bool:
+	if node == null or not is_instance_valid(node) or node == local_player:
+		return false
+	var my_team: String = local_player.team if local_player != null else ""
+	return Spectator.is_teammate_target(node.team, node.frozen, my_team)
 
 func _position_spectator_cam() -> void:
 	_spectator_cam.global_position = Spectator.eye_position(_spectate_target.global_position)

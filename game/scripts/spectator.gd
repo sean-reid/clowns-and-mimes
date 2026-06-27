@@ -23,3 +23,9 @@ static func eye_position(body_position: Vector3) -> Vector3:
 ## compose.
 static func look_rotation(yaw: float, pitch: float) -> Vector3:
 	return Vector3(pitch, yaw, 0.0)
+
+## Whether a body is a valid spectate target for a viewer on `my_team`: a
+## same-team player who isn't frozen. (The caller excludes the viewer itself by
+## id; bots are eligible, so an all-bot team offline still has someone to watch.)
+static func is_teammate_target(target_team: String, target_frozen: bool, my_team: String) -> bool:
+	return target_team == my_team and not target_frozen

@@ -13,11 +13,11 @@ import {
   HOVER_HEIGHT,
   JUMP_AMP,
   JUMP_COOLDOWN_S,
-  JUMP_DURATION_S,
   LEAP_JUMP_AMP,
   WALL_HEIGHT,
   isJumping,
   jumpArcY,
+  jumpDurationMs,
   verticallyOverlapping,
 } from './physics.ts';
 
@@ -201,6 +201,10 @@ export interface JumpStepState {
   // `jump: true` next input cannot retrigger immediately. Clears to
   // null automatically at the end of the lockout.
   jumpStartedAt: number | null;
+  // Whether the in-flight jump is a Leap. The lockout spans the arc,
+  // and a Leap arc lasts longer (jumpDurationMs(LEAP_JUMP_AMP)), so the
+  // lockout must know which height is airborne. Absent/false = low jump.
+  leaping?: boolean;
 }
 
 export interface JumpStepResult {
@@ -219,12 +223,12 @@ export interface JumpStepResult {
  * given the same state and input; reconcile replay produces identical
  * output when the client feeds the same nowMs the server used.
  *
- * Lockout: jumpStartedAt stays set for JUMP_DURATION_S (arc) +
- * JUMP_COOLDOWN_S (post-landing). New triggers are gated on
- * jumpStartedAt === null so the cooldown sub-window naturally
- * rejects rapid re-press. During the cooldown the body is already
- * back at HOVER_HEIGHT (jumpArcY returns the floor for elapsed past
- * the arc), only the input gate remains active.
+ * Lockout: jumpStartedAt stays set for the arc duration (which depends
+ * on whether this is a Leap) + JUMP_COOLDOWN_S (post-landing). New
+ * triggers are gated on jumpStartedAt === null so the cooldown
+ * sub-window naturally rejects rapid re-press. During the cooldown the
+ * body is already back at HOVER_HEIGHT (jumpArcY returns the floor for
+ * elapsed past the arc), only the input gate remains active.
  */
 export function stepJump(state: JumpStepState, input: JumpStepInput): JumpStepResult {
   const { nowMs } = input;
@@ -232,7 +236,8 @@ export function stepJump(state: JumpStepState, input: JumpStepInput): JumpStepRe
 
   if (jumpStartedAt !== null) {
     const elapsedMs = nowMs - jumpStartedAt;
-    const lockoutMs = (JUMP_DURATION_S + JUMP_COOLDOWN_S) * 1000;
+    const arcMs = jumpDurationMs(state.leaping ? LEAP_JUMP_AMP : JUMP_AMP);
+    const lockoutMs = arcMs + JUMP_COOLDOWN_S * 1000;
     if (elapsedMs >= lockoutMs) {
       jumpStartedAt = null;
     }

@@ -8,6 +8,7 @@ import {
   WALL_HEIGHT,
   BODY_VERTICAL_EXTENT,
   jumpArcY,
+  jumpDurationMs,
   isJumping,
   verticallyOverlapping,
 } from './physics.ts';
@@ -15,6 +16,8 @@ import { bodyYForState, resolvePlayerCollisions, stepJump } from './movement.ts'
 import type { PlayerState } from './protocol.ts';
 
 const ARC_MS = JUMP_DURATION_S * 1000;
+// A Leap arc lasts longer than the low jump because gravity is held constant.
+const LEAP_ARC_MS = jumpDurationMs(LEAP_JUMP_AMP);
 
 describe('jumpArcY', () => {
   it('returns HOVER_HEIGHT when not jumping', () => {
@@ -49,16 +52,23 @@ describe('jumpArcY', () => {
     }
   });
 
-  it('peaks at HOVER_HEIGHT + LEAP_JUMP_AMP with the leap amplitude', () => {
-    expect(jumpArcY(0, ARC_MS / 2, LEAP_JUMP_AMP)).toBeCloseTo(HOVER_HEIGHT + LEAP_JUMP_AMP, 6);
+  it('peaks at HOVER_HEIGHT + LEAP_JUMP_AMP at the leap arc midpoint', () => {
+    // The leap apex is at its own midpoint, not the low jump's. At the low
+    // jump's midpoint (ARC_MS / 2) the leap is still rising.
+    expect(jumpArcY(0, LEAP_ARC_MS / 2, LEAP_JUMP_AMP)).toBeCloseTo(
+      HOVER_HEIGHT + LEAP_JUMP_AMP,
+      6,
+    );
+    expect(jumpArcY(0, ARC_MS / 2, LEAP_JUMP_AMP)).toBeLessThan(HOVER_HEIGHT + LEAP_JUMP_AMP);
   });
 
   it('clears wall height for a meaningful slice of the leap arc', () => {
     // The Leap power-up only works if the body actually spends time above
-    // the wall. Sample the arc and require a contiguous run above WALL_HEIGHT.
+    // the wall. Sample the (longer) leap arc and require a substantial run
+    // above WALL_HEIGHT.
     let aboveTicks = 0;
     for (let f = 0; f <= 1; f += 1 / 36) {
-      if (jumpArcY(0, f * ARC_MS, LEAP_JUMP_AMP) > WALL_HEIGHT) aboveTicks += 1;
+      if (jumpArcY(0, f * LEAP_ARC_MS, LEAP_JUMP_AMP) > WALL_HEIGHT) aboveTicks += 1;
     }
     expect(aboveTicks).toBeGreaterThan(8);
     // A normal jump never clears the wall.
@@ -68,16 +78,45 @@ describe('jumpArcY', () => {
   });
 });
 
+describe('jumpDurationMs (constant gravity)', () => {
+  it('leaves the low jump at JUMP_DURATION_S', () => {
+    expect(jumpDurationMs(JUMP_AMP)).toBeCloseTo(ARC_MS, 6);
+  });
+
+  it('stretches a taller jump by sqrt(amp ratio)', () => {
+    expect(jumpDurationMs(LEAP_JUMP_AMP)).toBeCloseTo(
+      ARC_MS * Math.sqrt(LEAP_JUMP_AMP / JUMP_AMP),
+      6,
+    );
+    expect(LEAP_ARC_MS).toBeGreaterThan(ARC_MS);
+  });
+
+  it('implies the same gravity for both jump heights (g = 8 * amp / D^2)', () => {
+    const gLow = (8 * JUMP_AMP) / (jumpDurationMs(JUMP_AMP) / 1000) ** 2;
+    const gLeap = (8 * LEAP_JUMP_AMP) / (jumpDurationMs(LEAP_JUMP_AMP) / 1000) ** 2;
+    expect(gLeap).toBeCloseTo(gLow, 6);
+  });
+});
+
 describe('bodyYForState leap', () => {
   it('uses the normal amplitude when not leaping', () => {
     expect(bodyYForState({ jumpStartedAt: 0 }, ARC_MS / 2)).toBeCloseTo(HOVER_HEIGHT + JUMP_AMP, 6);
   });
 
   it('uses the leap amplitude when leaping', () => {
-    expect(bodyYForState({ jumpStartedAt: 0, leaping: true }, ARC_MS / 2)).toBeCloseTo(
+    expect(bodyYForState({ jumpStartedAt: 0, leaping: true }, LEAP_ARC_MS / 2)).toBeCloseTo(
       HOVER_HEIGHT + LEAP_JUMP_AMP,
       6,
     );
+  });
+
+  it('keeps a leaping body aloft past the low-jump window', () => {
+    // At the low jump's landing time the leap is still in flight.
+    expect(bodyYForState({ jumpStartedAt: 0, leaping: true }, ARC_MS)).toBeGreaterThan(
+      HOVER_HEIGHT,
+    );
+    // And it has landed by the end of its own (longer) arc.
+    expect(bodyYForState({ jumpStartedAt: 0, leaping: true }, LEAP_ARC_MS)).toBe(HOVER_HEIGHT);
   });
 });
 
@@ -95,6 +134,18 @@ describe('isJumping', () => {
   it('is false once the arc window expires', () => {
     expect(isJumping({ jumpStartedAt: 1000 }, 1000 + ARC_MS)).toBe(false);
     expect(isJumping({ jumpStartedAt: 1000 }, 1000 + ARC_MS + 1000)).toBe(false);
+  });
+
+  it('stays in flight longer for a leaping body', () => {
+    // A leap is still airborne past the low-jump window, and lands by the
+    // end of its own longer arc.
+    expect(isJumping({ jumpStartedAt: 1000, leaping: true }, 1000 + ARC_MS)).toBe(true);
+    expect(isJumping({ jumpStartedAt: 1000, leaping: true }, 1000 + Math.floor(LEAP_ARC_MS))).toBe(
+      true,
+    );
+    expect(isJumping({ jumpStartedAt: 1000, leaping: true }, 1000 + Math.ceil(LEAP_ARC_MS))).toBe(
+      false,
+    );
   });
 });
 
@@ -173,6 +224,22 @@ describe('stepJump', () => {
     const a = stepJump({ jumpStartedAt: null }, { jump: true, nowMs: 7777 });
     const b = stepJump({ jumpStartedAt: null }, { jump: true, nowMs: 7777 });
     expect(a).toEqual(b);
+  });
+
+  it('extends the lockout for a leaping jump', () => {
+    const LEAP_LOCKOUT_MS = Math.ceil(LEAP_ARC_MS) + COOLDOWN_MS;
+    // Still locked at the low-jump lockout boundary (the leap arc is longer).
+    expect(
+      stepJump({ jumpStartedAt: 1000, leaping: true }, { jump: false, nowMs: 1000 + LOCKOUT_MS })
+        .jumpStartedAt,
+    ).toBe(1000);
+    // Clears only once the leap's own lockout elapses.
+    expect(
+      stepJump(
+        { jumpStartedAt: 1000, leaping: true },
+        { jump: false, nowMs: 1000 + LEAP_LOCKOUT_MS },
+      ).jumpStartedAt,
+    ).toBeNull();
   });
 });
 

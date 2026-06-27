@@ -36,10 +36,12 @@ export const HEAD_RADIUS = 0.35;
 export const JUMP_AMP = 2.0;
 
 // Peak rise of a Leap-boosted jump. At 7.0 m the body center reaches
-// ~7.5 m at apex, clearing the 6 m wall with ~1.5 m of headroom so the
-// arc spends ~0.28 s of its 0.6 s window above wall height - long enough
-// to carry a sprinting body's XZ across a wall. The Leap power-up arms
-// the next jump to use this amplitude instead of JUMP_AMP.
+// ~7.5 m at apex, clearing the 6 m wall with ~1.5 m of headroom. Because
+// gravity is held constant across jump heights (see jumpDurationMs), the
+// taller arc also lasts longer - ~1.12 s vs the low jump's 0.6 s - and
+// spends ~0.52 s above wall height, plenty to carry a sprinting body's XZ
+// across a wall. The Leap power-up arms the next jump to use this
+// amplitude instead of JUMP_AMP.
 export const LEAP_JUMP_AMP = 7.0;
 
 // Height of every labyrinth wall. Owned here (the vertical axis) so the
@@ -47,8 +49,10 @@ export const LEAP_JUMP_AMP = 7.0;
 // game/scripts/labyrinth.gd uses the same 6.0 for wall mesh sizing.
 export const WALL_HEIGHT = 6.0;
 
-// Length of a single jump arc, takeoff to landing. Short enough to feel
-// responsive, long enough for the squash-and-stretch animation to read.
+// Length of the low (JUMP_AMP) jump arc, takeoff to landing. Short enough
+// to feel responsive, long enough for the squash-and-stretch animation to
+// read. This also fixes the gravity used for every jump: taller jumps keep
+// the same acceleration and stretch their duration instead (jumpDurationMs).
 export const JUMP_DURATION_S = 0.6;
 
 // Tag vertical-overlap threshold. A tag is rejected when
@@ -80,14 +84,29 @@ export const BOUNCE_E_AERIAL = 0.7;
 export const BOUNCE_E_WALL = 0.15;
 
 /**
+ * Duration of a jump arc of peak height `amp`, in ms. Gravity is held
+ * constant across jump heights, so the duration scales with sqrt(amp):
+ * a taller jump hangs longer rather than falling faster. Derived from
+ * the parabola's implied gravity g = 8 * amp / D^2 - holding g fixed
+ * gives D = JUMP_DURATION_S * sqrt(amp / JUMP_AMP). At amp = JUMP_AMP
+ * this is exactly JUMP_DURATION_S (the low jump is unchanged); at
+ * LEAP_JUMP_AMP it is ~1.12 s.
+ */
+export function jumpDurationMs(amp: number = JUMP_AMP): number {
+  return JUMP_DURATION_S * 1000 * Math.sqrt(amp / JUMP_AMP);
+}
+
+/**
  * Deterministic jump arc. Returns the body's Y position given the
  * jump's start timestamp (in ms, same epoch as Date.now()) and the
  * current time in ms.
  *
  * Curve: parabola y = HOVER_HEIGHT + amp * 4 * t * (1 - t) where
- * t = elapsed / (JUMP_DURATION_S * 1000) clamped to [0, 1]. Peaks at
+ * t = elapsed / jumpDurationMs(amp) clamped to [0, 1]. Peaks at
  * t = 0.5 (height = HOVER_HEIGHT + amp), lands at t = 1.0. `amp`
  * defaults to JUMP_AMP; a Leap-boosted jump passes LEAP_JUMP_AMP.
+ * Because the duration scales with sqrt(amp), every jump shares the
+ * same gravity - a higher arc stays aloft proportionally longer.
  *
  * Returns HOVER_HEIGHT for a null startedAt, an elapsed time before
  * the start, or an elapsed time past the arc window. These are all
@@ -101,7 +120,7 @@ export function jumpArcY(
 ): number {
   if (startedAtMs === null) return HOVER_HEIGHT;
   const elapsedMs = nowMs - startedAtMs;
-  const durationMs = JUMP_DURATION_S * 1000;
+  const durationMs = jumpDurationMs(amp);
   if (elapsedMs < 0 || elapsedMs >= durationMs) return HOVER_HEIGHT;
   const t = elapsedMs / durationMs;
   return HOVER_HEIGHT + amp * 4 * t * (1 - t);
@@ -109,12 +128,16 @@ export function jumpArcY(
 
 /**
  * True if the player's jump arc is still in flight. A player whose
- * `jumpStartedAt` is set but more than `JUMP_DURATION_S` ago has
- * landed; callers should clear the field in that case.
+ * `jumpStartedAt` is set but more than the jump's duration ago has
+ * landed; callers should clear the field in that case. A Leap jump
+ * (state.leaping) uses the longer leap duration.
  */
-export function isJumping(state: { jumpStartedAt: number | null }, nowMs: number): boolean {
+export function isJumping(
+  state: { jumpStartedAt: number | null; leaping?: boolean },
+  nowMs: number,
+): boolean {
   if (state.jumpStartedAt === null) return false;
-  return nowMs - state.jumpStartedAt < JUMP_DURATION_S * 1000;
+  return nowMs - state.jumpStartedAt < jumpDurationMs(state.leaping ? LEAP_JUMP_AMP : JUMP_AMP);
 }
 
 /**

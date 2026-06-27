@@ -26,7 +26,9 @@ const LEAP_JUMP_AMP := SharedConstants.LEAP_JUMP_AMP
 # Height of every labyrinth wall. The Y-aware wall skip uses this so a body
 # above it passes over walls.
 const WALL_HEIGHT := SharedConstants.WALL_HEIGHT
-# Length of a single jump arc takeoff to landing, in seconds.
+# Length of the low (JUMP_AMP) jump arc takeoff to landing, in seconds. Also
+# fixes the gravity for every jump - taller jumps keep the same acceleration
+# and stretch their duration instead (see jump_duration_ms).
 const JUMP_DURATION_S := SharedConstants.JUMP_DURATION_S
 # Tag vertical-overlap threshold. Tag rejected when
 # |attacker.y - victim.y| >= this value.
@@ -38,13 +40,22 @@ const BOUNCE_E_GROUNDED := SharedConstants.BOUNCE_E_GROUNDED
 const BOUNCE_E_AERIAL := SharedConstants.BOUNCE_E_AERIAL
 const BOUNCE_E_WALL := SharedConstants.BOUNCE_E_WALL
 
+## Duration of a jump arc of peak height `amp`, in ms (float). Gravity is
+## held constant across jump heights, so duration scales with sqrt(amp):
+## a taller jump hangs longer rather than falling faster. At amp = JUMP_AMP
+## this is exactly JUMP_DURATION_S * 1000 (low jump unchanged); at
+## LEAP_JUMP_AMP it is ~1122 ms. Mirrors physics.ts::jumpDurationMs.
+static func jump_duration_ms(amp: float = JUMP_AMP) -> float:
+	return JUMP_DURATION_S * 1000.0 * sqrt(amp / JUMP_AMP)
+
 ## Deterministic jump arc. Returns the body's Y position given the
 ## jump's start timestamp (Unix ms) and the current time (Unix ms).
 ## Mirrors physics.ts::jumpArcY.
 ##
-## Curve: y = HOVER_HEIGHT + JUMP_AMP * 4 * t * (1 - t) where
-## t = elapsed_ms / (JUMP_DURATION_S * 1000) clamped to [0, 1]. Peaks
-## at t = 0.5, lands at t = 1.0.
+## Curve: y = HOVER_HEIGHT + amp * 4 * t * (1 - t) where
+## t = elapsed_ms / jump_duration_ms(amp) clamped to [0, 1]. Peaks at
+## t = 0.5, lands at t = 1.0. Because the duration scales with sqrt(amp),
+## every jump shares the same gravity - a higher arc stays aloft longer.
 ##
 ## Returns HOVER_HEIGHT for a started_at_ms of -1 (the GDScript null
 ## sentinel for jumpStartedAt; -1 was chosen over 0 because 0 is a
@@ -53,18 +64,20 @@ static func jump_arc_y(started_at_ms: int, now_ms: int, amp: float = JUMP_AMP) -
 	if started_at_ms < 0:
 		return HOVER_HEIGHT
 	var elapsed_ms: int = now_ms - started_at_ms
-	var duration_ms: int = int(JUMP_DURATION_S * 1000.0)
-	if elapsed_ms < 0 or elapsed_ms >= duration_ms:
+	var duration_ms: float = jump_duration_ms(amp)
+	if elapsed_ms < 0 or float(elapsed_ms) >= duration_ms:
 		return HOVER_HEIGHT
-	var t: float = float(elapsed_ms) / float(duration_ms)
+	var t: float = float(elapsed_ms) / duration_ms
 	return HOVER_HEIGHT + amp * 4.0 * t * (1.0 - t)
 
 ## True if the player's jump arc is still in flight. started_at_ms of
-## -1 (the null sentinel) is always false.
-static func is_jumping(started_at_ms: int, now_ms: int) -> bool:
+## -1 (the null sentinel) is always false. A Leap jump (leaping=true)
+## uses the longer leap duration.
+static func is_jumping(started_at_ms: int, now_ms: int, leaping: bool = false) -> bool:
 	if started_at_ms < 0:
 		return false
-	return now_ms - started_at_ms < int(JUMP_DURATION_S * 1000.0)
+	var amp: float = LEAP_JUMP_AMP if leaping else JUMP_AMP
+	return float(now_ms - started_at_ms) < jump_duration_ms(amp)
 
 ## True if two bodies' Y positions are close enough that a tag is
 ## geometrically plausible. Tag pipeline gates on this in addition to
@@ -94,13 +107,17 @@ static func step_frozen_descent(current_y: float, delta: float) -> float:
 ## post-landing cooldown. New triggers are gated on the value being -1.
 ## During the cooldown the body is already back at HOVER_HEIGHT
 ## (jump_arc_y returns the floor for elapsed past the arc); only the
-## input gate remains active.
-static func step_jump(jump_started_at_ms: int, jump_pressed: bool, now_ms: int) -> int:
-	var lockout_ms: int = int((JUMP_DURATION_S + JUMP_COOLDOWN_S) * 1000.0)
+## input gate remains active. A Leap (leaping=true) arc lasts longer, so
+## its lockout is longer too.
+static func step_jump(
+	jump_started_at_ms: int, jump_pressed: bool, now_ms: int, leaping: bool = false
+) -> int:
+	var amp: float = LEAP_JUMP_AMP if leaping else JUMP_AMP
+	var lockout_ms: float = jump_duration_ms(amp) + JUMP_COOLDOWN_S * 1000.0
 	var next: int = jump_started_at_ms
 	if next >= 0:
 		var elapsed_ms: int = now_ms - next
-		if elapsed_ms >= lockout_ms:
+		if float(elapsed_ms) >= lockout_ms:
 			next = -1
 	if jump_pressed and next < 0:
 		next = now_ms

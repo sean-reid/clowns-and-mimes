@@ -17,7 +17,7 @@ import type {
   Topology,
 } from '@cm/shared';
 import { BATTLE_CRY_COUNT } from '@cm/shared';
-import { JUMP_COOLDOWN_S, JUMP_DURATION_S } from '@cm/shared/physics';
+import { JUMP_AMP, JUMP_COOLDOWN_S, LEAP_JUMP_AMP, jumpDurationMs } from '@cm/shared/physics';
 import {
   bodyYForState,
   resolvePlayerCollisions,
@@ -186,8 +186,11 @@ export class GameSimulation {
    */
   private advanceIdleJumpState(): void {
     const now = Date.now();
-    const lockoutMs = (JUMP_DURATION_S + JUMP_COOLDOWN_S) * 1000;
     for (const p of this.host.players.values()) {
+      // Lockout spans the arc + cooldown; a Leap arc lasts longer, so the
+      // duration is per-player based on whether this jump is leaping.
+      const lockoutMs =
+        jumpDurationMs(p.leaping ? LEAP_JUMP_AMP : JUMP_AMP) + JUMP_COOLDOWN_S * 1000;
       if (p.jumpStartedAt !== null && now - p.jumpStartedAt >= lockoutMs) {
         p.jumpStartedAt = null;
         p.leaping = false;
@@ -309,7 +312,7 @@ export class GameSimulation {
         // the new jumpStartedAt so the client's predicted arc start
         // matches the authoritative value without a round-trip.
         const jump = stepJump(
-          { jumpStartedAt: p.jumpStartedAt },
+          { jumpStartedAt: p.jumpStartedAt, leaping: p.leaping },
           { jump: input.jump ?? false, nowMs: arcNow },
         );
         // Leap: a fresh trigger (new non-null takeoff) consumes a banked

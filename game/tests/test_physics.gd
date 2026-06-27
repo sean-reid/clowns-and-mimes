@@ -26,21 +26,39 @@ func test_jump_arc_y_is_symmetric() -> void:
 	assert_approx(earlier, later, 0.001)
 
 func test_jump_arc_y_leap_peaks_higher() -> void:
-	var peak: float = Physics.jump_arc_y(1000, 1000 + ARC_MS / 2, Physics.LEAP_JUMP_AMP)
-	assert_approx(peak, Physics.HOVER_HEIGHT + Physics.LEAP_JUMP_AMP, 0.001)
+	# The leap peaks at its own (longer) midpoint, not the low jump's.
+	var leap_arc_ms: float = Physics.jump_duration_ms(Physics.LEAP_JUMP_AMP)
+	var peak: float = Physics.jump_arc_y(1000, 1000 + int(leap_arc_ms / 2.0), Physics.LEAP_JUMP_AMP)
+	assert_approx(peak, Physics.HOVER_HEIGHT + Physics.LEAP_JUMP_AMP, 0.01)
+	# At the low jump's midpoint the leap is still rising, not at apex.
+	var mid: float = Physics.jump_arc_y(1000, 1000 + ARC_MS / 2, Physics.LEAP_JUMP_AMP)
+	assert_true(mid < Physics.HOVER_HEIGHT + Physics.LEAP_JUMP_AMP, "leap still rising at 0.3s")
 
 func test_jump_arc_y_leap_clears_wall_height() -> void:
 	# A leap arc must rise above WALL_HEIGHT for part of its window so the
 	# Y-aware wall skip can engage; a normal jump must never reach it.
+	var leap_arc_ms: int = int(Physics.jump_duration_ms(Physics.LEAP_JUMP_AMP))
 	var leap_above: int = 0
-	var normal_above: int = 0
-	for i in range(1, ARC_MS):
+	for i in range(1, leap_arc_ms):
 		if Physics.jump_arc_y(0, i, Physics.LEAP_JUMP_AMP) > Physics.WALL_HEIGHT:
 			leap_above += 1
+	var normal_above: int = 0
+	for i in range(1, ARC_MS):
 		if Physics.jump_arc_y(0, i, Physics.JUMP_AMP) > Physics.WALL_HEIGHT:
 			normal_above += 1
 	assert_true(leap_above > 0, "leap arc never clears wall height")
 	assert_eq(normal_above, 0, "normal jump must not clear wall height")
+
+func test_jump_duration_ms_constant_gravity() -> void:
+	# Low jump unchanged; leap stretched by sqrt(amp ratio); same implied gravity.
+	assert_approx(Physics.jump_duration_ms(Physics.JUMP_AMP), float(ARC_MS), 0.001)
+	var ratio: float = sqrt(Physics.LEAP_JUMP_AMP / Physics.JUMP_AMP)
+	assert_approx(Physics.jump_duration_ms(Physics.LEAP_JUMP_AMP), float(ARC_MS) * ratio, 0.001)
+	var d_low: float = Physics.jump_duration_ms(Physics.JUMP_AMP) / 1000.0
+	var d_leap: float = Physics.jump_duration_ms(Physics.LEAP_JUMP_AMP) / 1000.0
+	var g_low: float = 8.0 * Physics.JUMP_AMP / (d_low * d_low)
+	var g_leap: float = 8.0 * Physics.LEAP_JUMP_AMP / (d_leap * d_leap)
+	assert_approx(g_leap, g_low, 0.001)
 
 func test_jump_arc_y_clamps_outside_window() -> void:
 	assert_approx(Physics.jump_arc_y(1000, 999), Physics.HOVER_HEIGHT)
@@ -63,6 +81,13 @@ func test_is_jumping_true_during_arc() -> void:
 func test_is_jumping_false_after_arc() -> void:
 	assert_false(Physics.is_jumping(1000, 1000 + ARC_MS))
 	assert_false(Physics.is_jumping(1000, 1000 + ARC_MS + 1000))
+
+func test_is_jumping_leaping_stays_aloft_longer() -> void:
+	var leap_arc_ms: int = int(Physics.jump_duration_ms(Physics.LEAP_JUMP_AMP))
+	# Still airborne past the low-jump window; lands by the end of its own arc.
+	assert_true(Physics.is_jumping(1000, 1000 + ARC_MS, true))
+	assert_true(Physics.is_jumping(1000, 1000 + leap_arc_ms - 1, true))
+	assert_false(Physics.is_jumping(1000, 1000 + leap_arc_ms + 1, true))
 
 func test_vertically_overlapping_same_height() -> void:
 	assert_true(Physics.vertically_overlapping(Physics.HOVER_HEIGHT, Physics.HOVER_HEIGHT))
@@ -112,3 +137,10 @@ func test_step_jump_clears_after_lockout() -> void:
 
 func test_step_jump_clears_and_triggers_in_one_tick() -> void:
 	assert_eq(Physics.step_jump(1000, true, 1000 + LOCKOUT_MS + 5), 1000 + LOCKOUT_MS + 5)
+
+func test_step_jump_leap_lockout_is_longer() -> void:
+	var leap_lockout_ms: int = int(Physics.jump_duration_ms(Physics.LEAP_JUMP_AMP)) + 100
+	# A leaping arc is still locked at the low-jump lockout boundary.
+	assert_eq(Physics.step_jump(1000, false, 1000 + LOCKOUT_MS, true), 1000)
+	# It clears only once the leap's own lockout elapses.
+	assert_eq(Physics.step_jump(1000, false, 1000 + leap_lockout_ms + 1, true), -1)

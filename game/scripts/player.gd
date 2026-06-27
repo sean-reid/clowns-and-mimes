@@ -368,7 +368,7 @@ func _physics_process(delta: float) -> void:
 	if jump_edge and leap_armed:
 		leaping = true
 		leap_armed = false
-	jump_started_at_ms = PhysicsScript.step_jump(jump_started_at_ms, jump_edge, now_ms)
+	jump_started_at_ms = PhysicsScript.step_jump(jump_started_at_ms, jump_edge, now_ms, leaping)
 	if jump_started_at_ms == -1:
 		leaping = false
 	var amp: float = PhysicsScript.LEAP_JUMP_AMP if leaping else PhysicsScript.JUMP_AMP
@@ -702,11 +702,14 @@ func _compute_jump_squash_target() -> Vector3:
 	if jump_started_at_ms < 0:
 		return Vector3.ONE
 	var now_ms: int = int(Time.get_unix_time_from_system() * 1000.0)
-	var duration_ms: int = int(PhysicsScript.JUMP_DURATION_S * 1000.0)
+	# Stretch the squash timeline over the actual arc so a longer Leap arc
+	# squashes/stretches across its full flight, not just the low-jump window.
+	var amp: float = PhysicsScript.LEAP_JUMP_AMP if leaping else PhysicsScript.JUMP_AMP
+	var duration_ms: float = PhysicsScript.jump_duration_ms(amp)
 	var elapsed_ms: int = now_ms - jump_started_at_ms
-	if elapsed_ms < 0 or elapsed_ms >= duration_ms:
+	if elapsed_ms < 0 or float(elapsed_ms) >= duration_ms:
 		return Vector3.ONE
-	var t: float = float(elapsed_ms) / float(duration_ms)
+	var t: float = float(elapsed_ms) / duration_ms
 	# Find the bracketing pair of keyframes around t.
 	for i in range(_SQUASH_KEYFRAMES.size() - 1):
 		var a: Array = _SQUASH_KEYFRAMES[i]

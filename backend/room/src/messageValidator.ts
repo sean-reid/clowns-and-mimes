@@ -86,6 +86,11 @@ export function parseClientMessage(raw: unknown): ClientToServer | null {
       if (raw.preferTeam !== undefined && !isTeam(raw.preferTeam)) return null;
       if (raw.hostToken !== undefined && !isStr(raw.hostToken, 128)) return null;
       if (raw.sessionToken !== undefined && !isStr(raw.sessionToken, 128)) return null;
+      // Party grouping: without passing these through, the room never learns a
+      // joiner is in a party, treats party members as solos, and the match-start
+      // balance splits them across teams.
+      if (raw.partyId !== undefined && !isStr(raw.partyId, 64)) return null;
+      if (raw.partySize !== undefined && !isFinite(raw.partySize)) return null;
       return {
         t: 'join',
         name: raw.name,
@@ -93,6 +98,8 @@ export function parseClientMessage(raw: unknown): ClientToServer | null {
         preferTeam: raw.preferTeam as Team | undefined,
         hostToken: raw.hostToken as string | undefined,
         sessionToken: raw.sessionToken as string | undefined,
+        partyId: raw.partyId as string | undefined,
+        partySize: raw.partySize as number | undefined,
       };
     }
     case 'leave':

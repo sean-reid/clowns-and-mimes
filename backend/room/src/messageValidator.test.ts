@@ -32,6 +32,8 @@ describe('parseClientMessage', () => {
         preferTeam: undefined,
         hostToken: undefined,
         sessionToken: undefined,
+        partyId: undefined,
+        partySize: undefined,
       });
     });
 
@@ -50,6 +52,27 @@ describe('parseClientMessage', () => {
         expect(r.hostToken).toBe('abc');
         expect(r.sessionToken).toBe('def');
       }
+    });
+
+    it('passes through party fields so the room can group a party', () => {
+      // Regression: these were dropped by the validator, so the room treated
+      // party members as solos and the match-start balance split them.
+      const r = parseClientMessage({
+        t: 'join',
+        name: 'Alice',
+        v: 2,
+        partyId: 'aef5d640-e13d-4386-8ba1-767e68bc9c94',
+        partySize: 2,
+      });
+      expect(r?.t).toBe('join');
+      if (r?.t === 'join') {
+        expect(r.partyId).toBe('aef5d640-e13d-4386-8ba1-767e68bc9c94');
+        expect(r.partySize).toBe(2);
+      }
+    });
+
+    it('rejects a non-string partyId', () => {
+      expect(parseClientMessage({ t: 'join', name: 'A', v: 2, partyId: 123 })).toBeNull();
     });
 
     it('rejects invalid preferTeam', () => {

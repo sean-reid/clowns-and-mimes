@@ -114,9 +114,10 @@ func get_jump_started_at_ms() -> int:
 ## (the snap's root cause). After the lockout, ground out. The server stays
 ## authoritative for its own tag-evade height checks; only our local render uses
 ## this. Unused server args are intentionally dropped.
-static func resolve_jump_started_at(client: int, now_ms: int) -> int:
-	var lockout_ms: int = int((Physics.JUMP_DURATION_S + Physics.JUMP_COOLDOWN_S) * 1000.0)
-	if client >= 0 and now_ms - client < lockout_ms:
+static func resolve_jump_started_at(client: int, now_ms: int, leaping: bool = false) -> int:
+	var amp: float = Physics.LEAP_JUMP_AMP if leaping else Physics.JUMP_AMP
+	var lockout_ms: float = Physics.jump_duration_ms(amp) + Physics.JUMP_COOLDOWN_S * 1000.0
+	if client >= 0 and float(now_ms - client) < lockout_ms:
 		return client
 	return -1
 
@@ -249,6 +250,7 @@ func advance_tick(
 		prev_jsa,
 		jump_pressed,
 		input_now_ms,
+		_pred_leaping,
 	)
 	# A fresh trigger consumes a banked leap; leaping clears when the arc
 	# ends. Mirrors gameSimulation.simulateHumans on the server.
@@ -346,6 +348,7 @@ func reconcile(delta: Dictionary) -> void:
 			replayed_jump_started_at_ms,
 			bool(entry.get("jump", false)),
 			entry_now_ms,
+			_pred_leaping,
 		)
 	# The local player owns its own jump arc: keep the predicted start for the
 	# full lockout and never start an arc from the server (see
@@ -354,6 +357,7 @@ func reconcile(delta: Dictionary) -> void:
 	_pred_jump_started_at_ms = resolve_jump_started_at(
 		_pred_jump_started_at_ms,
 		int(Time.get_unix_time_from_system() * 1000.0),
+		_pred_leaping,
 	)
 	# Reconcile leaping against the server's authoritative flag. When the
 	# replayed jump has landed it's false; when the server confirms a leap

@@ -150,6 +150,14 @@ var leaping: bool = false
 # only: collision and server-side tag logic are unaffected, and the local
 # body never self-hides ("other players don't see you"). 0 means uncloaked.
 var cloak_until_ms: int = 0
+# Latest look pitch (radians) applied to this body, mirrored from the head-pitch
+# the server sends for remote bodies. The teammate-spectator camera reads it to
+# match a watched teammate's vertical look. 0 (level) for bodies that never get
+# a pitch update (offline bots, the local body).
+var render_pitch: float = 0.0
+# Local body only: true while the arena is rendering a teammate's POV (frozen
+# spectator). Gates our own mouse-look so it doesn't spin the inactive camera.
+var spectating: bool = false
 # Rising-edge tracker for the local player's spacebar in offline mode.
 # Online holds the same state in arena.gd::_jump_was_held because the
 # predictor builds the input frame from there; offline-local manages its
@@ -229,9 +237,13 @@ func _apply_head_texture() -> void:
 func _input(event: InputEvent) -> void:
 	if bot or not is_local:
 		return
-	# Mouse look stays available while frozen so the player can watch their
-	# team play around them. Movement input is gated separately in
-	# _physics_process; the frozen branch there holds velocity at zero.
+	# While spectating a teammate (frozen), the spectator camera owns the view;
+	# don't let mouse-look spin our own (inactive) camera underneath it.
+	if spectating:
+		return
+	# Mouse look stays available while frozen-but-not-yet-spectating so the
+	# player can glance around their own POV. Movement input is gated separately
+	# in _physics_process; the frozen branch there holds velocity at zero.
 	if event is InputEventMouseMotion and Input.get_mouse_mode() == Input.MOUSE_MODE_CAPTURED:
 		rotate_y(-event.relative.x * LOOK_SENSITIVITY)
 		camera.rotate_x(-event.relative.y * LOOK_SENSITIVITY)
@@ -356,7 +368,7 @@ func _physics_process(delta: float) -> void:
 	if jump_edge and leap_armed:
 		leaping = true
 		leap_armed = false
-	jump_started_at_ms = PhysicsScript.step_jump(jump_started_at_ms, jump_edge, now_ms)
+	jump_started_at_ms = PhysicsScript.step_jump(jump_started_at_ms, jump_edge, now_ms, leaping)
 	if jump_started_at_ms == -1:
 		leaping = false
 	var amp: float = PhysicsScript.LEAP_JUMP_AMP if leaping else PhysicsScript.JUMP_AMP
@@ -598,6 +610,11 @@ func _drive_remote_interp() -> void:
 # head so the face texture pans vertically without leaning the body. Local
 # bodies skip this (first person - the camera is the head).
 func _apply_head_pitch(pitch: float) -> void:
+	# Track the latest look pitch even for headless/edge bodies so the spectator
+	# camera (which renders a teammate's POV) can read it. This is the same value
+	# the original viewer's camera held (lookPitch on the wire), so a spectator
+	# cam set to render_pitch matches what that teammate sees.
+	render_pitch = pitch
 	if head == null or is_local:
 		return
 	head.rotation.x = pitch
@@ -685,11 +702,14 @@ func _compute_jump_squash_target() -> Vector3:
 	if jump_started_at_ms < 0:
 		return Vector3.ONE
 	var now_ms: int = int(Time.get_unix_time_from_system() * 1000.0)
-	var duration_ms: int = int(PhysicsScript.JUMP_DURATION_S * 1000.0)
+	# Stretch the squash timeline over the actual arc so a longer Leap arc
+	# squashes/stretches across its full flight, not just the low-jump window.
+	var amp: float = PhysicsScript.LEAP_JUMP_AMP if leaping else PhysicsScript.JUMP_AMP
+	var duration_ms: float = PhysicsScript.jump_duration_ms(amp)
 	var elapsed_ms: int = now_ms - jump_started_at_ms
-	if elapsed_ms < 0 or elapsed_ms >= duration_ms:
+	if elapsed_ms < 0 or float(elapsed_ms) >= duration_ms:
 		return Vector3.ONE
-	var t: float = float(elapsed_ms) / float(duration_ms)
+	var t: float = float(elapsed_ms) / duration_ms
 	# Find the bracketing pair of keyframes around t.
 	for i in range(_SQUASH_KEYFRAMES.size() - 1):
 		var a: Array = _SQUASH_KEYFRAMES[i]

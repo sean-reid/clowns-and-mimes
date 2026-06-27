@@ -69,6 +69,10 @@ var _topology_name: String = ""
 # turns it on for the online shooting flow.
 var _crosshair: Label = null
 
+# Top-center banner naming the teammate whose POV we're watching while frozen.
+# Code-built like the crosshair; hidden until the arena enters spectator mode.
+var _spectate_banner: Label = null
+
 func _ready() -> void:
 	frozen_overlay.text = ""
 	end_overlay.visible = false
@@ -81,6 +85,7 @@ func _ready() -> void:
 	item_slot.visible = false
 	_setup_log_lines()
 	_setup_crosshair()
+	_setup_spectate_banner()
 	AudioBus.wire_button_sfx(self)
 
 func _setup_crosshair() -> void:
@@ -96,6 +101,36 @@ func _setup_crosshair() -> void:
 func set_crosshair_visible(value: bool) -> void:
 	if _crosshair != null:
 		_crosshair.visible = value
+
+func _setup_spectate_banner() -> void:
+	_spectate_banner = Label.new()
+	_spectate_banner.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_spectate_banner.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	# Bottom-center: clear of the countdown (top-center), the crosshair (middle),
+	# the sprint bar (bottom-left), the minimap (bottom-right), and the event log.
+	_spectate_banner.anchor_left = 0.3
+	_spectate_banner.anchor_right = 0.7
+	_spectate_banner.anchor_top = 0.82
+	_spectate_banner.anchor_bottom = 0.9
+	_spectate_banner.offset_left = 0.0
+	_spectate_banner.offset_right = 0.0
+	_spectate_banner.offset_top = 0.0
+	_spectate_banner.offset_bottom = 0.0
+	_spectate_banner.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_spectate_banner.visible = false
+	add_child(_spectate_banner)
+
+## Show the spectator banner naming the teammate whose POV is on screen. The
+## second line is the cue to left-click through the rest of the team.
+func set_spectating(player_name: String) -> void:
+	if _spectate_banner == null:
+		return
+	_spectate_banner.text = "Watching %s\n(click to cycle)" % player_name
+	_spectate_banner.visible = true
+
+func clear_spectating() -> void:
+	if _spectate_banner != null:
+		_spectate_banner.visible = false
 
 func _setup_log_lines() -> void:
 	# Remove any labels left over from the .tscn or from a previous run.

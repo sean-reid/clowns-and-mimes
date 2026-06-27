@@ -16,3 +16,8 @@ func test_look_rotation_composes_yaw_and_pitch() -> void:
 	assert_approx(r.y, 1.2, 0.0001, "yaw about Y")
 	assert_approx(r.x, -0.3, 0.0001, "pitch about X")
 	assert_approx(r.z, 0.0, 0.0001, "no roll")
+
+func test_is_teammate_target() -> void:
+	assert_true(Spectator.is_teammate_target("mime", false, "mime"), "same team, not frozen")
+	assert_false(Spectator.is_teammate_target("clown", false, "mime"), "other team is not a target")
+	assert_false(Spectator.is_teammate_target("mime", true, "mime"), "frozen teammate is skipped")

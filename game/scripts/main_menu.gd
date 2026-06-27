@@ -109,6 +109,10 @@ func _show_update_popup(local: String, latest: String) -> void:
 	)
 	dialog.ok_button_text = "Close"
 	dialog.unresizable = true
+	# Non-exclusive: this is a recommendation the player can ignore, and an
+	# exclusive child window blocks the OS close button on the main window, so
+	# leaving it modal would trap the app open while the popup is up.
+	dialog.exclusive = false
 	var open_button := dialog.add_button("Get latest", true, "open_site")
 	open_button.pressed.connect(func(): OS.shell_open(VersionCheck.WEBSITE_URL))
 	add_child(dialog)

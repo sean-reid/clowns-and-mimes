@@ -6,6 +6,23 @@ When cutting a release: rename the `[Unreleased]` heading below to the version b
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-06-26
+
+Minor release. Adds a spectator view while you're frozen, and reworks jump feel so a Leap arcs higher _and_ hangs longer.
+
+### Added
+
+- While you're frozen, the view switches to a teammate's first-person POV after a brief moment so you can follow the action instead of staring at the floor. Left-click cycles through your teammates, and a banner names whoever you're watching. The view returns to your own eyes the instant you're freed.
+
+### Changed
+
+- Jumps now use one consistent gravity, so a higher jump stays in the air longer instead of falling at the same speed as a small hop. The Leap power-up reads as a taller, floatier arc that clears walls for longer; the normal jump is unchanged.
+
+### Fixed
+
+- Players joining an open match together from the same lobby are no longer split onto opposite teams.
+- The "update available" popup no longer prevents closing the game — you can quit with it on screen.
+
 ## [0.8.7] - 2026-06-22
 
 Patch release. Fixes uneven team sizes in open matches.

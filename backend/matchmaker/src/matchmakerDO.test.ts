@@ -146,6 +146,17 @@ describe('MatchmakerDO.fetch', () => {
     expect(b.created).toBe(false);
   });
 
+  it('returns the same party team to every member open-join', async () => {
+    const doInstance = makeDO();
+    const { json: created } = await call(doInstance, '/partyCreate', { name: 'A' });
+    const { partyId, code, team } = created as { partyId: string; code: string; team: string };
+    await call(doInstance, '/partyJoin', { code, name: 'B' });
+    const { json: a } = await call(doInstance, '/openJoin', { partyId });
+    const { json: b } = await call(doInstance, '/openJoin', { partyId });
+    expect((a as { team?: string }).team).toBe(team);
+    expect((b as { team?: string }).team).toBe(team);
+  });
+
   it('reserves the rest of a party on the first member open-join', async () => {
     const doInstance = makeDO();
     const { json: created } = await call(doInstance, '/partyCreate', { name: 'A' });

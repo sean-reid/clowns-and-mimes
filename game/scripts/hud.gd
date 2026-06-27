@@ -105,9 +105,17 @@ func set_crosshair_visible(value: bool) -> void:
 func _setup_spectate_banner() -> void:
 	_spectate_banner = Label.new()
 	_spectate_banner.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	_spectate_banner.set_anchors_preset(Control.PRESET_TOP_WIDE)
-	_spectate_banner.offset_top = 72.0
-	_spectate_banner.offset_bottom = 132.0
+	_spectate_banner.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	# Bottom-center: clear of the countdown (top-center), the crosshair (middle),
+	# the sprint bar (bottom-left), the minimap (bottom-right), and the event log.
+	_spectate_banner.anchor_left = 0.3
+	_spectate_banner.anchor_right = 0.7
+	_spectate_banner.anchor_top = 0.82
+	_spectate_banner.anchor_bottom = 0.9
+	_spectate_banner.offset_left = 0.0
+	_spectate_banner.offset_right = 0.0
+	_spectate_banner.offset_top = 0.0
+	_spectate_banner.offset_bottom = 0.0
 	_spectate_banner.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_spectate_banner.visible = false
 	add_child(_spectate_banner)

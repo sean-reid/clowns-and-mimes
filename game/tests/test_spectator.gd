@@ -21,3 +21,9 @@ func test_is_teammate_target() -> void:
 	assert_true(Spectator.is_teammate_target("mime", false, "mime"), "same team, not frozen")
 	assert_false(Spectator.is_teammate_target("clown", false, "mime"), "other team is not a target")
 	assert_false(Spectator.is_teammate_target("mime", true, "mime"), "frozen teammate is skipped")
+
+func test_next_index_cycles_and_wraps() -> void:
+	assert_eq(Spectator.next_index(0, 3), 1, "advances")
+	assert_eq(Spectator.next_index(2, 3), 0, "wraps to the start")
+	assert_eq(Spectator.next_index(-1, 3), 0, "missing current starts the cycle")
+	assert_eq(Spectator.next_index(0, 0), -1, "no targets yields -1")

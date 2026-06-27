@@ -336,6 +336,18 @@ func _unhandled_input(event: InputEvent) -> void:
 	if event.is_action_pressed("ui_pause") and not menu.visible:
 		menu.open()
 		get_viewport().set_input_as_handled()
+		return
+	# Left-click cycles to the next teammate while spectating. Shooting is gated
+	# off while frozen, so the click is free to repurpose here.
+	if (
+		_spectate_active
+		and is_spectating()
+		and event is InputEventMouseButton
+		and event.button_index == MOUSE_BUTTON_LEFT
+		and event.pressed
+	):
+		_cycle_spectate_target()
+		get_viewport().set_input_as_handled()
 
 # ---------------------------------------------------------------------------
 # Main loop
@@ -1198,12 +1210,18 @@ func spectate(target: Node) -> void:
 	_spectate_target = target
 	_position_spectator_cam()
 	_spectator_cam.make_current()
+	# Our own aim crosshair is meaningless over a teammate's view; the banner
+	# naming who we're watching takes its place.
+	hud.set_crosshair_visible(false)
+	hud.set_spectating(target.display_name)
 	if local_player != null and is_instance_valid(local_player):
 		local_player.spectating = true
 
 ## Return to the local player's own camera.
 func stop_spectating() -> void:
 	_spectate_target = null
+	hud.clear_spectating()
+	hud.set_crosshair_visible(true)
 	if local_player != null and is_instance_valid(local_player):
 		local_player.spectating = false
 		if local_player.camera != null:
@@ -1233,6 +1251,16 @@ func _choose_spectate_target() -> Node:
 	if eligible.is_empty():
 		return null
 	return eligible[randi() % eligible.size()]
+
+# Advance to the next eligible teammate in a stable order (wrapping). A manually
+# chosen target sticks afterwards because _choose_spectate_target keeps the
+# current one as long as it stays eligible.
+func _cycle_spectate_target() -> void:
+	var eligible: Array = _eligible_spectate_targets()
+	if eligible.is_empty():
+		return
+	var idx: int = eligible.find(_spectate_target)
+	spectate(eligible[Spectator.next_index(idx, eligible.size())])
 
 func _eligible_spectate_targets() -> Array:
 	var out: Array = []

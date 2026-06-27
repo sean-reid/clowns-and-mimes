@@ -29,3 +29,11 @@ static func look_rotation(yaw: float, pitch: float) -> Vector3:
 ## id; bots are eligible, so an all-bot team offline still has someone to watch.)
 static func is_teammate_target(target_team: String, target_frozen: bool, my_team: String) -> bool:
 	return target_team == my_team and not target_frozen
+
+## Next index when cycling through `count` targets, wrapping around. A `current`
+## of -1 (the active target isn't in the list) lands on the first entry, so a
+## left-click after the watched teammate dropped out starts the cycle cleanly.
+static func next_index(current: int, count: int) -> int:
+	if count <= 0:
+		return -1
+	return (current + 1) % count

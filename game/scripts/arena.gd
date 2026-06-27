@@ -43,6 +43,7 @@ const ProjectileRendererScript := preload("res://scripts/projectile_renderer.gd"
 const ItemRendererScript := preload("res://scripts/item_renderer.gd")
 const PortalRendererScript := preload("res://scripts/portal_renderer.gd")
 const SharedConstants := preload("res://scripts/shared_constants.gd")
+const Spectator := preload("res://scripts/spectator.gd")
 
 # ---------------------------------------------------------------------------
 # Tunables
@@ -160,6 +161,13 @@ var local_sprint_energy: float = 100.0
 # broadcasts the authoritative value in each delta; reconciliation seeds the
 # replay loop from it.
 var local_sprinting: bool = false
+
+# Teammate-spectator camera (used while frozen). A standalone Camera3D driven to
+# a watched teammate's eye + look each frame; remote bodies free their own
+# camera, so we render their POV with this one rather than reusing theirs.
+# _spectate_target is the body currently being watched, or null when off.
+var _spectator_cam: Camera3D = null
+var _spectate_target: Node = null
 
 # Online local-player predictor. Owns _pred_* state + the three
 # advance_tick / reconcile / advance_local_prediction methods. See
@@ -321,6 +329,14 @@ func _unhandled_input(event: InputEvent) -> void:
 # ---------------------------------------------------------------------------
 
 func _process(delta: float) -> void:
+	# Keep the spectator camera glued to the watched teammate's eye each frame
+	# (their body is already interpolated, so this stays smooth). Drop spectating
+	# if the target body went away (left / despawned).
+	if _spectate_target != null:
+		if is_instance_valid(_spectate_target):
+			_position_spectator_cam()
+		else:
+			stop_spectating()
 	if online_mode:
 		_drive_online_hud()
 		# The authoritative XZ advances at 60 Hz inside _advance_predicted_tick
@@ -1131,6 +1147,43 @@ func _team_spawn_offset(team: String) -> Vector3:
 func _on_local_frozen_changed(is_frozen: bool) -> void:
 	if not is_frozen:
 		hud.clear_frozen_overlay()
+
+# ---------------------------------------------------------------------------
+# Teammate-spectator camera (Phase 1 foundation: the camera + follow only; the
+# frozen state machine, cycling, and HUD land in later phases).
+# ---------------------------------------------------------------------------
+
+## Render `target`'s first-person POV: make the spectator camera current and
+## drive it to the target's eye + look. No-op if the camera or target is missing.
+func spectate(target: Node) -> void:
+	if target == null:
+		return
+	# Create the camera lazily, the first time we actually spectate. Doing it at
+	# _ready (before the local player spawns) would make this the scene's default
+	# current camera - Godot auto-currents the first Camera3D to enter the tree -
+	# and the player would spawn looking through it instead of their own.
+	if _spectator_cam == null:
+		_spectator_cam = Camera3D.new()
+		_spectator_cam.current = false
+		world.add_child(_spectator_cam)
+	_spectate_target = target
+	_position_spectator_cam()
+	_spectator_cam.make_current()
+
+## Return to the local player's own camera.
+func stop_spectating() -> void:
+	_spectate_target = null
+	if local_player != null and is_instance_valid(local_player) and local_player.camera != null:
+		local_player.camera.make_current()
+
+func is_spectating() -> bool:
+	return _spectate_target != null
+
+func _position_spectator_cam() -> void:
+	_spectator_cam.global_position = Spectator.eye_position(_spectate_target.global_position)
+	_spectator_cam.rotation = Spectator.look_rotation(
+		_spectate_target.rotation.y, _spectate_target.render_pitch
+	)
 
 func _render_team_status_online(entries: Array) -> void:
 	hud.render_team_status(entries)

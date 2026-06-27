@@ -1,0 +1,25 @@
+extends RefCounted
+
+## Pure pose math for the teammate-spectator camera. Kept out of arena.gd so it
+## can be unit-tested without a scene tree.
+##
+## While frozen, the local player can watch a teammate's first-person POV. The
+## spectator camera is positioned at the teammate's eye and oriented with their
+## look. The eye sits EYE_HEIGHT above the body origin - the same local offset as
+## the player scene's Camera3D node - and a body rotates only on yaw, so the
+## offset is yaw-independent (a Y-axis rotation leaves a point on the Y axis put).
+## Pitch is the value the server carries for that body (its original camera
+## pitch), so a camera set to (pitch, yaw, 0) reproduces exactly what the
+## teammate sees.
+
+const SharedConstants := preload("res://scripts/shared_constants.gd")
+
+## World-space eye position for a body at `body_position`.
+static func eye_position(body_position: Vector3) -> Vector3:
+	return body_position + Vector3(0.0, SharedConstants.EYE_HEIGHT, 0.0)
+
+## Euler rotation (radians) for a first-person camera looking with `yaw` (about
+## Y) and `pitch` (about X), matching how the player's body yaw + camera pitch
+## compose.
+static func look_rotation(yaw: float, pitch: float) -> Vector3:
+	return Vector3(pitch, yaw, 0.0)

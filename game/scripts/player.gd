@@ -150,6 +150,11 @@ var leaping: bool = false
 # only: collision and server-side tag logic are unaffected, and the local
 # body never self-hides ("other players don't see you"). 0 means uncloaked.
 var cloak_until_ms: int = 0
+# Latest look pitch (radians) applied to this body, mirrored from the head-pitch
+# the server sends for remote bodies. The teammate-spectator camera reads it to
+# match a watched teammate's vertical look. 0 (level) for bodies that never get
+# a pitch update (offline bots, the local body).
+var render_pitch: float = 0.0
 # Rising-edge tracker for the local player's spacebar in offline mode.
 # Online holds the same state in arena.gd::_jump_was_held because the
 # predictor builds the input frame from there; offline-local manages its
@@ -598,6 +603,11 @@ func _drive_remote_interp() -> void:
 # head so the face texture pans vertically without leaning the body. Local
 # bodies skip this (first person - the camera is the head).
 func _apply_head_pitch(pitch: float) -> void:
+	# Track the latest look pitch even for headless/edge bodies so the spectator
+	# camera (which renders a teammate's POV) can read it. This is the same value
+	# the original viewer's camera held (lookPitch on the wire), so a spectator
+	# cam set to render_pitch matches what that teammate sees.
+	render_pitch = pitch
 	if head == null or is_local:
 		return
 	head.rotation.x = pitch

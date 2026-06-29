@@ -44,7 +44,7 @@
     "gen:all": "node scripts/gen-all.mjs"
   },
   "devDependencies": {
-    "prettier": "3.8.4",
+    "prettier": "3.9.3",
     "tsx": "4.22.4",
     "typescript": "6.0.3"
   }

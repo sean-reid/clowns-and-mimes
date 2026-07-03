@@ -6,6 +6,15 @@ When cutting a release: rename the `[Unreleased]` heading below to the version b
 
 ## [Unreleased]
 
+## [0.9.1] - 2026-07-03
+
+Patch release. Bot movement polish.
+
+### Changed
+
+- Bots turn more naturally. Their facing no longer jitters or snaps back and forth while they navigate; they commit to a heading and hold it, which is especially noticeable now that you can watch a teammate bot's point of view while frozen.
+- Bots leap over a wall to reach a target more readily. The jump rework in 0.9.0 keeps a leap in the air longer, so a leaping bot now carries further and takes the hop instead of the long way around walls it can actually clear.
+
 ## [0.9.0] - 2026-06-26
 
 Minor release. Adds a spectator view while you're frozen, and reworks jump feel so a Leap arcs higher _and_ hangs longer.

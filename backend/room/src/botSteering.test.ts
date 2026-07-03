@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { WallSegment } from '@cm/shared/labyrinth';
-import { passBiasDir, smoothDir, stepWithSlide, turnToward } from './botSteering.ts';
+import { passBiasDir, smoothDir, stabilizeYaw, stepWithSlide, turnToward } from './botSteering.ts';
 
 describe('smoothDir', () => {
   it('returns the normalized raw direction when there is no prior direction', () => {
@@ -92,6 +92,49 @@ describe('turnToward', () => {
   it('reaches the target when within the per-tick budget', () => {
     const y = turnToward(0, 0.05, 1.0, 0.1); // budget 0.1 > 0.05
     expect(y).toBeCloseTo(0.05, 6);
+  });
+});
+
+describe('stabilizeYaw', () => {
+  // deadband 0.06, reversalBreak 0.6, commitTicks 10
+  const DB = 0.06;
+  const BREAK = 0.6;
+  const HOLD = 10;
+
+  it('ignores a re-aim smaller than the deadband and winds down the hold', () => {
+    const r = stabilizeYaw(1.0, 4, 1.0 + 0.03, DB, BREAK, HOLD);
+    expect(r.yaw).toBe(1.0);
+    expect(r.holdTicks).toBe(3);
+  });
+
+  it('holds the committed heading against a mid-size reversal inside the commit window', () => {
+    const r = stabilizeYaw(1.0, 5, 1.0 + 0.3, DB, BREAK, HOLD);
+    expect(r.yaw).toBe(1.0);
+    expect(r.holdTicks).toBe(4);
+  });
+
+  it('adopts a mid-size change once the hold has expired', () => {
+    const r = stabilizeYaw(1.0, 0, 1.0 + 0.3, DB, BREAK, HOLD);
+    expect(r.yaw).toBeCloseTo(1.3, 6);
+    expect(r.holdTicks).toBe(HOLD);
+  });
+
+  it('adopts a change at or above the reversal break immediately, even mid-hold', () => {
+    const r = stabilizeYaw(1.0, 8, 1.0 + 0.8, DB, BREAK, HOLD);
+    expect(r.yaw).toBeCloseTo(1.8, 6);
+    expect(r.holdTicks).toBe(HOLD);
+  });
+
+  it('measures the change across the +/-PI seam', () => {
+    // target ~PI, raw just past -PI: shortest delta is small, so it holds.
+    const r = stabilizeYaw(Math.PI - 0.02, 6, -Math.PI + 0.02, DB, BREAK, HOLD);
+    expect(r.yaw).toBe(Math.PI - 0.02);
+    expect(r.holdTicks).toBe(5);
+  });
+
+  it('never drives the hold negative', () => {
+    const r = stabilizeYaw(1.0, 0, 1.0, DB, BREAK, HOLD);
+    expect(r.holdTicks).toBe(0);
   });
 });
 

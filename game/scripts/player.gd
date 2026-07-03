@@ -62,6 +62,10 @@ var sprint_energy: float = MAX_SPRINT:
 ## Driven by BotAI for bot players. Direction is in world space, length up to 1.
 var bot_intent: Vector3 = Vector3.ZERO
 var bot_sprint: bool = false
+# Stabilized facing target set by bot_ai each tick (mirrors the server's
+# stabilized bot.yaw). _apply_bot_movement turns toward this instead of the raw
+# bot_intent heading, so the rendered facing doesn't hunt back and forth.
+var bot_desired_yaw: float = 0.0
 # Rising-edge jump request for bot bodies in offline mode. bot_ai.gd flips
 # this true on the tick its 3-trigger predicate fires; _apply_bot_movement
 # consumes it (passes to Physics.step_jump) and resets it to false. Online
@@ -407,11 +411,13 @@ func _apply_bot_movement(delta: float) -> void:
 	if intent.length() > 1.0:
 		intent = intent.normalized()
 	if intent.length() > 0.01:
-		var target_yaw := atan2(-intent.x, -intent.z)
-		# Fixed-rate turn toward the heading (mirrors botSteering.ts turnToward /
-		# MAX_YAW_RATE) instead of a proportional lerp, so offline bot facing
-		# matches the online model.
-		rotation.y = _turn_toward(rotation.y, target_yaw, SharedConstants.MAX_YAW_RATE, delta)
+		# Fixed-rate turn toward the stabilized facing bot_ai committed this tick
+		# (mirrors botSteering.ts turnToward / MAX_YAW_RATE, fed the stabilized
+		# yaw the server's bot.yaw path uses), so offline facing matches online and
+		# doesn't see-saw.
+		rotation.y = _turn_toward(
+			rotation.y, bot_desired_yaw, SharedConstants.MAX_YAW_RATE, delta
+		)
 	# Consume the bot's rising-edge jump request. bot_ai.gd flips bot_jump
 	# true for one tick when its 3-trigger predicate fires; resetting here
 	# prevents step_jump from re-firing every physics tick.

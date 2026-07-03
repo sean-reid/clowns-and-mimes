@@ -272,8 +272,7 @@ export class Room implements DurableObject {
       // resumeSession via ws.serializeAttachment({playerId}).
       for (const ws of state.getWebSockets()) {
         const attachment = ws.deserializeAttachment() as
-          | { playerId?: string; partyId?: string; partySize?: number }
-          | undefined;
+          { playerId?: string; partyId?: string; partySize?: number } | undefined;
         if (attachment?.playerId) {
           this.connections.set(ws, { ws, playerId: attachment.playerId });
           // Party affiliation rides the WS attachment too, so a party survives

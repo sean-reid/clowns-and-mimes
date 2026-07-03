@@ -68,6 +68,21 @@ export const BOT_FLEE_BLOCKED_PENALTY = 1000;
 // per-tick waypoint jitter.
 export const DIR_SMOOTHING = 0.35;
 export const MAX_YAW_RATE = 9.0;
+// Facing (yaw) stabilization — suppresses the rapid back-and-forth in a bot's
+// rendered heading that reads as jarring when a frozen player watches a
+// teammate's first-person POV. Yaw is cosmetic (movement direction and shot aim
+// are computed independently of it), so these only smooth what's on screen;
+// MAX_YAW_RATE is untouched, so a committed turn is still as fast as a human's.
+// The bot commits to a heading and holds it against small, reversing re-aims:
+//  - YAW_DEADBAND: re-aims smaller than this are ignored outright (micro-jitter).
+//  - YAW_COMMIT_TICKS: after adopting a heading, hold it for this many ticks
+//    against any change below the reversal-break, killing tick-to-tick hunting.
+//  - YAW_REVERSAL_BREAK: a change at least this large is a real course change and
+//    is adopted immediately regardless of the hold.
+// Tunable — dial from playtest. ~3.4° / ~34° / ~0.17 s at 60 Hz.
+export const YAW_DEADBAND = 0.06;
+export const YAW_REVERSAL_BREAK = 0.6;
+export const YAW_COMMIT_TICKS = 10;
 // Head-on pass bias (botSteering.passBiasDir). When another player sits within
 // RADIUS and roughly ahead of a bot's heading, the bot nudges its steering to a
 // consistent side (a "keep right" rule). Two bots closing head-on therefore veer

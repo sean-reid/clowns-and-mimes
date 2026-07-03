@@ -73,9 +73,12 @@ import {
   RETARGET_HYSTERESIS,
   TAG_RADIUS_BOT,
   UNFREEZE_RADIUS_BOT,
+  YAW_COMMIT_TICKS,
+  YAW_DEADBAND,
+  YAW_REVERSAL_BREAK,
 } from '@cm/shared/botTuning';
 import type { BotPathfinder } from './botPathfinder.ts';
-import { passBiasDir, smoothDir, stepWithSlide, turnToward } from './botSteering.ts';
+import { passBiasDir, smoothDir, stabilizeYaw, stepWithSlide, turnToward } from './botSteering.ts';
 import { decideBotAction } from './botDecision.ts';
 import { decideItemUse } from './botItems.ts';
 import { nearestEnemy } from './botPerception.ts';
@@ -109,6 +112,11 @@ interface BotMind {
   engagedTargetId: string | null;
   lastDir: { x: number; z: number };
   lastYaw: number;
+  // Facing stabilizer state (stabilizeYaw): the heading the bot is committed to
+  // and how many ticks that commitment holds. Keeps the rendered yaw from
+  // hunting; does not affect movement or aim.
+  yawTarget: number;
+  yawHold: number;
   progressSampleAt: number;
   progressSamplePos: { x: number; z: number };
   lastKnownPos: { x: number; z: number } | null;
@@ -273,6 +281,8 @@ export class BotManager {
       engagedTargetId: null,
       lastDir: { x: 0, z: 0 },
       lastYaw: yaw,
+      yawTarget: yaw,
+      yawHold: 0,
       progressSampleAt: Date.now(),
       progressSamplePos: { x: pos.x, z: pos.z },
       lastKnownPos: null,
@@ -486,6 +496,8 @@ export class BotManager {
         engagedTargetId: null,
         lastDir: { x: 0, z: 0 },
         lastYaw: bot.yaw,
+        yawTarget: bot.yaw,
+        yawHold: 0,
         progressSampleAt: now,
         progressSamplePos: { x: bot.position.x, z: bot.position.z },
         lastKnownPos: null,
@@ -864,8 +876,20 @@ export class BotManager {
         bot.position = { x: slid.x, y: bot.position.y, z: slid.z };
       }
       if (dir.x !== 0 || dir.z !== 0) {
-        const desiredYaw = Math.atan2(-dir.x, -dir.z);
-        mind.lastYaw = turnToward(mind.lastYaw, desiredYaw, MAX_YAW_RATE, dt);
+        const rawYaw = Math.atan2(-dir.x, -dir.z);
+        // Commit to a heading and hold it against hunting before turning, so the
+        // rendered facing doesn't see-saw (jarring in the frozen-spectator POV).
+        const stab = stabilizeYaw(
+          mind.yawTarget,
+          mind.yawHold,
+          rawYaw,
+          YAW_DEADBAND,
+          YAW_REVERSAL_BREAK,
+          YAW_COMMIT_TICKS,
+        );
+        mind.yawTarget = stab.yaw;
+        mind.yawHold = stab.holdTicks;
+        mind.lastYaw = turnToward(mind.lastYaw, stab.yaw, MAX_YAW_RATE, dt);
         bot.yaw = mind.lastYaw;
       } else {
         mind.lastYaw = bot.yaw;

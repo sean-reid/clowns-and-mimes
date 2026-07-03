@@ -129,6 +129,40 @@ function rotatedSlide(
   return null;
 }
 
+// Stabilize a bot's *facing target* against rapid back-and-forth. Yaw is
+// cosmetic (movement + aim are computed independently), so this only smooths the
+// rendered heading; the caller still turns toward the result at MAX_YAW_RATE, so
+// a committed turn is as fast as before.
+//
+// The bot commits to a heading (`targetYaw`) and holds it: a re-aim smaller than
+// `deadband` is ignored, and once committed it holds for `commitTicks` ticks
+// against any change below `reversalBreak`. A change at or above `reversalBreak`
+// is a genuine course change and is adopted immediately. Returns the heading to
+// turn toward plus the updated hold counter; the caller persists both.
+export function stabilizeYaw(
+  targetYaw: number,
+  holdTicks: number,
+  rawDesiredYaw: number,
+  deadband: number,
+  reversalBreak: number,
+  commitTicks: number,
+): { yaw: number; holdTicks: number } {
+  let delta = rawDesiredYaw - targetYaw;
+  while (delta > Math.PI) delta -= 2 * Math.PI;
+  while (delta < -Math.PI) delta += 2 * Math.PI;
+  const mag = Math.abs(delta);
+  // Negligible re-aim: hold the committed heading, let any hold wind down.
+  if (mag < deadband) {
+    return { yaw: targetYaw, holdTicks: Math.max(0, holdTicks - 1) };
+  }
+  // Mid-size change inside the commit window: treat as hunting and hold.
+  if (holdTicks > 0 && mag < reversalBreak) {
+    return { yaw: targetYaw, holdTicks: holdTicks - 1 };
+  }
+  // Genuine change (large, or the hold has expired): adopt and re-commit.
+  return { yaw: rawDesiredYaw, holdTicks: commitTicks };
+}
+
 // Rotate `currentYaw` toward `desiredYaw` by at most maxRate*dt, taking the
 // shortest angular path. Returns the new yaw.
 export function turnToward(

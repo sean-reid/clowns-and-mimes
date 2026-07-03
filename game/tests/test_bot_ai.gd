@@ -92,6 +92,35 @@ func test_pass_bias_head_on_pair_splits() -> void:
 	assert_true(b.z < 0.0, "bot facing -x swerves -z")
 	assert_approx(a.z, -b.z, 0.0001, "the pair splits symmetrically")
 
+func test_stabilize_yaw_holds_against_micro_and_hunting_but_adopts_real_turns() -> void:
+	var ctx: Dictionary = _make_setup()
+	var ai: Node = ctx["ai"]
+	# deadband 0.06, reversal_break 0.6, commit_ticks 10
+	# Sub-deadband re-aim: hold, wind down the counter.
+	var micro: Dictionary = ai._stabilize_yaw(1.0, 4, 1.03, 0.06, 0.6, 10)
+	assert_approx(micro["yaw"], 1.0, 0.0001, "micro re-aim held")
+	assert_eq(micro["hold"], 3, "hold winds down")
+	# Mid-size reversal inside the commit window: hold.
+	var hunt: Dictionary = ai._stabilize_yaw(1.0, 5, 1.3, 0.06, 0.6, 10)
+	assert_approx(hunt["yaw"], 1.0, 0.0001, "mid-size reversal held mid-commit")
+	assert_eq(hunt["hold"], 4, "hold winds down")
+	# Same mid-size change once the hold expired: adopt + re-commit.
+	var adopt: Dictionary = ai._stabilize_yaw(1.0, 0, 1.3, 0.06, 0.6, 10)
+	assert_approx(adopt["yaw"], 1.3, 0.0001, "adopts once hold expires")
+	assert_eq(adopt["hold"], 10, "re-commits")
+	# Large change: adopt immediately even mid-commit.
+	var course: Dictionary = ai._stabilize_yaw(1.0, 8, 1.8, 0.06, 0.6, 10)
+	assert_approx(course["yaw"], 1.8, 0.0001, "large change adopted at once")
+	assert_eq(course["hold"], 10, "re-commits")
+
+func test_stabilize_yaw_measures_change_across_the_pi_seam() -> void:
+	var ctx: Dictionary = _make_setup()
+	var ai: Node = ctx["ai"]
+	# target just under PI, raw just past -PI: shortest delta is tiny -> hold.
+	var r: Dictionary = ai._stabilize_yaw(PI - 0.02, 6, -PI + 0.02, 0.06, 0.6, 10)
+	assert_approx(r["yaw"], PI - 0.02, 0.0001, "seam-wrapped delta stays under deadband")
+	assert_eq(r["hold"], 5, "hold winds down")
+
 func test_pass_bias_ignores_neighbour_behind() -> void:
 	var ctx: Dictionary = _make_setup()
 	var ai: Node = ctx["ai"]

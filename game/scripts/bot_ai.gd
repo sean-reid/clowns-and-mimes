@@ -64,6 +64,11 @@ var patrol_target: Vector3 = Vector3.ZERO
 var last_dir: Vector3 = Vector3.ZERO
 var _intent: Vector3 = Vector3.ZERO
 var _sprint: bool = false
+# Facing stabilizer state (mirrors BotMind.yawTarget/yawHold): the heading the
+# bot is committed to and how many ticks it holds. Keeps the rendered yaw from
+# hunting; does not affect movement or aim.
+var _yaw_target: float = 0.0
+var _yaw_hold: int = 0
 # Coverage visit grid (pathfinder cell -> last-visited ms); patrol favors stale
 # cells so the bot sweeps the map instead of pacing. Mirrors online BotMind.visited.
 var _visited: Dictionary = {}
@@ -450,6 +455,22 @@ func _choose_steering() -> void:
 			)
 		_intent = _smooth_dir(last_dir, raw, SharedConstants.DIR_SMOOTHING)
 	last_dir = _intent
+	# Stabilize the rendered facing so it doesn't see-saw (jarring in the
+	# frozen-spectator POV). Cosmetic only - movement uses _intent directly, and
+	# aim is computed independently in _maybe_shoot. Mirrors botManager's yaw path.
+	if _intent.length() > 0.0001:
+		var raw_yaw: float = atan2(-_intent.x, -_intent.z)
+		var stab: Dictionary = _stabilize_yaw(
+			_yaw_target,
+			_yaw_hold,
+			raw_yaw,
+			SharedConstants.YAW_DEADBAND,
+			SharedConstants.YAW_REVERSAL_BREAK,
+			int(SharedConstants.YAW_COMMIT_TICKS)
+		)
+		_yaw_target = stab["yaw"]
+		_yaw_hold = stab["hold"]
+		player.bot_desired_yaw = _yaw_target
 	# Sprint only when closing on an engagement within the trigger radius and
 	# there's energy to spend (mirrors online's closeEnemyOrRescue gate).
 	var trigger: float = SharedConstants.BOT_SPRINT_TRIGGER_RADIUS
@@ -467,6 +488,32 @@ func _choose_steering() -> void:
 	_sprint = (
 		(close or fire_close or _flip_active) and player.sprint_energy > SharedConstants.MAX_SPRINT * 0.15
 	)
+
+# Stabilize a bot's facing target against rapid back-and-forth. Mirrors
+# botSteering.ts stabilizeYaw. The bot commits to a heading and holds it: a
+# re-aim smaller than `deadband` is ignored, and once committed it holds for
+# `commit_ticks` ticks against any change below `reversal_break`; a change at or
+# above `reversal_break` is a genuine course change and is adopted at once.
+# Returns {"yaw": committed heading, "hold": remaining hold ticks}.
+func _stabilize_yaw(
+	target_yaw: float,
+	hold_ticks: int,
+	raw_desired_yaw: float,
+	deadband: float,
+	reversal_break: float,
+	commit_ticks: int
+) -> Dictionary:
+	var delta: float = raw_desired_yaw - target_yaw
+	while delta > PI:
+		delta -= TAU
+	while delta < -PI:
+		delta += TAU
+	var mag: float = absf(delta)
+	if mag < deadband:
+		return {"yaw": target_yaw, "hold": maxi(0, hold_ticks - 1)}
+	if hold_ticks > 0 and mag < reversal_break:
+		return {"yaw": target_yaw, "hold": hold_ticks - 1}
+	return {"yaw": raw_desired_yaw, "hold": commit_ticks}
 
 # Exponential heading smoothing across ticks, re-normalized; zero when the
 # blended heading collapses. Mirrors botSteering.ts smoothDir.

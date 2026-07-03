@@ -62,14 +62,9 @@ const BOT_FLEE_WALL_PENALTY := 12.0
 const BOT_FLEE_BLOCKED_PENALTY := 1000.0
 const DIR_SMOOTHING := 0.35
 const MAX_YAW_RATE := 9.0
-# Facing (yaw) stabilization - mirrors botTuning.ts. Suppresses the rapid
-# back-and-forth in a bot's rendered heading (jarring in the frozen-spectator
-# POV). Yaw is cosmetic (movement + aim are independent), so these only smooth
-# facing; MAX_YAW_RATE is untouched. Deadband ~3.4 deg, reversal-break ~34 deg,
-# commit hold ~0.17 s at 60 Hz. Tunable from playtest.
 const YAW_DEADBAND := 0.06
 const YAW_REVERSAL_BREAK := 0.6
-const YAW_COMMIT_TICKS := 10
+const YAW_COMMIT_TICKS := 10.0
 const BOT_PASS_BIAS_RADIUS := 3.5
 const BOT_PASS_BIAS_WEIGHT := 1.2
 const BOT_PATROL_RETARGET_MS := 4000.0

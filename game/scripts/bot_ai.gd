@@ -466,7 +466,7 @@ func _choose_steering() -> void:
 			raw_yaw,
 			SharedConstants.YAW_DEADBAND,
 			SharedConstants.YAW_REVERSAL_BREAK,
-			SharedConstants.YAW_COMMIT_TICKS
+			int(SharedConstants.YAW_COMMIT_TICKS)
 		)
 		_yaw_target = stab["yaw"]
 		_yaw_hold = stab["hold"]

@@ -128,10 +128,14 @@ export const BOT_ITEM_DENY_WEIGHT = 8;
 // Leap traversal (botLeap.shouldLeapTraverse). Only a leap clears a wall (its
 // arc peaks above WALL_HEIGHT; a normal jump doesn't), so a chasing/rescuing bot
 // that holds a leap will hop a wall in its way instead of pathing around when
-// the far side is open. REACH is roughly a leap's horizontal travel - kept short
-// (a leap only covers ~3 units, and is wall-blocked until it clears 6 m) so the
-// bot only commits to a wall it can actually clear. Playtest-tuned.
-export const BOT_LEAP_REACH = 3;
+// the far side is open. REACH is roughly a leap's horizontal travel: XZ advances
+// at the (sprint) speed for the whole arc while only Y follows the parabola, so
+// travel = speed * airtime. Holding gravity constant across jump heights grew the
+// leap's airtime ~1.87x (sqrt(7/2), 0.6 s -> ~1.12 s), and its horizontal travel
+// with it, so REACH scales from the old ~3 to ~5.6 - held at 5.5 to stay a touch
+// conservative, so the bot only commits to a wall it can actually clear.
+// Playtest-tuned.
+export const BOT_LEAP_REACH = 5.5;
 
 // Turn-flip anticipation (botTurnFlip.turnFlipReposition). Within ANTICIPATE_MS
 // of the turn flipping, a bot pre-positions for its next role: a hunter who

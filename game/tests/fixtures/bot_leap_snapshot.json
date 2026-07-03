@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "reach": 3,
+  "reach": 5.5,
   "scenarios": [
     {
       "name": "clear_wall",
@@ -47,9 +47,9 @@
       },
       "walls": [
         {
-          "ax": 5,
+          "ax": 7.5,
           "az": -3,
-          "bx": 5,
+          "bx": 7.5,
           "bz": 3
         }
       ],
@@ -67,9 +67,9 @@
       },
       "walls": [
         {
-          "ax": 2.8,
+          "ax": 5.3,
           "az": -3,
-          "bx": 2.8,
+          "bx": 5.3,
           "bz": 3
         }
       ],

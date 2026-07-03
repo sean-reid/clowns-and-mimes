@@ -43,17 +43,19 @@ const SCENARIOS: Scenario[] = [
   },
   {
     // The wall is past leap reach (landing point doesn't clear it): wait.
+    // Positioned relative to REACH so it stays beyond reach if REACH is retuned.
     name: 'wall_beyond_reach',
     bot: { x: 0, z: 0 },
     goal: { x: 10, z: 0 },
-    walls: [{ ax: 5, az: -3, bx: 5, bz: 3 }],
+    walls: [{ ax: REACH + 2, az: -3, bx: REACH + 2, bz: 3 }],
   },
   {
     // The wall is so close the landing point lands on it: don't leap into it.
+    // Just short of REACH so the landing (at REACH) falls within it, at any REACH.
     name: 'land_in_wall',
     bot: { x: 0, z: 0 },
     goal: { x: 6, z: 0 },
-    walls: [{ ax: 2.8, az: -3, bx: 2.8, bz: 3 }],
+    walls: [{ ax: REACH - 0.2, az: -3, bx: REACH - 0.2, bz: 3 }],
   },
   {
     // A wall exists but off the line to the goal: nothing in the way.

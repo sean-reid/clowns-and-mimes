@@ -18,11 +18,11 @@
   },
   "devDependencies": {
     "@cloudflare/workers-types": "4.20260621.1",
-    "@types/node": "26.1.0",
+    "@types/node": "26.4.1",
     "@vitest/coverage-v8": "4.1.9",
-    "tsx": "4.23.0",
+    "tsx": "4.23.13",
     "typescript": "6.0.3",
     "vitest": "4.1.9",
-    "wrangler": "4.107.0"
+    "wrangler": "4.129.0"
   }
 }

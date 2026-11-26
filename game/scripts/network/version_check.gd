@@ -12,7 +12,7 @@ signal update_available(local_version: String, latest_version: String)
 signal check_complete
 
 const RELEASES_API := "https://api.github.com/repos/sean-reid/clowns-and-mimes/releases/latest"
-const WEBSITE_URL := "https://sean-reid.github.io/clowns-and-mimes/"
+const WEBSITE_URL := "https://seanre.id/clowns-and-mimes/"
 const REQUEST_TIMEOUT_S := 5.0
 
 func check() -> void:

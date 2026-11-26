@@ -8,7 +8,7 @@ Pre-alpha. The project is being built out in public.
 
 ## Download
 
-Installers for Windows, macOS, and Linux are published on the [Releases page](https://github.com/sean-reid/clowns-and-mimes/releases). The project website at [sean-reid.github.io/clowns-and-mimes](https://sean-reid.github.io/clowns-and-mimes) always links to the latest build for your platform.
+Installers for Windows, macOS, and Linux are published on the [Releases page](https://github.com/sean-reid/clowns-and-mimes/releases). The project website at [seanre.id/clowns-and-mimes](https://seanre.id/clowns-and-mimes) always links to the latest build for your platform.
 
 No build steps are required. Download, install, launch.
 
